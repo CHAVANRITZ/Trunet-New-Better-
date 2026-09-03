@@ -1,0 +1,1 @@
+{"indexes":[{"v":{"$numberInt":"2"},"key":{"_id":{"$numberInt":"1"}},"name":"_id_"},{"v":{"$numberInt":"2"},"key":{"name":{"$numberInt":"1"},"financialYear":{"$numberInt":"1"}},"name":"name_1_financialYear_1","background":true,"unique":true}],"uuid":"109cc42dcda349e797a283eb5be1257e","collectionName":"counters","type":"collection"}

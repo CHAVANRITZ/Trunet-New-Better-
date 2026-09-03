@@ -1525,6 +1525,7 @@ import Reseller from "../models/Reseller.js";
 import Product from "../models/Product.js";
 import Center from "../models/Center.js";
 import ProductCategory from "../models/ProductCategory.js";
+import XLSX from "xlsx";
 
 const handleControllerError = (error, res) => {
   console.error("Controller Error:", error);
@@ -1735,8 +1736,56 @@ export const getResellerAvailableStock = async (req, res) => {
       showCenterReturnsOnly = false,
       sourceCenter,
       export: isExport = false,
+      startDate,
+      endDate,
       ...filterParams
     } = req.query;
+
+    // ========== MANDATORY DATE FILTER FOR EXPORT ==========
+    if (isExport === "true" || isExport === true) {
+      if (!startDate && !endDate) {
+        return res.status(400).json({
+          success: false,
+          message: "Date range (startDate and/or endDate) is required for Excel export. Please provide at least one date filter.",
+        });
+      }
+      
+      if (startDate && isNaN(new Date(startDate).getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid startDate format: ${startDate}. Please use valid ISO date format.`,
+        });
+      }
+      
+      if (endDate && isNaN(new Date(endDate).getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid endDate format: ${endDate}. Please use valid ISO date format.`,
+        });
+      }
+      
+      console.log(`[EXPORT] Export requested with date filter - StartDate: ${startDate}, EndDate: ${endDate}`);
+    }
+
+    // ========== DATE RANGE FILTER ==========
+    const dateFilter = {};
+    if (startDate || endDate) {
+      dateFilter.createdAt = {};
+      
+      if (startDate) {
+        const startDateTime = new Date(startDate);
+        startDateTime.setHours(0, 0, 0, 0);
+        dateFilter.createdAt.$gte = startDateTime;
+        console.log(`[DATE FILTER] Start date: ${startDateTime.toISOString()}`);
+      }
+      
+      if (endDate) {
+        const endDateTime = new Date(endDate);
+        endDateTime.setHours(23, 59, 59, 999);
+        dateFilter.createdAt.$lte = endDateTime;
+        console.log(`[DATE FILTER] End date: ${endDateTime.toISOString()}`);
+      }
+    }
 
     const filter = await buildResellerStockFilter(
       { 
@@ -1755,6 +1804,14 @@ export const getResellerAvailableStock = async (req, res) => {
       permissions,
       userCenter
     );
+
+    // Apply date filter to the main filter
+    const mainFilter = { ...filter };
+    if (startDate || endDate) {
+      mainFilter.createdAt = dateFilter.createdAt;
+    }
+
+    console.log(`[RESELLER FILTER] Filter:`, JSON.stringify(mainFilter, null, 2));
 
     if (filter.noAccess) {
       const centerInfo = userCenter ? await Center.findById(userCenter._id || userCenter)
@@ -1793,6 +1850,8 @@ export const getResellerAvailableStock = async (req, res) => {
             showCenterReturnsOnly: showCenterReturnsOnly === "true",
             sourceCenter: sourceCenter || null,
             forCenter: forCenter || null,
+            startDate: startDate || null,
+            endDate: endDate || null,
           },
           pagination: {
             currentPage: parseInt(page),
@@ -1815,7 +1874,7 @@ export const getResellerAvailableStock = async (req, res) => {
     const skip = (pageNum - 1) * limitNum;
 
     const aggregationPipeline = [
-      { $match: filter },
+      { $match: mainFilter },
       
       {
         $lookup: {
@@ -2022,6 +2081,7 @@ export const getResellerAvailableStock = async (req, res) => {
         },
       }
     ];
+
     if (search) {
       aggregationPipeline.unshift({
         $match: {
@@ -2094,7 +2154,7 @@ export const getResellerAvailableStock = async (req, res) => {
     });
 
     const countPipeline = [
-      { $match: filter },
+      { $match: mainFilter },
       {
         $lookup: {
           from: "products",
@@ -2118,11 +2178,6 @@ export const getResellerAvailableStock = async (req, res) => {
     
     aggregationPipeline.push({ $sort: sortConfig });
 
-    // aggregationPipeline.push(
-    //   { $skip: skip },
-    //   { $limit: limitNum }
-    // );
-
     if (!isExport) {
       aggregationPipeline.push(
         { $skip: skip },
@@ -2141,10 +2196,8 @@ export const getResellerAvailableStock = async (req, res) => {
     // Process stock data to combine serialized and non-serialized center returns
     const stockWithCenterDetails = await Promise.all(
       stockData.map(async (item) => {
-        // Combine ALL center returns: from serialized AND non-serialized
         const allCenterReturnsMap = new Map();
         
-        // 1. Process serialized center returns (from serialNumbers)
         if (item.centerReturnSerials && item.centerReturnSerials.length > 0) {
           item.centerReturnSerials.forEach(serial => {
             if (serial.transferHistory) {
@@ -2170,7 +2223,6 @@ export const getResellerAvailableStock = async (req, res) => {
                   const centerData = allCenterReturnsMap.get(centerId);
                   centerData.serializedReturns += 1;
                   
-                  // Count by status
                   if (serial.status === "available") centerData.availableCount += 1;
                   if (serial.status === "consumed") centerData.consumedCount += 1;
                   if (serial.status === "damaged") centerData.damagedCount += 1;
@@ -2187,10 +2239,7 @@ export const getResellerAvailableStock = async (req, res) => {
           });
         }
         
-        // 2. Process non-serialized center returns (from centerReturns array)
-        // IMPORTANT FIX: Check if product is non-serialized AND has centerReturns
         if (!item.tracksSerial && item.centerReturns && item.centerReturns.length > 0) {
-          // For non-serialized products, use centerReturns array
           item.centerReturns.forEach(centerReturn => {
             const centerId = centerReturn.center?.toString();
             if (centerId) {
@@ -2211,19 +2260,11 @@ export const getResellerAvailableStock = async (req, res) => {
               
               const centerData = allCenterReturnsMap.get(centerId);
               centerData.nonSerializedReturns += centerReturn.quantity || 0;
-              
-              // For non-serialized, we assume all are available unless otherwise tracked
               centerData.availableCount += centerReturn.quantity || 0;
             }
           });
-        } else if (item.tracksSerial && item.centerReturns && item.centerReturns.length > 0) {
-          // FIX FOR DOUBLE-COUNTING ISSUE:
-          // For serialized products, we should ONLY use serialized returns
-          // The centerReturns array might contain duplicate data, so we ignore it
-          console.log(`Product "${item.productName}" is serialized - using serialized returns only (${item.centerReturnSerialsCount || 0} items)`);
         }
         
-        // Get center details for all unique centers
         let centerReturnsData = [];
         if (allCenterReturnsMap.size > 0) {
           const centerIds = Array.from(allCenterReturnsMap.keys())
@@ -2237,7 +2278,6 @@ export const getResellerAvailableStock = async (req, res) => {
             }).select("centerName centerCode centerType address").lean();
           }
           
-          // Create combined center returns array
           centerReturnsData = Array.from(allCenterReturnsMap.entries()).map(([centerId, data]) => {
             let centerName = "Unknown Center";
             let centerCode = "N/A";
@@ -2273,7 +2313,6 @@ export const getResellerAvailableStock = async (req, res) => {
           });
         }
         
-        // Filter by sourceCenter if specified
         let filteredCenterReturns = centerReturnsData;
         if (sourceCenter) {
           filteredCenterReturns = filteredCenterReturns.filter(
@@ -2281,31 +2320,21 @@ export const getResellerAvailableStock = async (req, res) => {
           );
         }
         
-        // Calculate center-specific totals
-        const totalCenterReturns = filteredCenterReturns.reduce((sum, cr) => 
-          sum + cr.totalReturns, 0);
+        const totalCenterReturns = filteredCenterReturns.reduce((sum, cr) => sum + cr.totalReturns, 0);
+        const totalCenterAvailable = filteredCenterReturns.reduce((sum, cr) => sum + cr.availableCount, 0);
+        const totalCenterConsumed = filteredCenterReturns.reduce((sum, cr) => sum + cr.consumedCount, 0);
         
-        const totalCenterAvailable = filteredCenterReturns.reduce((sum, cr) => 
-          sum + cr.availableCount, 0);
-        
-        const totalCenterConsumed = filteredCenterReturns.reduce((sum, cr) => 
-          sum + cr.consumedCount, 0);
-        
-        // Calculate what quantity to display based on filter
         let displayQuantity = item.availableQuantity;
         let displayConsumed = item.consumedQuantity;
         
         if (sourceCenter) {
-          // When filtering by center, show only returns from that center
           displayQuantity = totalCenterAvailable;
           displayConsumed = totalCenterConsumed;
         } else if (showCenterReturnsOnly === "true") {
-          // When showing only center returns, show all center returns
           displayQuantity = totalCenterAvailable;
           displayConsumed = totalCenterConsumed;
         }
         
-        // Calculate stock status for filtered view
         let displayStockStatus = item.stockStatus;
         if (sourceCenter || showCenterReturnsOnly === "true") {
           if (displayQuantity === 0) {
@@ -2323,13 +2352,9 @@ export const getResellerAvailableStock = async (req, res) => {
           totalCenterReturns: totalCenterReturns,
           totalCenterAvailable: totalCenterAvailable,
           totalCenterConsumed: totalCenterConsumed,
-          
-          // Display fields
           displayQuantity: displayQuantity,
           displayConsumed: displayConsumed,
           displayStockStatus: displayStockStatus,
-          
-          // Original quantities for reference
           originalTotalQuantity: item.totalQuantity,
           originalAvailableQuantity: item.availableQuantity,
           originalConsumedQuantity: item.consumedQuantity,
@@ -2338,7 +2363,6 @@ export const getResellerAvailableStock = async (req, res) => {
       })
     );
 
-    // Get reseller info
     let resellerInfo = null;
     if (filter.reseller) {
       const resellerIdValue = typeof filter.reseller === 'object' && filter.reseller.$in 
@@ -2354,7 +2378,6 @@ export const getResellerAvailableStock = async (req, res) => {
       }
     }
 
-    // Get source center info if specified
     let sourceCenterInfo = null;
     if (sourceCenter && mongoose.Types.ObjectId.isValid(sourceCenter)) {
       try {
@@ -2366,7 +2389,6 @@ export const getResellerAvailableStock = async (req, res) => {
       }
     }
 
-    // Calculate summary - FIXED to avoid double counting
     const summary = {
       totalProducts: total,
       totalQuantity: stockWithCenterDetails.reduce((sum, item) => 
@@ -2375,30 +2397,18 @@ export const getResellerAvailableStock = async (req, res) => {
         sum + (sourceCenter ? item.totalCenterAvailable : item.availableQuantity || 0), 0),
       totalConsumed: stockWithCenterDetails.reduce((sum, item) => 
         sum + (sourceCenter ? item.totalCenterConsumed : item.consumedQuantity || 0), 0),
-      totalDamaged: stockWithCenterDetails.reduce((sum, item) => 
-        sum + (item.damagedQuantity || 0), 0),
-      totalRepair: stockWithCenterDetails.reduce((sum, item) => 
-        sum + (item.repairQuantity || 0), 0),
-      totalEffectiveAvailable: stockWithCenterDetails.reduce((sum, item) => 
-        sum + (item.effectiveAvailableQuantity || 0), 0),
-      totalCenterReturns: stockWithCenterDetails.reduce((sum, item) => 
-        sum + (item.totalCenterReturns || 0), 0),
-      totalSerializedCenterReturns: stockWithCenterDetails.reduce((sum, item) => 
-        sum + (item.centerReturnSerialsCount || 0), 0),
+      totalDamaged: stockWithCenterDetails.reduce((sum, item) => sum + (item.damagedQuantity || 0), 0),
+      totalRepair: stockWithCenterDetails.reduce((sum, item) => sum + (item.repairQuantity || 0), 0),
+      totalEffectiveAvailable: stockWithCenterDetails.reduce((sum, item) => sum + (item.effectiveAvailableQuantity || 0), 0),
+      totalCenterReturns: stockWithCenterDetails.reduce((sum, item) => sum + (item.totalCenterReturns || 0), 0),
+      totalSerializedCenterReturns: stockWithCenterDetails.reduce((sum, item) => sum + (item.centerReturnSerialsCount || 0), 0),
       totalNonSerializedCenterReturns: stockWithCenterDetails.reduce((sum, item) => 
         sum + (item.centerReturns?.reduce((s, cr) => s + cr.nonSerializedReturns, 0) || 0), 0),
-      lowStockItems: stockWithCenterDetails.filter(item => 
-        item.displayStockStatus === "low_stock"
-      ).length,
-      outOfStockItems: stockWithCenterDetails.filter(item => 
-        item.displayStockStatus === "out_of_stock"
-      ).length,
-      inStockItems: stockWithCenterDetails.filter(item => 
-        item.displayStockStatus === "in_stock"
-      ).length,
+      lowStockItems: stockWithCenterDetails.filter(item => item.displayStockStatus === "low_stock").length,
+      outOfStockItems: stockWithCenterDetails.filter(item => item.displayStockStatus === "out_of_stock").length,
+      inStockItems: stockWithCenterDetails.filter(item => item.displayStockStatus === "in_stock").length,
     };
 
-    // Add source breakdown summary if requested
     if (includeSourceBreakdown === "true") {
       summary.totalDamageRepairSource = stockWithCenterDetails.reduce((sum, item) => 
         sum + (item.sourceBreakdown?.damageRepairQuantity || 0), 0);
@@ -2406,7 +2416,84 @@ export const getResellerAvailableStock = async (req, res) => {
         sum + (item.sourceBreakdown?.centerReturnQuantity || 0), 0);
     }
 
-    // Build filters object for response
+    // ========== EXCEL EXPORT HANDLING ==========
+    if (isExport === "true" || isExport === true) {
+      try {
+        console.log(`[EXPORT] Generating Excel file with ${stockWithCenterDetails.length} records`);
+        
+        const excelData = stockWithCenterDetails.map(item => ({
+          'Product Name': item.productName,
+          'Product Code': item.productCode,
+          'Product Category': item.productCategory?.name || 'N/A',
+          'Reseller Name': item.resellerName || 'N/A',
+          'Total Quantity': item.totalQuantity || 0,
+          'Available Quantity': item.availableQuantity || 0,
+          'Consumed Quantity': item.consumedQuantity || 0,
+          'Damaged Quantity': item.damagedQuantity || 0,
+          'Repair Quantity': item.repairQuantity || 0,
+          'Effective Available Quantity': item.effectiveAvailableQuantity || 0,
+          'Stock Status': item.stockStatus === 'out_of_stock' ? 'Out of Stock' : 
+                         item.stockStatus === 'low_stock' ? 'Low Stock' : 'In Stock',
+          'Center Returns Count': item.totalCenterReturns || 0,
+          'Track Serial Number': item.trackSerialNumber,
+          'Product Price': item.productPrice,
+          'Last Updated': new Date(item.lastUpdated).toLocaleString(),
+        }));
+        
+        const summaryData = [{
+          'Report Generated': new Date().toLocaleString(),
+          'Date Range': `${startDate || 'All'} to ${endDate || 'All'}`,
+          'Reseller Filter': resellerInfo?.businessName || 'All Resellers',
+          'Total Products': summary.totalProducts,
+          'Total Quantity': summary.totalQuantity,
+          'Total Available': summary.totalAvailable,
+          'Total Effective Available': summary.totalEffectiveAvailable,
+          'Total Center Returns': summary.totalCenterReturns,
+          'Low Stock Items': summary.lowStockItems,
+          'Out of Stock Items': summary.outOfStockItems,
+          'In Stock Items': summary.inStockItems,
+        }];
+        
+        const workbook = XLSX.utils.book_new();
+        
+        const mainSheet = XLSX.utils.json_to_sheet(excelData);
+        XLSX.utils.book_append_sheet(workbook, mainSheet, 'Reseller Stock Report');
+        
+        const summarySheet = XLSX.utils.json_to_sheet(summaryData);
+        XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+        
+        const filtersData = [{
+          'Filter Type': 'Applied Value',
+          'Start Date': startDate || 'Not Applied',
+          'End Date': endDate || 'Not Applied',
+          'Reseller': resellerInfo?.businessName || 'All Resellers',
+          'Reseller ID': resellerId || 'All',
+          'Product': product || 'All',
+          'Search Term': search || 'None',
+          'Stock Status Filter': showCenterReturnsOnly === 'true' ? 'Center Returns Only' : 'All Stock',
+          'Source Center': sourceCenterInfo?.centerName || 'None',
+        }];
+        
+        const filtersSheet = XLSX.utils.json_to_sheet(filtersData);
+        XLSX.utils.book_append_sheet(workbook, filtersSheet, 'Applied Filters');
+        
+        const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+        
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=reseller_stock_report_${new Date().toISOString().split('T')[0]}.xlsx`);
+        
+        return res.send(excelBuffer);
+        
+      } catch (exportError) {
+        console.error("[EXPORT ERROR]", exportError);
+        return res.status(500).json({
+          success: false,
+          message: "Error generating Excel export",
+          error: exportError.message
+        });
+      }
+    }
+
     const filters = {
       reseller: filter.reseller || "all",
       product: product || "all",
@@ -2417,7 +2504,9 @@ export const getResellerAvailableStock = async (req, res) => {
       showCenterReturnsOnly: showCenterReturnsOnly === "true",
       sourceCenter: sourceCenter || null,
       forCenter: forCenter || null,
-      filterType: sourceCenter ? "center_specific" : "all_stock"
+      filterType: sourceCenter ? "center_specific" : "all_stock",
+      startDate: startDate || null,
+      endDate: endDate || null,
     };
 
     res.status(200).json({

@@ -7,6 +7,9 @@ import OutletStock from "../models/OutletStock.js";
 import StockPurchase from "../models/StockPurchase.js";
 import mongoose from "mongoose";
 import DamageReturn from "../models/DamageReturn.js";
+import Reseller from "../models/Reseller.js";
+import XLSX from "xlsx";
+
 
 const checkAvailableStockPermissions = (req, requiredPermissions = []) => {
   const userPermissions = req.user.role?.permissions || [];
@@ -1309,12 +1312,47 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
       sortBy = "productName",
       sortOrder = "asc",
       export: isExport = false,
+      startDate,
+      endDate,
+      resellerId,
+      centerIds,
+      productIds,
+      stockStatus,
+      minStock,
+      maxStock,
       ...filterParams
     } = req.query;
 
+    // ========== MANDATORY DATE FILTER FOR EXPORT ==========
+    if (isExport === "true" || isExport === true) {
+      if (!startDate && !endDate) {
+        return res.status(400).json({
+          success: false,
+          message: "Date range (startDate and/or endDate) is required for Excel export. Please provide at least one date filter.",
+        });
+      }
+      
+      // Validate date formats
+      if (startDate && isNaN(new Date(startDate).getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid startDate format: ${startDate}. Please use valid ISO date format.`,
+        });
+      }
+      
+      if (endDate && isNaN(new Date(endDate).getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid endDate format: ${endDate}. Please use valid ISO date format.`,
+        });
+      }
+      
+      console.log(`[EXPORT] Export requested with date filter - StartDate: ${startDate}, EndDate: ${endDate}`);
+    }
+
     const user = await User.findById(req.user._id).populate(
       "center",
-      "centerName centerCode centerType"
+      "centerName centerCode centerType reseller"
     );
 
     if (!user || !user.center) {
@@ -1325,24 +1363,104 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
     }
 
     const defaultCenterId = user.center._id;
-    const centerType = user.center.centerType;
+    
+    // Build filters
     const filter = buildAvailableProductsFilter(
       { centerId, center, product, search, category, ...filterParams },
       permissions,
       userCenter
     );
-    const targetCenterId = filter.center ? filter.center : defaultCenterId;
-    const targetCenter = await Center.findById(targetCenterId).select(
-      "_id centerName centerCode centerType"
-    );
+    
+    const specificCenterId = filter.center ? filter.center : defaultCenterId;
+    
+    // ========== RESELLER FILTER LOGIC ==========
+    let targetCenterIds = [];
+    let selectedReseller = null;
+    
+    // If resellerId is provided, fetch reseller details
+    if (resellerId) {
+      selectedReseller = await Reseller.findById(resellerId).select("businessName _id");
+      if (!selectedReseller) {
+        return res.status(400).json({
+          success: false,
+          message: `Reseller with ID ${resellerId} not found`,
+        });
+      }
+      console.log(`[RESELLER FILTER] Filtering by reseller: ${selectedReseller.businessName} (${resellerId})`);
+    }
+    
+    // Case 1: User requested specific center(s) - use ONLY those
+    if (centerIds) {
+      const centerIdArray = Array.isArray(centerIds) ? centerIds : centerIds.split(',');
+      targetCenterIds = centerIdArray;
+      console.log(`[CENTER FILTER] Using specific center IDs: ${centerIdArray.join(', ')}`);
+    } 
+    else if (specificCenterId) {
+      targetCenterIds = [specificCenterId];
+      console.log(`[CENTER FILTER] Using single center ID: ${specificCenterId}`);
+    }
+    // Case 2: User requested all centers under a specific reseller
+    else if (resellerId) {
+      const centersUnderReseller = await Center.find({ 
+        reseller: resellerId,
+        status: "Enable"
+      }).select("_id centerName centerCode centerType reseller");
+      
+      if (centersUnderReseller.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: `No active centers found under this reseller`,
+        });
+      }
+      
+      targetCenterIds = centersUnderReseller.map(c => c._id);
+      console.log(`[RESELLER FILTER] Found ${targetCenterIds.length} centers under reseller`);
+    }
+    // Case 3: User has permission to view all centers and requested it
+    else if (req.query.viewAllCenters === "true" && permissions.available_stock_all_center) {
+      const userResellerId = user.center.reseller;
+      if (userResellerId) {
+        const centersUnderReseller = await Center.find({ 
+          reseller: userResellerId,
+          status: "Enable"
+        }).select("_id centerName centerCode centerType reseller");
+        targetCenterIds = centersUnderReseller.map(c => c._id);
+        console.log(`[VIEW ALL] User has permission, fetching all centers under reseller: ${userResellerId}`);
+      } else {
+        targetCenterIds = [defaultCenterId];
+        console.log(`[VIEW ALL] No reseller found, using default center: ${defaultCenterId}`);
+      }
+    }
+    // Case 4: Default - only user's own center
+    else {
+      targetCenterIds = [defaultCenterId];
+      console.log(`[DEFAULT] Using user's own center: ${defaultCenterId}`);
+    }
 
-    if (!targetCenter) {
+    // Remove duplicates if any
+    targetCenterIds = [...new Set(targetCenterIds.map(id => id.toString()))];
+    console.log(`[FINAL CENTERS] Total unique centers to fetch: ${targetCenterIds.length}`);
+
+    // Validate centers exist
+    const targetCenters = await Center.find({
+      _id: { $in: targetCenterIds }
+    }).select("_id centerName centerCode centerType reseller")
+      .populate("reseller", "businessName _id");
+
+    if (!targetCenters || targetCenters.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "Center not found",
+        message: "No valid centers found",
       });
     }
 
+    console.log("[TARGET CENTERS]", targetCenters.map(c => ({
+      id: c._id,
+      name: c.centerName,
+      reseller: c.reseller?.businessName
+    })));
+
+    // ========== PRODUCT FILTER ==========
     const productFilter = {};
 
     if (search) {
@@ -1352,19 +1470,26 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
         { description: { $regex: search, $options: "i" } },
         { "productCategory.productCategory": { $regex: search, $options: "i" } },
       ];
+      console.log(`[SEARCH] Searching for: ${search}`);
     }
 
     if (category) {
       const categoryId = await getCategoryId(category);
       if (categoryId) {
         productFilter.productCategory = categoryId;
+        console.log(`[CATEGORY] Filtering by category ID: ${categoryId}`);
       }
     }
 
-    if (product) {
+    if (productIds) {
+      const productIdArray = Array.isArray(productIds) ? productIds : productIds.split(',');
+      productFilter._id = { $in: productIdArray };
+      console.log(`[PRODUCT IDs] Filtering by ${productIdArray.length} specific products`);
+    } else if (product) {
       const productFilterObj = buildArrayFilter(product);
       if (productFilterObj) {
         productFilter._id = productFilterObj;
+        console.log(`[PRODUCT] Filtering by product: ${product}`);
       }
     }
 
@@ -1373,7 +1498,7 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
 
     let products, totalProducts;
     
-    if (isExport) {
+    if (isExport === "true" || isExport === true) {
       // For export, get ALL products without pagination
       products = await Product.find(productFilter)
         .populate("productCategory", "productCategory categoryCode")
@@ -1382,10 +1507,9 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
         )
         .sort({ productTitle: 1 })
         .lean();
-
       totalProducts = products.length;
+      console.log(`[EXPORT] Exporting ${totalProducts} products with date filter`);
     } else {
-      // For normal requests, apply pagination
       const skip = (pageNum - 1) * limitNum;
       
       [products, totalProducts] = await Promise.all([
@@ -1398,9 +1522,9 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
           .limit(limitNum)
           .skip(skip)
           .lean(),
-
         Product.countDocuments(productFilter),
       ]);
+      console.log(`[PAGINATION] Page ${pageNum}, Limit ${limitNum}, Total products: ${totalProducts}`);
     }
 
     if (!products || products.length === 0) {
@@ -1422,12 +1546,20 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
             outOfStockItems: 0,
             inStockItems: 0,
           },
-          center: targetCenter,
+          centers: targetCenters,
           filters: {
-            center: targetCenterId,
+            centers: targetCenterIds,
+            reseller: resellerId || null,
+            resellerName: selectedReseller?.businessName || null,
             product: product || "all",
+            products: productIds || "all",
             search: search || "",
             category: category || "all",
+            startDate: startDate || null,
+            endDate: endDate || null,
+            stockStatus: stockStatus || "all",
+            minStock: minStock || null,
+            maxStock: maxStock || null,
           },
           permissions: {
             canViewAllCenters: permissions.available_stock_all_center,
@@ -1436,7 +1568,6 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
         },
       };
 
-      // Only include pagination for non-export requests
       if (!isExport) {
         responseData.data.pagination = {
           currentPage: pageNum,
@@ -1451,132 +1582,171 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
       return res.status(200).json(responseData);
     }
 
-    const productIds = products.map((product) => product._id);
-    let stockData = [];
+    const productIds_list = products.map((product) => product._id);
     
-    const damageReturnData = await DamageReturn.aggregate([
-      {
-        $match: {
-          center: new mongoose.Types.ObjectId(targetCenterId), 
-          status: "approved",
-          product: { $in: productIds }
-        }
-      },
-      {
-        $group: {
+    // ========== DATE RANGE FILTER - PROPERLY IMPLEMENTED ==========
+    const dateFilter = {};
+    
+    // CRITICAL FIX: Date filter for all stock-related queries
+    if (startDate || endDate) {
+      dateFilter.createdAt = {};
+      
+      if (startDate) {
+        const startDateTime = new Date(startDate);
+        startDateTime.setHours(0, 0, 0, 0);
+        dateFilter.createdAt.$gte = startDateTime;
+        console.log(`[DATE FILTER] Start date: ${startDateTime.toISOString()}`);
+      }
+      
+      if (endDate) {
+        const endDateTime = new Date(endDate);
+        endDateTime.setHours(23, 59, 59, 999);
+        dateFilter.createdAt.$lte = endDateTime;
+        console.log(`[DATE FILTER] End date: ${endDateTime.toISOString()}`);
+      }
+    } else {
+      console.log(`[DATE FILTER] No date filter applied`);
+    }
+
+    // Get stock data for all centers
+    let allStockData = [];
+    
+    for (const center of targetCenters) {
+      let centerStockInfo = [];
+      
+      // Damage Return with date filter
+      const damageReturnMatch = {
+        center: center._id,
+        status: "approved",
+        product: { $in: productIds_list }
+      };
+      
+      if (startDate || endDate) {
+        damageReturnMatch.createdAt = dateFilter.createdAt;
+        console.log(`[DAMAGE RETURN] Applying date filter to damage returns for center ${center.centerName}`);
+      }
+      
+      const damageReturnData = await DamageReturn.aggregate([
+        { $match: damageReturnMatch },
+        { $group: {
           _id: "$product",
           damageReturnQuantity: { $sum: "$quantity" },
           damageReturnEntries: { $sum: 1 }
-        }
-      }
-    ]);
+        }}
+      ]);
 
-    const damageReturnMap = new Map();
-    damageReturnData.forEach(item => {
-      damageReturnMap.set(item._id.toString(), {
-        damageReturnQuantity: item.damageReturnQuantity,
-        damageReturnEntries: item.damageReturnEntries
+      const damageReturnMap = new Map();
+      damageReturnData.forEach(item => {
+        damageReturnMap.set(item._id.toString(), {
+          damageReturnQuantity: item.damageReturnQuantity,
+          damageReturnEntries: item.damageReturnEntries
+        });
       });
-    });
 
-    if (targetCenter.centerType === "Outlet") {
-      const [outletStockData, purchaseData] = await Promise.all([
-        OutletStock.find({
-          outlet: targetCenterId,
-          product: { $in: productIds },
-        }).select(
-          "product totalQuantity availableQuantity inTransitQuantity serialNumbers"
-        ).lean(),
+      if (center.centerType === "Outlet") {
+        // Outlet stock query with date filter on purchase
+        const purchaseMatch = {
+          outlet: center._id,
+          "products.product": { $in: productIds_list }
+        };
+        
+        if (startDate || endDate) {
+          purchaseMatch.createdAt = dateFilter.createdAt;
+          console.log(`[OUTLET ${center.centerName}] Applying date filter to purchases`);
+        }
+        
+        const [outletStockData, purchaseData] = await Promise.all([
+          OutletStock.find({
+            outlet: center._id,
+            product: { $in: productIds_list },
+          }).select(
+            "product totalQuantity availableQuantity inTransitQuantity serialNumbers"
+          ).lean(),
 
-        StockPurchase.aggregate([
-          {
-            $match: {
-              outlet: targetCenterId,
-              "products.product": { $in: productIds },
-            },
-          },
-          {
-            $unwind: "$products",
-          },
-          {
-            $match: {
-              "products.product": { $in: productIds },
-            },
-          },
-          {
-            $group: {
+          StockPurchase.aggregate([
+            { $match: purchaseMatch },
+            { $unwind: "$products" },
+            { $match: { "products.product": { $in: productIds_list } }},
+            { $group: {
               _id: "$products.product",
               totalPurchased: { $sum: "$products.purchasedQuantity" },
               totalAvailable: { $sum: "$products.availableQuantity" },
               purchaseCount: { $sum: 1 },
-            },
-          },
-        ]),
-      ]);
+            }},
+          ]),
+        ]);
 
-      const outletStockMap = new Map();
-      outletStockData.forEach((item) => {
-        const damagedQuantity = item.serialNumbers.filter(
-          (sn) => sn.status === "damaged"
-        ).length;
-        const damageReturnInfo = damageReturnMap.get(item.product.toString());
+        const outletStockMap = new Map();
+        outletStockData.forEach((item) => {
+          const damagedQuantity = item.serialNumbers.filter(
+            (sn) => sn.status === "damaged"
+          ).length;
+          const damageReturnInfo = damageReturnMap.get(item.product.toString());
 
-        outletStockMap.set(item.product.toString(), {
-          currentTotalQuantity: item.totalQuantity,
-          currentAvailableQuantity: item.availableQuantity,
-          currentInTransitQuantity: item.inTransitQuantity,
-          serialNumbersCount: item.serialNumbers.length,
-          hasSerialNumbers: item.serialNumbers.length > 0,
-          damagedQuantity: damagedQuantity,
-          damageReturnQuantity: damageReturnInfo?.damageReturnQuantity || 0,
-          damageReturnEntries: damageReturnInfo?.damageReturnEntries || 0,
-          effectiveAvailableQuantity: Math.max(
-            0,
-            item.availableQuantity - damagedQuantity
-          ),
+          outletStockMap.set(item.product.toString(), {
+            currentTotalQuantity: item.totalQuantity,
+            currentAvailableQuantity: item.availableQuantity,
+            currentInTransitQuantity: item.inTransitQuantity,
+            serialNumbersCount: item.serialNumbers.length,
+            hasSerialNumbers: item.serialNumbers.length > 0,
+            damagedQuantity: damagedQuantity,
+            damageReturnQuantity: damageReturnInfo?.damageReturnQuantity || 0,
+            damageReturnEntries: damageReturnInfo?.damageReturnEntries || 0,
+            effectiveAvailableQuantity: Math.max(
+              0,
+              item.availableQuantity - damagedQuantity
+            ),
+          });
         });
-      });
 
-      const purchaseMap = new Map();
-      purchaseData.forEach((item) => {
-        purchaseMap.set(item._id.toString(), {
-          totalPurchased: item.totalPurchased,
-          totalAvailable: item.totalAvailable,
-          purchaseCount: item.purchaseCount,
+        const purchaseMap = new Map();
+        purchaseData.forEach((item) => {
+          purchaseMap.set(item._id.toString(), {
+            totalPurchased: item.totalPurchased,
+            totalAvailable: item.totalAvailable,
+            purchaseCount: item.purchaseCount,
+          });
         });
-      });
 
-      stockData = productIds.map((productId) => {
-        const outletStock = outletStockMap.get(productId.toString());
-        const purchaseInfo = purchaseMap.get(productId.toString());
+        centerStockInfo = productIds_list.map((productId) => {
+          const outletStock = outletStockMap.get(productId.toString());
+          const purchaseInfo = purchaseMap.get(productId.toString());
 
-        return {
-          _id: productId,
-          totalPurchased: purchaseInfo?.totalPurchased || 0,
-          totalAvailable: purchaseInfo?.totalAvailable || 0,
-          purchaseCount: purchaseInfo?.purchaseCount || 0,
-          currentTotalQuantity: outletStock?.currentTotalQuantity || 0,
-          currentAvailableQuantity: outletStock?.currentAvailableQuantity || 0,
-          currentInTransitQuantity: outletStock?.currentInTransitQuantity || 0,
-          serialNumbersCount: outletStock?.serialNumbersCount || 0,
-          hasSerialNumbers: outletStock?.hasSerialNumbers || false,
-          damagedQuantity: outletStock?.damagedQuantity || 0,
-          damageReturnQuantity: outletStock?.damageReturnQuantity || 0,
-          damageReturnEntries: outletStock?.damageReturnEntries || 0,
-          effectiveAvailableQuantity:
-            outletStock?.effectiveAvailableQuantity || 0,
+          return {
+            _id: productId,
+            centerId: center._id,
+            centerName: center.centerName,
+            centerCode: center.centerCode,
+            centerType: center.centerType,
+            reseller: center.reseller,
+            totalPurchased: purchaseInfo?.totalPurchased || 0,
+            totalAvailable: purchaseInfo?.totalAvailable || 0,
+            purchaseCount: purchaseInfo?.purchaseCount || 0,
+            currentTotalQuantity: outletStock?.currentTotalQuantity || 0,
+            currentAvailableQuantity: outletStock?.currentAvailableQuantity || 0,
+            currentInTransitQuantity: outletStock?.currentInTransitQuantity || 0,
+            serialNumbersCount: outletStock?.serialNumbersCount || 0,
+            hasSerialNumbers: outletStock?.hasSerialNumbers || false,
+            damagedQuantity: outletStock?.damagedQuantity || 0,
+            damageReturnQuantity: outletStock?.damageReturnQuantity || 0,
+            damageReturnEntries: outletStock?.damageReturnEntries || 0,
+            effectiveAvailableQuantity: outletStock?.effectiveAvailableQuantity || 0,
+          };
+        });
+      } else if (center.centerType === "Center") {
+        const centerStockMatch = {
+          center: center._id,
+          product: { $in: productIds_list }
         };
-      });
-    } else if (targetCenter.centerType === "Center") {
-      const centerStockData = await CenterStock.aggregate([
-        {
-          $match: {
-            center: new mongoose.Types.ObjectId(targetCenterId),
-            product: { $in: productIds },
-          },
-        },
-        {
-          $addFields: {
+        
+        if (startDate || endDate) {
+          centerStockMatch.createdAt = dateFilter.createdAt;
+          console.log(`[CENTER ${center.centerName}] Applying date filter to center stock`);
+        }
+        
+        const centerStockData = await CenterStock.aggregate([
+          { $match: centerStockMatch },
+          { $addFields: {
             damagedQuantity: {
               $size: {
                 $filter: {
@@ -1595,24 +1765,15 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
                 },
               },
             },
-          },
-        },
-        {
-          $lookup: {
+          }},
+          { $lookup: {
             from: "products",
             localField: "product",
             foreignField: "_id",
             as: "productDetails",
-          },
-        },
-        {
-          $unwind: {
-            path: "$productDetails",
-            preserveNullAndEmptyArrays: true,
-          },
-        },
-        {
-          $group: {
+          }},
+          { $unwind: { path: "$productDetails", preserveNullAndEmptyArrays: true }},
+          { $group: {
             _id: "$product",
             totalQuantity: { $sum: "$totalQuantity" },
             availableQuantity: { $sum: "$availableQuantity" },
@@ -1621,10 +1782,8 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
             availableSerialsCount: { $sum: "$availableSerialsCount" },
             stockEntries: { $sum: 1 },
             trackSerialNumber: { $first: "$productDetails.trackSerialNumber" },
-          },
-        },
-        {
-          $project: {
+          }},
+          { $project: {
             totalQuantity: 1,
             availableQuantity: 1,
             inTransitQuantity: 1,
@@ -1636,87 +1795,68 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
               $cond: {
                 if: { $eq: ["$trackSerialNumber", "Yes"] },
                 then: "$availableSerialsCount",
-                else: {
-                  $max: [
-                    0,
-                    { $subtract: ["$availableQuantity", "$damagedQuantity"] },
-                  ],
-                },
+                else: { $max: [0, { $subtract: ["$availableQuantity", "$damagedQuantity"] }] },
               },
             },
-          },
-        },
-      ]);
+          }},
+        ]);
 
-      stockData = centerStockData.map(item => {
-        const damageReturnInfo = damageReturnMap.get(item._id.toString());
-        return {
-          ...item,
-          damageReturnQuantity: damageReturnInfo?.damageReturnQuantity || 0,
-          damageReturnEntries: damageReturnInfo?.damageReturnEntries || 0
-        };
-      });
-      const existingProductIds = new Set(centerStockData.map(item => item._id.toString()));
-      const missingProducts = productIds.filter(id => !existingProductIds.has(id.toString()));
-      
-      for (const productId of missingProducts) {
-        const damageReturnInfo = damageReturnMap.get(productId.toString());
-        if (damageReturnInfo && damageReturnInfo.damageReturnQuantity > 0) {
-          stockData.push({
-            _id: productId,
-            totalQuantity: 0,
-            availableQuantity: 0,
-            inTransitQuantity: 0,
-            damagedQuantity: 0,
-            availableSerialsCount: 0,
-            stockEntries: 0,
-            trackSerialNumber: "No",
-            effectiveAvailableQuantity: 0,
-            damageReturnQuantity: damageReturnInfo.damageReturnQuantity,
-            damageReturnEntries: damageReturnInfo.damageReturnEntries
-          });
+        centerStockInfo = centerStockData.map(item => {
+          const damageReturnInfo = damageReturnMap.get(item._id.toString());
+          return {
+            ...item,
+            centerId: center._id,
+            centerName: center.centerName,
+            centerCode: center.centerCode,
+            centerType: center.centerType,
+            reseller: center.reseller,
+            damageReturnQuantity: damageReturnInfo?.damageReturnQuantity || 0,
+            damageReturnEntries: damageReturnInfo?.damageReturnEntries || 0
+          };
+        });
+        
+        const existingProductIds = new Set(centerStockData.map(item => item._id.toString()));
+        const missingProducts = productIds_list.filter(id => !existingProductIds.has(id.toString()));
+        
+        for (const productId of missingProducts) {
+          const damageReturnInfo = damageReturnMap.get(productId.toString());
+          if (damageReturnInfo && damageReturnInfo.damageReturnQuantity > 0) {
+            centerStockInfo.push({
+              _id: productId,
+              centerId: center._id,
+              centerName: center.centerName,
+              centerCode: center.centerCode,
+              centerType: center.centerType,
+              reseller: center.reseller,
+              totalQuantity: 0,
+              availableQuantity: 0,
+              inTransitQuantity: 0,
+              damagedQuantity: 0,
+              availableSerialsCount: 0,
+              stockEntries: 0,
+              trackSerialNumber: "No",
+              effectiveAvailableQuantity: 0,
+              damageReturnQuantity: damageReturnInfo.damageReturnQuantity,
+              damageReturnEntries: damageReturnInfo.damageReturnEntries
+            });
+          }
         }
       }
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid center type",
-      });
+      
+      allStockData.push(...centerStockInfo);
     }
 
+    // Build stock map
     const stockMap = new Map();
-    stockData.forEach((item) => {
-      if (targetCenter.centerType === "Outlet") {
-        stockMap.set(item._id.toString(), {
-          totalPurchased: item.totalPurchased,
-          totalAvailable: item.totalAvailable,
-          purchaseCount: item.purchaseCount,
-          currentTotalQuantity: item.currentTotalQuantity,
-          currentAvailableQuantity: item.currentAvailableQuantity,
-          currentInTransitQuantity: item.currentInTransitQuantity,
-          serialNumbersCount: item.serialNumbersCount,
-          hasSerialNumbers: item.hasSerialNumbers,
-          damagedQuantity: item.damagedQuantity,
-          damageReturnQuantity: item.damageReturnQuantity,
-          damageReturnEntries: item.damageReturnEntries,
-          effectiveAvailableQuantity: item.effectiveAvailableQuantity,
-        });
-      } else {
-        stockMap.set(item._id.toString(), {
-          totalQuantity: item.totalQuantity,
-          availableQuantity: item.availableQuantity,
-          inTransitQuantity: item.inTransitQuantity,
-          damagedQuantity: item.damagedQuantity,
-          damageReturnQuantity: item.damageReturnQuantity,
-          damageReturnEntries: item.damageReturnEntries,
-          availableSerialsCount: item.availableSerialsCount,
-          stockEntries: item.stockEntries,
-          effectiveAvailableQuantity: item.effectiveAvailableQuantity,
-        });
-      }
+    allStockData.forEach((item) => {
+      const key = `${item.centerId}_${item._id}`;
+      stockMap.set(key, item);
     });
 
-    const formattedProducts = products.map((product) => {
+    // Format products with stock data
+    let formattedProducts = [];
+    
+    for (const product of products) {
       const productId = product._id.toString();
       const productCategory = product.productCategory
         ? {
@@ -1725,38 +1865,10 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
             code: product.productCategory.categoryCode,
           }
         : null;
-
-      let stockInfo = {};
-
-      if (targetCenter.centerType === "Outlet") {
-        const stockData = stockMap.get(productId) || {
-          currentTotalQuantity: 0,
-          currentAvailableQuantity: 0,
-          currentInTransitQuantity: 0,
-          serialNumbersCount: 0,
-          hasSerialNumbers: false,
-          damagedQuantity: 0,
-          damageReturnQuantity: 0,
-          damageReturnEntries: 0,
-          effectiveAvailableQuantity: 0,
-        };
-
-        stockInfo = {
-          totalQuantity: stockData.currentTotalQuantity,
-          availableQuantity: stockData.currentAvailableQuantity,
-          inTransitQuantity: stockData.currentInTransitQuantity,
-          consumedQuantity: 0,
-          damagedQuantity: stockData.damagedQuantity,
-          damageReturnQuantity: stockData.damageReturnQuantity,
-          damageReturnEntries: stockData.damageReturnEntries,
-          availableSerialsCount: stockData.serialNumbersCount,
-          consumedSerialsCount: 0,
-          inTransitSerialsCount: 0,
-          transferredSerialsCount: 0,
-          effectiveAvailableQuantity: stockData.effectiveAvailableQuantity,
-        };
-      } else {
-        const stockData = stockMap.get(productId) || {
+      
+      for (const center of targetCenters) {
+        const stockKey = `${center._id}_${productId}`;
+        const stockData = stockMap.get(stockKey) || {
           totalQuantity: 0,
           availableQuantity: 0,
           inTransitQuantity: 0,
@@ -1764,63 +1876,113 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
           damageReturnQuantity: 0,
           damageReturnEntries: 0,
           availableSerialsCount: 0,
-          stockEntries: 0,
           effectiveAvailableQuantity: 0,
+          totalPurchased: 0,
+          currentAvailableQuantity: 0,
         };
-
-        stockInfo = {
-          totalQuantity: stockData.totalQuantity,
-          availableQuantity: stockData.availableQuantity,
-          inTransitQuantity: stockData.inTransitQuantity,
-          consumedQuantity: 0,
-          damagedQuantity: stockData.damagedQuantity,
-          damageReturnQuantity: stockData.damageReturnQuantity,
-          damageReturnEntries: stockData.damageReturnEntries,
-          availableSerialsCount: stockData.availableSerialsCount,
-          consumedSerialsCount: 0,
-          inTransitSerialsCount: 0,
-          transferredSerialsCount: 0,
-          effectiveAvailableQuantity: stockData.effectiveAvailableQuantity,
-        };
-      }
-
-      const stockStatus =
-        stockInfo.effectiveAvailableQuantity === 0
+        
+        let stockInfo = {};
+        
+        if (center.centerType === "Outlet") {
+          stockInfo = {
+            totalQuantity: stockData.currentTotalQuantity || 0,
+            availableQuantity: stockData.currentAvailableQuantity || 0,
+            inTransitQuantity: stockData.currentInTransitQuantity || 0,
+            consumedQuantity: 0,
+            damagedQuantity: stockData.damagedQuantity || 0,
+            damageReturnQuantity: stockData.damageReturnQuantity || 0,
+            damageReturnEntries: stockData.damageReturnEntries || 0,
+            availableSerialsCount: stockData.serialNumbersCount || 0,
+            consumedSerialsCount: 0,
+            inTransitSerialsCount: 0,
+            transferredSerialsCount: 0,
+            effectiveAvailableQuantity: stockData.effectiveAvailableQuantity || 0,
+          };
+        } else {
+          stockInfo = {
+            totalQuantity: stockData.totalQuantity || 0,
+            availableQuantity: stockData.availableQuantity || 0,
+            inTransitQuantity: stockData.inTransitQuantity || 0,
+            consumedQuantity: 0,
+            damagedQuantity: stockData.damagedQuantity || 0,
+            damageReturnQuantity: stockData.damageReturnQuantity || 0,
+            damageReturnEntries: stockData.damageReturnEntries || 0,
+            availableSerialsCount: stockData.availableSerialsCount || 0,
+            consumedSerialsCount: 0,
+            inTransitSerialsCount: 0,
+            transferredSerialsCount: 0,
+            effectiveAvailableQuantity: stockData.effectiveAvailableQuantity || 0,
+          };
+        }
+        
+        const effectiveQty = stockInfo.effectiveAvailableQuantity;
+        
+        // Apply stock status filter
+        let includeProduct = true;
+        if (stockStatus) {
+          if (stockStatus === "out_of_stock" && effectiveQty !== 0) includeProduct = false;
+          if (stockStatus === "low_stock" && (effectiveQty === 0 || effectiveQty >= 10)) includeProduct = false;
+          if (stockStatus === "in_stock" && effectiveQty === 0) includeProduct = false;
+        }
+        
+        if (minStock && effectiveQty < parseInt(minStock)) includeProduct = false;
+        if (maxStock && effectiveQty > parseInt(maxStock)) includeProduct = false;
+        
+        if (!includeProduct) continue;
+        
+        const stockStatusText = effectiveQty === 0
           ? "out_of_stock"
-          : stockInfo.effectiveAvailableQuantity < 10
+          : effectiveQty < 10
           ? "low_stock"
           : "in_stock";
+        
+        formattedProducts.push({
+          _id: product._id,
+          product: product._id,
+          productName: product.productTitle,
+          productCode: product.productCode,
+          productDescription: product.description,
+          productPrice: product.productPrice,
+          productImage: product.productImage,
+          productCategory: productCategory,
+          trackSerialNumber: product.trackSerialNumber,
+          center: center._id,
+          centerName: center.centerName,
+          centerCode: center.centerCode,
+          centerType: center.centerType,
+          resellerId: center.reseller?._id,
+          resellerName: center.reseller?.businessName,
+          ...stockInfo,
+          stockStatus: stockStatusText,
+          lastUpdated: new Date().toISOString(),
+          serialNumbers: [],
+        });
+      }
+    }
 
-      return {
-        _id: product._id,
-        product: product._id,
-        productName: product.productTitle,
-        productCode: product.productCode,
-        productDescription: product.description,
-        productPrice: product.productPrice,
-        productImage: product.productImage,
-        productCategory: productCategory,
-        trackSerialNumber: product.trackSerialNumber,
-        center: targetCenterId,
-        centerName: targetCenter.centerName,
-        centerCode: targetCenter.centerCode,
-        centerType: targetCenter.centerType,
-        ...stockInfo,
-        stockStatus: stockStatus,
-        lastUpdated: new Date().toISOString(),
-        serialNumbers: [],
-      };
-    });
-
+    // Sorting
     const validSortFields = [
       "productName", "productCode", "effectiveAvailableQuantity", 
-      "stockStatus", "totalQuantity", "availableQuantity", "damageReturnQuantity"
+      "stockStatus", "totalQuantity", "availableQuantity", "damageReturnQuantity",
+      "centerName", "centerCode", "resellerName"
     ];
     const actualSortBy = validSortFields.includes(sortBy) ? sortBy : "productName";
     
     formattedProducts.sort((a, b) => {
-      const aValue = a[actualSortBy];
-      const bValue = b[actualSortBy];
+      let aValue = a[actualSortBy];
+      let bValue = b[actualSortBy];
+      
+      if (actualSortBy === "effectiveAvailableQuantity" || 
+          actualSortBy === "totalQuantity" || 
+          actualSortBy === "availableQuantity" ||
+          actualSortBy === "damageReturnQuantity") {
+        aValue = Number(aValue) || 0;
+        bValue = Number(bValue) || 0;
+      } else {
+        aValue = String(aValue || "").toLowerCase();
+        bValue = String(bValue || "").toLowerCase();
+      }
+      
       const multiplier = sortOrder === "desc" ? -1 : 1;
       
       if (aValue < bValue) return -1 * multiplier;
@@ -1828,59 +1990,163 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
       return 0;
     });
 
+    // Summary
     const summary = {
       totalProducts: formattedProducts.length,
-      totalQuantity: formattedProducts.reduce(
-        (sum, product) => sum + product.totalQuantity,
-        0
-      ),
-      totalAvailable: formattedProducts.reduce(
-        (sum, product) => sum + product.availableQuantity,
-        0
-      ),
-      totalInTransit: formattedProducts.reduce(
-        (sum, product) => sum + product.inTransitQuantity,
-        0
-      ),
-      totalConsumed: formattedProducts.reduce(
-        (sum, product) => sum + product.consumedQuantity,
-        0
-      ),
-      totalDamaged: formattedProducts.reduce(
-        (sum, product) => sum + product.damagedQuantity,
-        0
-      ),
-      totalDamageReturn: formattedProducts.reduce(
-        (sum, product) => sum + product.damageReturnQuantity,
-        0
-      ),
-      totalEffectiveAvailable: formattedProducts.reduce(
-        (sum, product) => sum + product.effectiveAvailableQuantity,
-        0
-      ),
-      lowStockItems: formattedProducts.filter(
-        (product) => product.stockStatus === "low_stock"
-      ).length,
-      outOfStockItems: formattedProducts.filter(
-        (product) => product.stockStatus === "out_of_stock"
-      ).length,
-      inStockItems: formattedProducts.filter(
-        (product) => product.stockStatus === "in_stock"
-      ).length,
+      totalQuantity: formattedProducts.reduce((sum, p) => sum + p.totalQuantity, 0),
+      totalAvailable: formattedProducts.reduce((sum, p) => sum + p.availableQuantity, 0),
+      totalInTransit: formattedProducts.reduce((sum, p) => sum + p.inTransitQuantity, 0),
+      totalConsumed: formattedProducts.reduce((sum, p) => sum + p.consumedQuantity, 0),
+      totalDamaged: formattedProducts.reduce((sum, p) => sum + p.damagedQuantity, 0),
+      totalDamageReturn: formattedProducts.reduce((sum, p) => sum + p.damageReturnQuantity, 0),
+      totalEffectiveAvailable: formattedProducts.reduce((sum, p) => sum + p.effectiveAvailableQuantity, 0),
+      lowStockItems: formattedProducts.filter(p => p.stockStatus === "low_stock").length,
+      outOfStockItems: formattedProducts.filter(p => p.stockStatus === "out_of_stock").length,
+      inStockItems: formattedProducts.filter(p => p.stockStatus === "in_stock").length,
     };
 
+    // ========== EXCEL EXPORT HANDLING ==========
+    if (isExport === "true" || isExport === true) {
+      try {
+        console.log(`[EXPORT] Generating Excel file with ${formattedProducts.length} records`);
+        
+        // Prepare data for Excel
+        const excelData = formattedProducts.map(item => ({
+          'Product Name': item.productName,
+          'Product Code': item.productCode,
+          'Product Category': item.productCategory?.name || 'N/A',
+          'Reseller Name': item.resellerName || 'N/A',
+          'Center Name': item.centerName,
+          'Center Code': item.centerCode,
+          'Center Type': item.centerType,
+          'Total Quantity': item.totalQuantity,
+          'Available Quantity': item.availableQuantity,
+          'In Transit Quantity': item.inTransitQuantity,
+          'Damaged Quantity': item.damagedQuantity,
+          'Damage Return Quantity': item.damageReturnQuantity,
+          'Effective Available Quantity': item.effectiveAvailableQuantity,
+          'Stock Status': item.stockStatus === 'out_of_stock' ? 'Out of Stock' : 
+                         item.stockStatus === 'low_stock' ? 'Low Stock' : 'In Stock',
+          'Track Serial Number': item.trackSerialNumber === 'Yes' ? 'Yes' : 'No',
+          'Product Price': item.productPrice || 0,
+          'Last Updated': new Date(item.lastUpdated).toLocaleString(),
+        }));
+        
+        // Add summary sheet
+        const summaryData = [{
+          'Report Generated': new Date().toLocaleString(),
+          'Date Range': `${startDate || 'All'} to ${endDate || 'All'}`,
+          'Reseller Filter': selectedReseller?.businessName || 'All Resellers',
+          'Centers': targetCenters.map(c => c.centerName).join(', '),
+          'Total Products': summary.totalProducts,
+          'Total Quantity': summary.totalQuantity,
+          'Total Available': summary.totalAvailable,
+          'Total Effective Available': summary.totalEffectiveAvailable,
+          'Low Stock Items': summary.lowStockItems,
+          'Out of Stock Items': summary.outOfStockItems,
+          'In Stock Items': summary.inStockItems,
+        }];
+        
+        // Create workbook
+        const workbook = XLSX.utils.book_new();
+        
+        // Main data sheet
+        const mainSheet = XLSX.utils.json_to_sheet(excelData);
+        
+        // Set column widths for better readability
+        mainSheet['!cols'] = [
+          { wch: 30 }, // Product Name
+          { wch: 20 }, // Product Code
+          { wch: 20 }, // Product Category
+          { wch: 25 }, // Reseller Name
+          { wch: 25 }, // Center Name
+          { wch: 15 }, // Center Code
+          { wch: 15 }, // Center Type
+          { wch: 15 }, // Total Quantity
+          { wch: 15 }, // Available Quantity
+          { wch: 15 }, // In Transit Quantity
+          { wch: 15 }, // Damaged Quantity
+          { wch: 15 }, // Damage Return Quantity
+          { wch: 15 }, // Effective Available Quantity
+          { wch: 15 }, // Stock Status
+          { wch: 15 }, // Track Serial Number
+          { wch: 15 }, // Product Price
+          { wch: 20 }, // Last Updated
+        ];
+        
+        XLSX.utils.book_append_sheet(workbook, mainSheet, 'Stock Report');
+        
+        // Summary sheet
+        const summarySheet = XLSX.utils.json_to_sheet(summaryData);
+        XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+        
+        // Filters applied sheet
+        const filtersData = [{
+          'Filter Type': 'Applied Value',
+          'Start Date': startDate || 'Not Applied',
+          'End Date': endDate || 'Not Applied',
+          'Reseller': selectedReseller?.businessName || 'All Resellers',
+          'Reseller ID': resellerId || 'All',
+          'Centers': targetCenters.map(c => c.centerName).join(', '),
+          'Center IDs': targetCenterIds.join(', '),
+          'Stock Status': stockStatus || 'All',
+          'Search Term': search || 'None',
+          'Category': category || 'All',
+          'Min Stock': minStock || 'None',
+          'Max Stock': maxStock || 'None',
+          'Product IDs': productIds || 'All',
+        }];
+        
+        const filtersSheet = XLSX.utils.json_to_sheet(filtersData);
+        XLSX.utils.book_append_sheet(workbook, filtersSheet, 'Applied Filters');
+        
+        // Generate Excel file
+        const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+        
+        // Set response headers for file download
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=stock_report_${new Date().toISOString().split('T')[0]}.xlsx`);
+        res.setHeader('Content-Length', excelBuffer.length);
+        
+        return res.send(excelBuffer);
+        
+      } catch (exportError) {
+        console.error("[EXPORT ERROR]", exportError);
+        return res.status(500).json({
+          success: false,
+          message: "Error generating Excel export",
+          error: exportError.message
+        });
+      }
+    }
+
+    // ========== NON-EXPORT RESPONSE ==========
     const responseData = {
       success: true,
-      message: `Products with stock information retrieved successfully for ${targetCenter.centerType.toLowerCase()}`,
+      message: `Products with stock information retrieved successfully`,
       data: {
         stock: formattedProducts,
         summary: summary,
-        center: targetCenter,
+        centers: targetCenters.map(c => ({
+          _id: c._id,
+          centerName: c.centerName,
+          centerCode: c.centerCode,
+          centerType: c.centerType,
+          reseller: c.reseller
+        })),
         filters: {
-          center: targetCenterId,
+          centers: targetCenterIds,
+          reseller: resellerId || null,
+          resellerName: selectedReseller?.businessName || null,
           product: product || "all",
+          products: productIds || "all",
           search: search || "",
           category: category || "all",
+          startDate: startDate || null,
+          endDate: endDate || null,
+          stockStatus: stockStatus || "all",
+          minStock: minStock || null,
+          maxStock: maxStock || null,
         },
         permissions: {
           canViewAllCenters: permissions.available_stock_all_center,
@@ -1889,21 +2155,27 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
       },
     };
 
-    // Only include pagination for non-export requests
     if (!isExport) {
+      const totalFilteredProducts = formattedProducts.length;
       responseData.data.pagination = {
         currentPage: pageNum,
-        totalPages: Math.ceil(totalProducts / limitNum),
-        totalItems: totalProducts,
+        totalPages: Math.ceil(totalFilteredProducts / limitNum),
+        totalItems: totalFilteredProducts,
         itemsPerPage: limitNum,
-        hasNext: pageNum < Math.ceil(totalProducts / limitNum),
+        hasNext: pageNum < Math.ceil(totalFilteredProducts / limitNum),
         hasPrev: pageNum > 1,
       };
+      
+      const startIndex = (pageNum - 1) * limitNum;
+      const endIndex = startIndex + limitNum;
+      responseData.data.stock = formattedProducts.slice(startIndex, endIndex);
     }
 
+    console.log(`[SUCCESS] Returned ${formattedProducts.length} stock records`);
     res.status(200).json(responseData);
+    
   } catch (error) {
-    console.error("Error retrieving products with stock:", error);
+    console.error("[ERROR] Error retrieving products with stock:", error);
     handleControllerError(error, res);
   }
 };
@@ -2317,8 +2589,13 @@ const buildStockUsageSortOptions = (sortBy = "date", sortOrder = "desc") => {
 ///////////*************** below is fetch the serial numbers *******/
 
 
+
+
 export const getStockUsageByCenter = async (req, res) => {
   try {
+    console.log('========== START getStockUsageByCenter ==========');
+    console.log('Full req.query:', JSON.stringify(req.query, null, 2));
+    
     const { hasAccess, permissions, userCenter } =
       checkAvailableStockPermissions(req, [
         "available_stock_own_center",
@@ -2338,249 +2615,406 @@ export const getStockUsageByCenter = async (req, res) => {
       limit = 100,
       sortBy = "date",
       sortOrder = "desc",
+      startDate,
+      endDate,
+      export: isExport = false,
+      centerId,
+      center,
+      centerIds,
+      resellerId,
+      usageType,
+      status,
+      product,
+      productId,
+      search,
       ...filterParams
     } = req.query;
 
-    console.log('Received query params:', filterParams);
-    const filter = buildStockUsageFilter(
-      filterParams,
-      permissions,
-      userCenter
-    );
-    if (permissions.available_stock_all_center && !filterParams.centerId && !filterParams.center) {
-      delete filter.center;
+    console.log('Extracted params:', { page, limit, sortBy, sortOrder, startDate, endDate, isExport });
+    console.log('Filter params:', { centerId, center, centerIds, resellerId, usageType, status, product, productId, search });
+    
+    // ========== MANDATORY DATE FILTER FOR EXPORT ==========
+    if (isExport === "true" || isExport === true) {
+      if (!startDate && !endDate) {
+        return res.status(400).json({
+          success: false,
+          message: "Date range (startDate and/or endDate) is required for Excel export. Please provide at least one date filter.",
+        });
+      }
+      
+      if (startDate && isNaN(new Date(startDate).getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid startDate format: ${startDate}. Please use YYYY-MM-DD format.`
+        });
+      }
+      
+      if (endDate && isNaN(new Date(endDate).getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid endDate format: ${endDate}. Please use YYYY-MM-DD format.`
+        });
+      }
+      
+      console.log(`[EXPORT] Export requested with date filter - StartDate: ${startDate}, EndDate: ${endDate}`);
+    }
+    
+    // ========== RESELLER AND CENTER FILTER LOGIC ==========
+    let targetCenterIds = [];
+    
+    // Case 1: If centerIds provided directly
+    if (centerIds) {
+      const centerIdArray = Array.isArray(centerIds) ? centerIds : centerIds.split(',');
+      targetCenterIds = centerIdArray;
+      console.log(`Using specific center IDs: ${targetCenterIds.join(', ')}`);
+    }
+    // Case 2: If single centerId provided
+    else if (centerId) {
+      targetCenterIds = [centerId];
+      console.log(`Using single center ID: ${centerId}`);
+    }
+    // Case 3: If resellerId provided, get all centers under that reseller
+    else if (resellerId) {
+      const centersUnderReseller = await Center.find({ 
+        reseller: resellerId,
+        status: "Enable"
+      }).select("_id");
+      
+      if (centersUnderReseller.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: `No active centers found under reseller ID: ${resellerId}`,
+        });
+      }
+      
+      targetCenterIds = centersUnderReseller.map(c => c._id.toString());
+      console.log(`Found ${targetCenterIds.length} centers under reseller ${resellerId}: ${targetCenterIds.join(', ')}`);
+    }
+    // Case 4: Use user's own center
+    else {
+      const user = await User.findById(req.user._id).populate("center");
+      if (user && user.center) {
+        targetCenterIds = [user.center._id.toString()];
+        console.log(`Using user's own center: ${user.center._id}`);
+      }
+    }
+    
+    // Remove duplicates
+    targetCenterIds = [...new Set(targetCenterIds)];
+    
+    // ========== BUILD FILTER ==========
+    const filter = {};
+    
+    // Apply center filter if we have target centers
+    if (targetCenterIds.length > 0) {
+      filter.center = { $in: targetCenterIds };
+      console.log(`Filtering by centers: ${targetCenterIds.join(', ')}`);
+    }
+    
+    // Usage Type filter
+    if (usageType && usageType !== 'all') {
+      filter.usageType = usageType;
+      console.log(`Filter by usageType: ${usageType}`);
+    }
+    
+    // Status filter
+    if (status && status !== 'all') {
+      filter.status = status;
+      console.log(`Filter by status: ${status}`);
+    }
+    
+    // Date range filter
+    if (startDate || endDate) {
+      filter.date = {};
+      
+      if (startDate) {
+        const startDateTime = new Date(startDate);
+        startDateTime.setUTCHours(0, 0, 0, 0);
+        filter.date.$gte = startDateTime;
+        console.log(`Start date filter: ${filter.date.$gte.toISOString()}`);
+      }
+      
+      if (endDate) {
+        const endDateTime = new Date(endDate);
+        endDateTime.setUTCHours(23, 59, 59, 999);
+        filter.date.$lte = endDateTime;
+        console.log(`End date filter: ${filter.date.$lte.toISOString()}`);
+      }
+    }
+    
+    // Search filter
+    if (search && search !== '') {
+      filter.$or = [
+        { remark: { $regex: search, $options: "i" } },
+        { usageType: { $regex: search, $options: "i" } }
+      ];
+      console.log(`Search filter: ${search}`);
     }
 
-    console.log('Final MongoDB filter:', JSON.stringify(filter, null, 2));
+    console.log('========== FINAL MONGODB FILTER ==========');
+    console.log('Final filter:', JSON.stringify(filter, null, 2));
 
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
 
-    const sortOptions = buildStockUsageSortOptions(sortBy, sortOrder);
-    const [total, stockUsages] = await Promise.all([
-      StockUsage.countDocuments(filter),
-      StockUsage.find(filter)
-        .populate("center", "centerName centerCode centerType")
-        .populate("customer", "name username mobile")
-        .populate("fromBuilding", "buildingName displayName")
-        .populate("toBuilding", "buildingName displayName")
-        .populate("fromControlRoom", "buildingName displayName")
-        .populate({
-          path: "items.product",
-          select: "productTitle productCode productCategory trackSerialNumber",
-        })
-        .populate("createdBy", "name email")
-        .populate("approvedBy", "name email")
-        .populate("rejectedBy", "name email")
-        .sort(sortOptions)
-        .skip(skip)
-        .limit(limitNum)
-        .lean(),
-    ]);
-
-    console.log(`Found ${stockUsages.length} records out of ${total} total`);
-    console.log('Product filter param:', filterParams.product);
-
-    if (stockUsages.length === 0) {
-      const centerInfo = filter.center ? 
-        await Center.findById(filter.center).select("centerName centerCode centerType") : 
-        null;
-
-      return res.status(200).json({
-        success: true,
-        message: "No stock usage records found",
-        data: [],
-        center: centerInfo ? {
-          id: centerInfo._id,
-          name: centerInfo.centerName,
-          code: centerInfo.centerCode,
-          type: centerInfo.centerType,
-        } : null,
-        summary: {
-          totalRecords: 0,
-          totalUsage: 0,
-          totalDamage: 0,
-          byUsageType: [],
-        },
-        permissions: {
-          canViewAllCenters: permissions.available_stock_all_center,
-          canViewOwnCenter: permissions.available_stock_own_center,
-          currentAccess: permissions.available_stock_all_center
-            ? "all_centers"
-            : "own_center",
-        },
-        pagination: {
-          total: 0,
-          page: pageNum,
-          limit: limitNum,
-          totalPages: 0,
-        },
-        filters: {
-          center: filterParams.centerId || filterParams.center || "user_center",
-          usageType: filterParams.usageType || "all",
-          status: filterParams.status || "all",
-          product: filterParams.productId || filterParams.product || "all",
-          createdBy: filterParams.createdBy || "all",
-          startDate: filterParams.startDate || "all",
-          endDate: filterParams.endDate || "all",
-          search: filterParams.search || "",
-        },
-      });
+    const sortOptions = {};
+    sortOptions[sortBy === 'date' ? 'date' : 'createdAt'] = sortOrder === 'desc' ? -1 : 1;
+    
+    // ========== FETCH DATA ==========
+    let stockUsages, total;
+    
+    const query = StockUsage.find(filter)
+      .populate("center", "centerName centerCode centerType")
+      .populate("customer", "name username mobile")
+      .populate("fromBuilding", "buildingName displayName")
+      .populate("toBuilding", "buildingName displayName")
+      .populate("fromControlRoom", "buildingName displayName")
+      .populate({
+        path: "items.product",
+        select: "productTitle productCode productCategory trackSerialNumber",
+      })
+      .sort(sortOptions);
+    
+    if (isExport === "true" || isExport === true) {
+      stockUsages = await query.lean();
+      total = stockUsages.length;
+      console.log(`[EXPORT] Exporting ${total} stock usage records`);
+    } else {
+      total = await StockUsage.countDocuments(filter);
+      stockUsages = await query.skip(skip).limit(limitNum).lean();
+      console.log(`Found ${stockUsages.length} records out of ${total} total`);
     }
 
+    // Process and format the data
     const formattedData = [];
+    let totalUsageSum = 0;
+    let totalDamageSum = 0;
+    const usageTypeMap = new Map();
 
-    let totalItemsBeforeFilter = 0;
-    let totalItemsAfterFilter = 0;
-
-    stockUsages.forEach((usage) => {
-      totalItemsBeforeFilter += usage.items.length;
-
-      let itemsToProcess = usage.items;
+    for (const usage of stockUsages) {
+      let itemsToProcess = usage.items || [];
       
-      if (filterParams.product && filterParams.product !== 'all') {
-        const productFilter = buildArrayFilterStockUsage(filterParams.product);
-        if (productFilter) {
-          itemsToProcess = usage.items.filter(item => {
-            if (!item.product) return false;
-            
-            const itemProductId = item.product._id ? item.product._id.toString() : item.product.toString();
-            
-            if (typeof productFilter === 'object' && productFilter.$in) {
-              return productFilter.$in.some(prodId => 
-                itemProductId === prodId.toString()
-              );
-            } else {
-              return itemProductId === productFilter.toString();
-            }
-          });
+      // Apply product filter at item level
+      if (productId && productId !== 'all') {
+        const productIdsArray = productId.split(',');
+        itemsToProcess = itemsToProcess.filter(item => {
+          const itemProductId = item.product?._id ? item.product._id.toString() : item.product?.toString();
+          return productIdsArray.some(pid => itemProductId === pid);
+        });
+      } else if (product && product !== 'all') {
+        const productIdsArray = product.split(',');
+        itemsToProcess = itemsToProcess.filter(item => {
+          const itemProductId = item.product?._id ? item.product._id.toString() : item.product?.toString();
+          return productIdsArray.some(pid => itemProductId === pid);
+        });
+      }
+
+      for (const [itemIndex, item] of itemsToProcess.entries()) {
+        let damageQty = 0;
+        if (usage.usageType === "Damage" && usage.status === "completed") {
+          damageQty = item.quantity || 0;
         }
-      }
-      
-      totalItemsAfterFilter += itemsToProcess.length;
-      console.log(`Usage ${usage._id}: ${usage.items.length} items before, ${itemsToProcess.length} items after filter`);
+        
+        totalUsageSum += item.quantity || 0;
+        totalDamageSum += damageQty;
+        
+        // Track by usage type for summary
+        if (!usageTypeMap.has(usage.usageType)) {
+          usageTypeMap.set(usage.usageType, { totalUsage: 0, totalDamage: 0, count: 0 });
+        }
+        const typeStats = usageTypeMap.get(usage.usageType);
+        typeStats.totalUsage += item.quantity || 0;
+        typeStats.totalDamage += damageQty;
+        typeStats.count += 1;
 
-      if (itemsToProcess.length > 0) {
-        itemsToProcess.forEach((item) => {
-          let damageQty = 0;
-          if (usage.usageType === "Damage" && usage.status === "completed") {
-            damageQty = item.quantity;
-          }
+        let entityName = "N/A";
+        switch (usage.usageType) {
+          case "Customer":
+            entityName = usage.customer?.name || "Unknown Customer";
+            break;
+          case "Building":
+            entityName = usage.fromBuilding?.buildingName || "Unknown Building";
+            break;
+          case "Building to Building":
+            entityName = `${usage.fromBuilding?.buildingName || "Unknown"} → ${
+              usage.toBuilding?.buildingName || "Unknown"
+            }`;
+            break;
+          case "Control Room":
+            entityName = usage.fromControlRoom?.buildingName || "Unknown Control Room";
+            break;
+          default:
+            entityName = usage.usageType;
+        }
+        
+        const tracksSerial = item.product?.trackSerialNumber === "Yes";
+        let serialNumbers = [];
+        
+        if (tracksSerial && item.serialNumbers && item.serialNumbers.length > 0) {
+          serialNumbers = item.serialNumbers;
+        }
 
-          let entityName = "N/A";
-          switch (usage.usageType) {
-            case "Customer":
-              entityName = usage.customer?.name || "Unknown Customer";
-              break;
-            case "Building":
-              entityName = usage.fromBuilding?.buildingName || "Unknown Building";
-              break;
-            case "Building to Building":
-              entityName = `${usage.fromBuilding?.buildingName || "Unknown"} → ${
-                usage.toBuilding?.buildingName || "Unknown"
-              }`;
-              break;
-            case "Control Room":
-              entityName =
-                usage.fromControlRoom?.buildingName || "Unknown Control Room";
-              break;
-            default:
-              entityName = usage.usageType;
-          }
-          const tracksSerial = item.product?.trackSerialNumber === "Yes";
-          let serialNumbers = [];
-          
-          if (tracksSerial && item.serialNumbers && item.serialNumbers.length > 0) {
-            serialNumbers = item.serialNumbers;
-          }
-
-          formattedData.push({
-            _id: usage._id,
-            Date: usage.date.toISOString().split('T')[0],
-            Type: usage.usageType,
-            Center: usage.center?.centerName || "Unknown Center",
-            Product: item.product?.productTitle || "Unknown Product",
-            ProductCode: item.product?.productCode || "N/A",
-            "Old Stock": item.oldStock || 0,
-            Qty: item.quantity,
-            "Damage Qty": damageQty,
-            "New Stock": item.newStock || 0,
-            Entity: entityName,
-            Remark: usage.remark || "",
-            Status: usage.status,
-            "Created By": usage.createdBy?.name || "Unknown",
-            "Created At": usage.createdAt.toISOString().split('T')[0],
-            "Approved By": usage.approvedBy?.name || "N/A",
-            "Rejected By": usage.rejectedBy?.name || "N/A",
-            TrackSerialNumber: item.product?.trackSerialNumber || "No",
-            SerialNumbers: serialNumbers,
-            SerialNumberCount: serialNumbers.length,
-            SerialNumbersFormatted: serialNumbers.length > 0 
-              ? serialNumbers.join(', ') 
-              : "N/A"
-          });
-        });
-      }
-    });
-
-    console.log(`Total: ${totalItemsBeforeFilter} items before filter, ${totalItemsAfterFilter} items after filter`);
-
-    const summaryStatsPipeline = [
-      { $match: filter },
-      { $unwind: "$items" }
-    ];
-
-    if (filterParams.product && filterParams.product !== 'all') {
-      const productFilter = buildArrayFilterStockUsage(filterParams.product);
-      if (productFilter) {
-        summaryStatsPipeline.push({
-          $match: {
-            "items.product": productFilter
-          }
+        formattedData.push({
+          _id: `${usage._id}_${itemIndex}`,
+          Date: usage.date ? new Date(usage.date).toISOString().split('T')[0] : "N/A",
+          Type: usage.usageType || "N/A",
+          Center: usage.center?.centerName || "Unknown Center",
+          Product: item.product?.productTitle || "Unknown Product",
+          ProductCode: item.product?.productCode || "N/A",
+          "Old Stock": item.oldStock || 0,
+          Quantity: item.quantity || 0,
+          "Damage Quantity": damageQty,
+          "New Stock": item.newStock || 0,
+          Entity: entityName,
+          Remark: usage.remark || "",
+          Status: usage.status || "N/A",
+          "Track Serial Number": item.product?.trackSerialNumber || "No",
+          "Serial Numbers": serialNumbers.length > 0 ? serialNumbers.join(', ') : "N/A",
+          "Serial Count": serialNumbers.length,
         });
       }
     }
 
-    summaryStatsPipeline.push({
-      $group: {
-        _id: "$usageType",
-        totalUsage: { $sum: "$items.quantity" },
-        totalDamage: {
-          $sum: {
-            $cond: [
-              {
-                $and: [
-                  { $eq: ["$usageType", "Damage"] },
-                  { $eq: ["$status", "completed"] },
-                ],
-              },
-              "$items.quantity",
-              0,
-            ],
-          },
-        },
-        count: { $sum: 1 },
-      },
-    });
+    console.log(`Total Usage Sum: ${totalUsageSum}, Total Damage Sum: ${totalDamageSum}`);
+    console.log(`Unique centers in result: ${[...new Set(formattedData.map(d => d.Center))].join(', ')}`);
 
-    const summaryStats = await StockUsage.aggregate(summaryStatsPipeline);
+    // Convert usage type map to array
+    const byUsageType = Array.from(usageTypeMap.entries()).map(([type, stats]) => ({
+      _id: type,
+      totalUsage: stats.totalUsage,
+      totalDamage: stats.totalDamage,
+      count: stats.count
+    }));
 
-    const totalUsage = formattedData.reduce((sum, item) => sum + item.Qty, 0);
-    const totalDamage = formattedData.reduce(
-      (sum, item) => sum + item["Damage Qty"],
-      0
-    );
-
+    // Get center info for response
     let centerInfo = null;
-    if (filter.center) {
-      if (typeof filter.center === 'object' && filter.center.$in) {
-        centerInfo = await Center.findById(filter.center.$in[0]).select("centerName centerCode centerType");
-      } else {
-        centerInfo = await Center.findById(filter.center).select("centerName centerCode centerType");
+    if (targetCenterIds.length === 1) {
+      centerInfo = await Center.findById(targetCenterIds[0]).select("centerName centerCode centerType");
+    }
+
+    // ========== EXCEL EXPORT HANDLING ==========
+    if (isExport === "true" || isExport === true) {
+      try {
+        console.log(`[EXPORT] Generating Excel file with ${formattedData.length} records`);
+        
+        // Prepare data for Excel main sheet
+        const excelData = formattedData.map(item => ({
+          'Date': item.Date,
+          'Type': item.Type,
+          'Center': item.Center,
+          'Product': item.Product,
+          'Product Code': item.ProductCode,
+          'Old Stock': item['Old Stock'],
+          'Quantity': item.Quantity,
+          'Damage Quantity': item['Damage Quantity'],
+          'New Stock': item['New Stock'],
+          'Entity': item.Entity,
+          'Remark': item.Remark,
+          'Status': item.Status,
+          'Track Serial Number': item['Track Serial Number'],
+          'Serial Numbers': item['Serial Numbers'],
+          'Serial Count': item['Serial Count'],
+        }));
+        
+        // Summary sheet data
+        const summaryData = [{
+          'Report Generated': new Date().toLocaleString(),
+          'Date Range': `${startDate || 'All'} to ${endDate || 'All'}`,
+          'Reseller ID': resellerId || 'All',
+          'Center IDs': targetCenterIds.join(', '),
+          'Total Records': total,
+          'Total Items Used': totalUsageSum,
+          'Total Damaged Items': totalDamageSum,
+          'Unique Transactions': formattedData.length,
+        }];
+        
+        // Usage Type Summary
+        const usageTypeSummary = byUsageType.map(type => ({
+          'Usage Type': type._id,
+          'Total Usage Quantity': type.totalUsage,
+          'Total Damage Quantity': type.totalDamage,
+          'Number of Transactions': type.count,
+        }));
+        
+        // Filters applied sheet
+        const filtersData = [{
+          'Filter Name': 'Applied Value',
+          'Start Date': startDate || 'Not Applied',
+          'End Date': endDate || 'Not Applied',
+          'Reseller ID': resellerId || 'Not Applied',
+          'Center IDs': targetCenterIds.join(', ') || 'All Centers',
+          'Usage Type': usageType || 'All',
+          'Status': status || 'All',
+          'Product ID': productId || product || 'All',
+          'Search Term': search || 'None',
+          'Sort By': sortBy,
+          'Sort Order': sortOrder,
+        }];
+        
+        // Create workbook
+        const workbook = XLSX.utils.book_new();
+        
+        // Main data sheet
+        const mainSheet = XLSX.utils.json_to_sheet(excelData);
+        
+        // Set column widths
+        mainSheet['!cols'] = [
+          { wch: 12 }, // Date
+          { wch: 15 }, // Type
+          { wch: 25 }, // Center
+          { wch: 35 }, // Product
+          { wch: 15 }, // Product Code
+          { wch: 12 }, // Old Stock
+          { wch: 10 }, // Quantity
+          { wch: 12 }, // Damage Quantity
+          { wch: 12 }, // New Stock
+          { wch: 30 }, // Entity
+          { wch: 40 }, // Remark
+          { wch: 12 }, // Status
+          { wch: 15 }, // Track Serial Number
+          { wch: 40 }, // Serial Numbers
+          { wch: 12 }, // Serial Count
+        ];
+        
+        XLSX.utils.book_append_sheet(workbook, mainSheet, 'Stock Transactions');
+        
+        // Summary sheet
+        const summarySheet = XLSX.utils.json_to_sheet(summaryData);
+        XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+        
+        // Usage Type Summary sheet
+        if (usageTypeSummary.length > 0) {
+          const usageTypeSheet = XLSX.utils.json_to_sheet(usageTypeSummary);
+          XLSX.utils.book_append_sheet(workbook, usageTypeSheet, 'Usage Type Summary');
+        }
+        
+        // Filters sheet
+        const filtersSheet = XLSX.utils.json_to_sheet(filtersData);
+        XLSX.utils.book_append_sheet(workbook, filtersSheet, 'Applied Filters');
+        
+        // Generate Excel file
+        const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+        
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=stock_usage_report_${new Date().toISOString().split('T')[0]}.xlsx`);
+        res.setHeader('Content-Length', excelBuffer.length);
+        
+        return res.send(excelBuffer);
+        
+      } catch (exportError) {
+        console.error("[EXPORT ERROR]", exportError);
+        return res.status(500).json({
+          success: false,
+          message: "Error generating Excel export",
+          error: exportError.message
+        });
       }
     }
 
+    // ========== NON-EXPORT RESPONSE ==========
+    console.log('========== END getStockUsageByCenter - SUCCESS ==========');
+    
     res.status(200).json({
       success: true,
       message: "Stock usage by center retrieved successfully",
@@ -2593,9 +3027,9 @@ export const getStockUsageByCenter = async (req, res) => {
       } : null,
       summary: {
         totalRecords: total,
-        totalUsage,
-        totalDamage,
-        byUsageType: summaryStats,
+        totalUsage: totalUsageSum,
+        totalDamage: totalDamageSum,
+        byUsageType: byUsageType,
       },
       permissions: {
         canViewAllCenters: permissions.available_stock_all_center,
@@ -2604,25 +3038,27 @@ export const getStockUsageByCenter = async (req, res) => {
           ? "all_centers"
           : "own_center",
       },
-      pagination: {
+      pagination: !(isExport === "true" || isExport === true) ? {
         total,
         page: pageNum,
         limit: limitNum,
         totalPages: Math.ceil(total / limitNum),
-      },
+      } : undefined,
       filters: {
-        center: filterParams.centerId || filterParams.center || "user_center",
-        usageType: filterParams.usageType || "all",
-        status: filterParams.status || "all",
-        product: filterParams.productId || filterParams.product || "all",
-        createdBy: filterParams.createdBy || "all",
-        startDate: filterParams.startDate || "all",
-        endDate: filterParams.endDate || "all",
-        search: filterParams.search || "",
-      },
+        centers: targetCenterIds,
+        resellerId: resellerId || null,
+        usageType: usageType || "all",
+        status: status || "all",
+        product: productId || product || "all",
+        startDate: startDate || "all",
+        endDate: endDate || "all",
+        search: search || "",
+      }
     });
   } catch (error) {
-    console.error("Error fetching stock usage by center:", error);
+    console.error("========== ERROR in getStockUsageByCenter ==========");
+    console.error("Error details:", error);
+    console.error("Error stack:", error.stack);
     handleControllerError(error, res);
   }
 };

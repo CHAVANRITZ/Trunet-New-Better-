@@ -418,392 +418,500 @@ const checkStockRequestPermissions = (req, requiredPermissions = []) => {
 
 
 export const getResellerForwardedQty = async (req, res) => {
-    try {
+  try {
       const { hasAccess, permissions } = checkStockRequestPermissions(
-        req,
-        ["indent_all_center", "indent_own_center"]
+          req,
+          ["indent_all_center", "indent_own_center"]
       );
-  
+
       if (!hasAccess) {
-        return res.status(403).json({
-          success: false,
-          message: "Access denied. Required permissions missing.",
-        });
+          return res.status(403).json({
+              success: false,
+              message: "Access denied. Required permissions missing.",
+          });
       }
-  
+
       const {
-        page = 1,
-        limit = 50,
-        startDate,
-        endDate,
-        resellerId,
-        center: centerId,
-        product: productId, // Add product filter parameter
-        status = "Completed",
-        search,
-        export: isExport = false,
+          page = 1,
+          limit = 50,
+          startDate,
+          endDate,
+          resellerId,
+          center: centerId,
+          product: productId,
+          status = "Completed",
+          search,
+          export: isExport = false,
       } = req.query;
-  
-      // Helper function to parse DD-MM-YYYY format
-      const parseDate = (dateStr) => {
-        if (!dateStr) return null;
-        
-        const parts = dateStr.split('-');
-        if (parts.length === 3) {
-          const day = parseInt(parts[0], 10);
-          const month = parseInt(parts[1], 10) - 1;
-          const year = parseInt(parts[2], 10);
-          
-          if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
-            return new Date(year, month, day);
+
+      // ========== MANDATORY DATE FILTER FOR EXPORT ==========
+      if (isExport === "true" || isExport === true) {
+          if (!startDate && !endDate) {
+              return res.status(400).json({
+                  success: false,
+                  message: "Date range (startDate and/or endDate) is required for Excel export. Please provide at least one date filter.",
+              });
           }
-        }
-        
-        return new Date(dateStr);
+      }
+
+      // Helper function to parse DD-MM-YYYY format or ISO date
+      const parseDate = (dateStr) => {
+          if (!dateStr) return null;
+          
+          // Check if format is DD-MM-YYYY
+          const parts = dateStr.split('-');
+          if (parts.length === 3 && parts[0].length === 2 && parts[1].length === 2 && parts[2].length === 4) {
+              const day = parseInt(parts[0], 10);
+              const month = parseInt(parts[1], 10) - 1;
+              const year = parseInt(parts[2], 10);
+              
+              if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+                  return new Date(year, month, day);
+              }
+          }
+          
+          // Try as ISO date
+          const isoDate = new Date(dateStr);
+          if (!isNaN(isoDate.getTime())) {
+              return isoDate;
+          }
+          
+          return null;
       };
-  
-      // Build date filter
+
+      // ========== DATE RANGE FILTER - PROPERLY IMPLEMENTED ==========
       const dateFilter = {};
       if (startDate || endDate) {
-        dateFilter.date = {};
-        
-        if (startDate) {
-          const start = parseDate(startDate);
-          if (isNaN(start.getTime())) {
-            return res.status(400).json({
-              success: false,
-              message: "Invalid start date format. Please use DD-MM-YYYY format",
-            });
+          dateFilter.date = {};
+          
+          if (startDate) {
+              const start = parseDate(startDate);
+              if (!start || isNaN(start.getTime())) {
+                  return res.status(400).json({
+                      success: false,
+                      message: "Invalid start date format. Please use DD-MM-YYYY or YYYY-MM-DD format",
+                  });
+              }
+              start.setHours(0, 0, 0, 0);
+              dateFilter.date.$gte = start;
+              console.log(`[DATE FILTER] Start date: ${start.toISOString()}`);
           }
-          start.setHours(0, 0, 0, 0);
-          dateFilter.date.$gte = start;
-        }
-        
-        if (endDate) {
-          const end = parseDate(endDate);
-          if (isNaN(end.getTime())) {
-            return res.status(400).json({
-              success: false,
-              message: "Invalid end date format. Please use DD-MM-YYYY format",
-            });
+          
+          if (endDate) {
+              const end = parseDate(endDate);
+              if (!end || isNaN(end.getTime())) {
+                  return res.status(400).json({
+                      success: false,
+                      message: "Invalid end date format. Please use DD-MM-YYYY or YYYY-MM-DD format",
+                  });
+              }
+              end.setHours(23, 59, 59, 999);
+              dateFilter.date.$lte = end;
+              console.log(`[DATE FILTER] End date: ${end.toISOString()}`);
           }
-          end.setHours(23, 59, 59, 999);
-          dateFilter.date.$lte = end;
-        }
+      } else {
+          console.log(`[DATE FILTER] No date filter applied`);
       }
-  
+
       // Build status filter
       const statusFilter = status ? { status } : {};
-  
-      // First, get all centers with their reseller info
+
+      // ========== CENTER FILTER LOGIC ==========
       let centerQuery = { centerType: "Center" };
       
       // If center filter is provided, add it to the center query
       if (centerId && mongoose.Types.ObjectId.isValid(centerId)) {
-        centerQuery._id = centerId;
+          centerQuery._id = centerId;
+          console.log(`[CENTER FILTER] Filtering by center ID: ${centerId}`);
       }
       
       const centers = await Center.find(centerQuery)
-        .populate("reseller", "businessName name email mobile")
-        .select("_id centerName centerCode reseller");
-  
+          .populate("reseller", "businessName name email mobile")
+          .select("_id centerName centerCode reseller");
+
+      console.log(`[CENTERS FOUND] Total centers: ${centers.length}`);
+
       // Create maps for organizing data
       const centerToResellerMap = new Map();
       const resellerMap = new Map();
-  
+
       centers.forEach(center => {
-        if (center.reseller) {
-          const resId = center.reseller._id.toString();
-          centerToResellerMap.set(center._id.toString(), {
-            resellerId: resId,
-            resellerName: center.reseller.businessName || center.reseller.name,
-            resellerEmail: center.reseller.email,
-            resellerMobile: center.reseller.mobile,
-            centerName: center.centerName,
-            centerCode: center.centerCode,
-          });
-  
-          if (!resellerMap.has(resId)) {
-            resellerMap.set(resId, {
-              resellerId: resId,
-              resellerName: center.reseller.businessName || center.reseller.name,
-              resellerEmail: center.reseller.email,
-              resellerMobile: center.reseller.mobile,
-              products: {},
-            });
+          if (center.reseller) {
+              const resId = center.reseller._id.toString();
+              centerToResellerMap.set(center._id.toString(), {
+                  resellerId: resId,
+                  resellerName: center.reseller.businessName || center.reseller.name,
+                  resellerEmail: center.reseller.email,
+                  resellerMobile: center.reseller.mobile,
+                  centerName: center.centerName,
+                  centerCode: center.centerCode,
+              });
+
+              if (!resellerMap.has(resId)) {
+                  resellerMap.set(resId, {
+                      resellerId: resId,
+                      resellerName: center.reseller.businessName || center.reseller.name,
+                      resellerEmail: center.reseller.email,
+                      resellerMobile: center.reseller.mobile,
+                      products: {},
+                  });
+              }
           }
-        }
       });
-  
+
       // Get all center IDs that match our criteria
       let centerIds = [...centerToResellerMap.keys()];
       
-      // Apply reseller filter if provided
+      // ========== RESELLER FILTER ==========
       if (resellerId && mongoose.Types.ObjectId.isValid(resellerId)) {
-        centerIds = centerIds.filter(centerId => {
-          const resellerInfo = centerToResellerMap.get(centerId);
-          return resellerInfo && resellerInfo.resellerId === resellerId;
-        });
+          console.log(`[RESELLER FILTER] Filtering by reseller ID: ${resellerId}`);
+          centerIds = centerIds.filter(centerId => {
+              const resellerInfo = centerToResellerMap.get(centerId);
+              return resellerInfo && resellerInfo.resellerId === resellerId;
+          });
+          console.log(`[RESELLER FILTER] Centers after reseller filter: ${centerIds.length}`);
       }
-  
+
       if (centerIds.length === 0) {
-        const emptyResponse = {
-          success: true,
-          message: "No centers found",
-          data: [],
-          filters: {
-            dateRange: startDate || endDate ? { startDate, endDate } : null,
-            status,
-            resellerId: resellerId || null,
-            centerId: centerId || null,
-            productId: productId || null,
-            search: search || null,
-          },
-        };
-  
-        if (!isExport) {
-          emptyResponse.pagination = {
-            currentPage: parseInt(page),
-            totalPages: 0,
-            totalItems: 0,
-            itemsPerPage: parseInt(limit),
-            hasNext: false,
-            hasPrev: false,
+          const emptyResponse = {
+              success: true,
+              message: "No centers found",
+              data: [],
+              filters: {
+                  dateRange: startDate || endDate ? { startDate, endDate } : null,
+                  status,
+                  resellerId: resellerId || null,
+                  centerId: centerId || null,
+                  productId: productId || null,
+                  search: search || null,
+              },
           };
-        }
-  
-        return res.status(200).json(emptyResponse);
+
+          if (!isExport) {
+              emptyResponse.pagination = {
+                  currentPage: parseInt(page),
+                  totalPages: 0,
+                  totalItems: 0,
+                  itemsPerPage: parseInt(limit),
+                  hasNext: false,
+                  hasPrev: false,
+              };
+          }
+
+          return res.status(200).json(emptyResponse);
       }
-  
+
       // Build stock request query
       const stockRequestQuery = {
-        center: { $in: centerIds.map(id => new mongoose.Types.ObjectId(id)) },
-        ...statusFilter,
-        ...dateFilter,
+          center: { $in: centerIds.map(id => new mongoose.Types.ObjectId(id)) },
+          ...statusFilter,
+          ...dateFilter,
       };
-  
-      // If product filter is provided, add it to the query
+
+      console.log(`[STOCK REQUEST QUERY]`, JSON.stringify(stockRequestQuery, null, 2));
+
+      // ========== PRODUCT FILTER ==========
       if (productId && mongoose.Types.ObjectId.isValid(productId)) {
-        stockRequestQuery['products.product'] = new mongoose.Types.ObjectId(productId);
+          stockRequestQuery['products.product'] = new mongoose.Types.ObjectId(productId);
+          console.log(`[PRODUCT FILTER] Filtering by product ID: ${productId}`);
       }
-  
-      console.log("Stock request query:", JSON.stringify(stockRequestQuery, null, 2));
-  
+
       // Get total count for pagination
       const totalStockRequests = await StockRequest.countDocuments(stockRequestQuery);
-  
+      console.log(`[TOTAL STOCK REQUESTS] ${totalStockRequests}`);
+
       if (totalStockRequests === 0) {
-        // Even with no stock requests, return resellers with empty products
-        const result = Array.from(resellerMap.values())
-          .map(reseller => ({
-            resellerId: reseller.resellerId,
-            resellerName: reseller.resellerName,
-            resellerEmail: reseller.resellerEmail,
-            products: [],
-          }));
-  
-        const pageNum = parseInt(page);
-        const limitNum = parseInt(limit);
-        const startIndex = (pageNum - 1) * limitNum;
-        const endIndex = startIndex + limitNum;
-        const paginatedResult = result.slice(startIndex, endIndex);
-  
-        const pagination = {
-          currentPage: pageNum,
-          totalPages: Math.ceil(result.length / limitNum),
-          totalItems: result.length,
-          itemsPerPage: limitNum,
-          hasNext: pageNum < Math.ceil(result.length / limitNum),
-          hasPrev: pageNum > 1,
-        };
-  
-        return res.status(200).json({
-          success: true,
-          message: "No stock requests found for the criteria",
-          data: isExport ? result : paginatedResult,
-          ...(isExport ? {} : { pagination }),
-          filters: {
-            dateRange: startDate || endDate ? { startDate, endDate } : null,
-            status,
-            resellerId: resellerId || null,
-            centerId: centerId || null,
-            productId: productId || null,
-            search: search || null,
-          },
-        });
+          const result = Array.from(resellerMap.values())
+              .map(reseller => ({
+                  resellerId: reseller.resellerId,
+                  resellerName: reseller.resellerName,
+                  resellerEmail: reseller.resellerEmail,
+                  resellerMobile: reseller.resellerMobile,
+                  products: [],
+              }));
+
+          const pageNum = parseInt(page);
+          const limitNum = parseInt(limit);
+          const startIndex = (pageNum - 1) * limitNum;
+          const endIndex = startIndex + limitNum;
+          const paginatedResult = result.slice(startIndex, endIndex);
+
+          const pagination = {
+              currentPage: pageNum,
+              totalPages: Math.ceil(result.length / limitNum),
+              totalItems: result.length,
+              itemsPerPage: limitNum,
+              hasNext: pageNum < Math.ceil(result.length / limitNum),
+              hasPrev: pageNum > 1,
+          };
+
+          return res.status(200).json({
+              success: true,
+              message: "No stock requests found for the criteria",
+              data: isExport ? result : paginatedResult,
+              ...(isExport ? {} : { pagination }),
+              filters: {
+                  dateRange: startDate || endDate ? { startDate, endDate } : null,
+                  status,
+                  resellerId: resellerId || null,
+                  centerId: centerId || null,
+                  productId: productId || null,
+                  search: search || null,
+              },
+          });
       }
-  
+
       // Get stock requests with pagination
       let stockRequestsQuery = StockRequest.find(stockRequestQuery)
-        .populate("products.product", "productTitle productCode")
-        .populate("center", "centerName centerCode")
-        .lean();
-  
+          .populate("products.product", "productTitle productCode")
+          .populate("center", "centerName centerCode")
+          .sort({ date: -1 })
+          .lean();
+
       // Apply pagination only if not exporting
       if (!isExport) {
-        const pageNum = parseInt(page);
-        const limitNum = parseInt(limit);
-        const skip = (pageNum - 1) * limitNum;
-        stockRequestsQuery = stockRequestsQuery.skip(skip).limit(limitNum);
+          const pageNum = parseInt(page);
+          const limitNum = parseInt(limit);
+          const skip = (pageNum - 1) * limitNum;
+          stockRequestsQuery = stockRequestsQuery.skip(skip).limit(limitNum);
       }
-  
+
       const stockRequests = await stockRequestsQuery;
-  
+      console.log(`[STOCK REQUESTS FOUND] ${stockRequests.length}`);
+
       // Process each stock request
       for (const request of stockRequests) {
-        const centerId = request.center?._id?.toString();
-        const resellerInfo = centerToResellerMap.get(centerId);
-        
-        if (!resellerInfo || !request.products) continue;
-  
-        const resellerData = resellerMap.get(resellerInfo.resellerId);
-        if (!resellerData) continue;
-        
-        for (const product of request.products) {
-          const productId = product.product?._id?.toString();
-          const productName = product.product?.productTitle || "Unknown Product";
-          const productCode = product.product?.productCode || "";
-          const receivedQty = product.receivedQuantity || 0;
-  
-          if (receivedQty === 0) continue;
-  
-          // Apply search filter
-          if (search) {
-            const searchLower = search.toLowerCase();
-            const matchesSearch = 
-              (resellerInfo.resellerName && resellerInfo.resellerName.toLowerCase().includes(searchLower)) ||
-              (productName.toLowerCase().includes(searchLower)) ||
-              (productCode.toLowerCase().includes(searchLower));
-            
-            if (!matchesSearch) continue;
+          const centerIdStr = request.center?._id?.toString();
+          const resellerInfo = centerToResellerMap.get(centerIdStr);
+          
+          if (!resellerInfo || !request.products) continue;
+
+          const resellerData = resellerMap.get(resellerInfo.resellerId);
+          if (!resellerData) continue;
+          
+          for (const product of request.products) {
+              const productIdStr = product.product?._id?.toString();
+              const productName = product.product?.productTitle || "Unknown Product";
+              const productCode = product.product?.productCode || "";
+              const receivedQty = product.receivedQuantity || 0;
+              const approvedQty = product.approvedQuantity || 0;
+              const forwardedQty = receivedQty || approvedQty || 0;
+
+              if (forwardedQty === 0) continue;
+
+              // Apply search filter
+              if (search) {
+                  const searchLower = search.toLowerCase();
+                  const matchesSearch = 
+                      (resellerInfo.resellerName && resellerInfo.resellerName.toLowerCase().includes(searchLower)) ||
+                      (productName.toLowerCase().includes(searchLower)) ||
+                      (productCode.toLowerCase().includes(searchLower));
+                  
+                  if (!matchesSearch) continue;
+              }
+
+              if (!resellerData.products[productIdStr]) {
+                  resellerData.products[productIdStr] = {
+                      productId: productIdStr,
+                      productName,
+                      productCode,
+                      totalForwardedQty: 0,
+                      orderCount: 0,
+                      centers: {},
+                  };
+              }
+              resellerData.products[productIdStr].totalForwardedQty += forwardedQty;
+              resellerData.products[productIdStr].orderCount += 1;
+
+              if (!resellerData.products[productIdStr].centers[centerIdStr]) {
+                  resellerData.products[productIdStr].centers[centerIdStr] = {
+                      centerId: centerIdStr,
+                      centerName: resellerInfo.centerName,
+                      centerCode: resellerInfo.centerCode,
+                      forwardedQty: 0,
+                  };
+              }
+              resellerData.products[productIdStr].centers[centerIdStr].forwardedQty += forwardedQty;
           }
-  
-          if (productId) {
-            if (!resellerData.products[productId]) {
-              resellerData.products[productId] = {
-                productId,
-                productName,
-                productCode,
-                totalForwardedQty: 0,
-                orderCount: 0,
-                centers: {},
-              };
-            }
-            resellerData.products[productId].totalForwardedQty += receivedQty;
-            resellerData.products[productId].orderCount += 1;
-  
-            if (!resellerData.products[productId].centers[centerId]) {
-              resellerData.products[productId].centers[centerId] = {
-                centerId,
-                centerName: resellerInfo.centerName,
-                centerCode: resellerInfo.centerCode,
-                forwardedQty: 0,
-              };
-            }
-            resellerData.products[productId].centers[centerId].forwardedQty += receivedQty;
-          }
-        }
       }
-  
+
       // Prepare final result
       let result = Array.from(resellerMap.values())
-        .map(reseller => {
-          let productsList = Object.values(reseller.products)
-            .map(product => ({
-              ...product,
-              centers: Object.values(product.centers).sort((a, b) => b.forwardedQty - a.forwardedQty),
-            }))
-            .sort((a, b) => b.totalForwardedQty - a.totalForwardedQty);
-  
-          // If product filter is applied, filter the products list
-          if (productId && mongoose.Types.ObjectId.isValid(productId)) {
-            productsList = productsList.filter(p => p.productId === productId);
-          }
-  
-          return {
-            resellerId: reseller.resellerId,
-            resellerName: reseller.resellerName,
-            resellerEmail: reseller.resellerEmail,
-            products: productsList,
-          };
-        })
-        .filter(reseller => reseller.products.length > 0);
-  
+          .map(reseller => {
+              let productsList = Object.values(reseller.products)
+                  .map(product => ({
+                      ...product,
+                      centers: Object.values(product.centers).sort((a, b) => b.forwardedQty - a.forwardedQty),
+                  }))
+                  .sort((a, b) => b.totalForwardedQty - a.totalForwardedQty);
+
+              // If product filter is applied, filter the products list
+              if (productId && mongoose.Types.ObjectId.isValid(productId)) {
+                  productsList = productsList.filter(p => p.productId === productId);
+              }
+
+              return {
+                  resellerId: reseller.resellerId,
+                  resellerName: reseller.resellerName,
+                  resellerEmail: reseller.resellerEmail,
+                  resellerMobile: reseller.resellerMobile,
+                  products: productsList,
+              };
+          })
+          .filter(reseller => reseller.products.length > 0);
+
+      // Apply reseller filter to final result (if not already applied)
+      if (resellerId && mongoose.Types.ObjectId.isValid(resellerId)) {
+          result = result.filter(r => r.resellerId === resellerId);
+      }
+
+      console.log(`[FINAL RESULT] Total resellers with forwarded quantity: ${result.length}`);
+
       // Calculate total items for pagination
       const totalItems = result.length;
-  
-      // If exporting, return all data without pagination
-      if (isExport) {
-        return res.status(200).json({
-          success: true,
-          message: "Resellers forwarded quantity exported successfully",
-          data: result,
-          filters: {
-            dateRange: startDate || endDate ? { startDate, endDate } : null,
-            status,
-            resellerId: resellerId || null,
-            centerId: centerId || null,
-            productId: productId || null,
-            search: search || null,
-          },
-        });
+
+      // ========== EXCEL EXPORT HANDLING ==========
+      if (isExport === "true" || isExport === true) {
+          try {
+              console.log(`[EXPORT] Generating Excel file with ${result.length} resellers`);
+              
+              // Prepare data for Excel - flatten the structure
+              const excelData = [];
+              
+              for (const reseller of result) {
+                  for (const product of reseller.products) {
+                      for (const center of product.centers) {
+                          excelData.push({
+                              'Reseller Name': reseller.resellerName,
+                              'Reseller Email': reseller.resellerEmail || 'N/A',
+                              'Reseller Mobile': reseller.resellerMobile || 'N/A',
+                              'Product Name': product.productName,
+                              'Product Code': product.productCode,
+                              'Center Name': center.centerName,
+                              'Center Code': center.centerCode,
+                              'Forwarded Quantity': center.forwardedQty,
+                              'Total Forwarded Qty for Product': product.totalForwardedQty,
+                              'Order Count': product.orderCount,
+                              'Status': status,
+                              'Date Range': `${startDate || 'All'} to ${endDate || 'All'}`,
+                          });
+                      }
+                  }
+              }
+              
+              // Summary data
+              const summaryData = [{
+                  'Report Generated': new Date().toLocaleString(),
+                  'Date Range': `${startDate || 'All'} to ${endDate || 'All'}`,
+                  'Status': status,
+                  'Total Resellers': result.length,
+                  'Total Products Forwarded': excelData.length,
+                  'Total Forwarded Quantity': excelData.reduce((sum, item) => sum + item['Forwarded Quantity'], 0),
+                  'Reseller Filter': resellerId || 'All Resellers',
+                  'Center Filter': centerId || 'All Centers',
+                  'Product Filter': productId || 'All Products',
+              }];
+              
+              // Create workbook
+              const workbook = XLSX.utils.book_new();
+              
+              // Main data sheet
+              const mainSheet = XLSX.utils.json_to_sheet(excelData);
+              XLSX.utils.book_append_sheet(workbook, mainSheet, 'Forwarded Quantity Report');
+              
+              // Summary sheet
+              const summarySheet = XLSX.utils.json_to_sheet(summaryData);
+              XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+              
+              // Filters applied sheet
+              const filtersData = [{
+                  'Filter Name': 'Applied Value',
+                  'Start Date': startDate || 'Not Applied',
+                  'End Date': endDate || 'Not Applied',
+                  'Status': status || 'Completed',
+                  'Reseller ID': resellerId || 'All',
+                  'Center ID': centerId || 'All',
+                  'Product ID': productId || 'All',
+                  'Search Term': search || 'None',
+              }];
+              
+              const filtersSheet = XLSX.utils.json_to_sheet(filtersData);
+              XLSX.utils.book_append_sheet(workbook, filtersSheet, 'Applied Filters');
+              
+              // Generate Excel file
+              const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+              
+              // Set response headers for file download
+              res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+              res.setHeader('Content-Disposition', `attachment; filename=forwarded_quantity_report_${new Date().toISOString().split('T')[0]}.xlsx`);
+              
+              return res.send(excelBuffer);
+              
+          } catch (exportError) {
+              console.error("[EXPORT ERROR]", exportError);
+              return res.status(500).json({
+                  success: false,
+                  message: "Error generating Excel export",
+                  error: exportError.message
+              });
+          }
       }
-  
-      // For regular requests, return paginated data
+
+      // ========== NON-EXPORT RESPONSE WITH PAGINATION ==========
       const pageNum = parseInt(page);
       const limitNum = parseInt(limit);
       const startIndex = (pageNum - 1) * limitNum;
       const endIndex = startIndex + limitNum;
       const paginatedResult = result.slice(startIndex, endIndex);
-  
+
       const pagination = {
-        currentPage: pageNum,
-        totalPages: Math.ceil(totalItems / limitNum),
-        totalItems: totalItems,
-        itemsPerPage: limitNum,
-        hasNext: pageNum < Math.ceil(totalItems / limitNum),
-        hasPrev: pageNum > 1,
+          currentPage: pageNum,
+          totalPages: Math.ceil(totalItems / limitNum),
+          totalItems: totalItems,
+          itemsPerPage: limitNum,
+          hasNext: pageNum < Math.ceil(totalItems / limitNum),
+          hasPrev: pageNum > 1,
       };
-  
-      // If filtering by a specific reseller, return just that reseller's data
+
+      // If filtering by a specific reseller and only one result, return just that reseller's data
       if (resellerId && paginatedResult.length === 1) {
-        return res.status(200).json({
+          return res.status(200).json({
+              success: true,
+              message: "Reseller forwarded quantity retrieved successfully",
+              data: paginatedResult[0],
+              pagination,
+              filters: {
+                  dateRange: startDate || endDate ? { startDate, endDate } : null,
+                  status,
+                  resellerId,
+                  centerId: centerId || null,
+                  productId: productId || null,
+                  search: search || null,
+              },
+          });
+      }
+
+      res.status(200).json({
           success: true,
-          message: "Reseller forwarded quantity retrieved successfully",
-          data: paginatedResult[0],
+          message: "Resellers forwarded quantity retrieved successfully",
+          data: paginatedResult,
           pagination,
           filters: {
-            dateRange: startDate || endDate ? { startDate, endDate } : null,
-            status,
-            resellerId,
-            centerId: centerId || null,
-            productId: productId || null,
-            search: search || null,
+              dateRange: startDate || endDate ? { startDate, endDate } : null,
+              status,
+              resellerId: resellerId || null,
+              centerId: centerId || null,
+              productId: productId || null,
+              search: search || null,
           },
-        });
-      }
-  
-      res.status(200).json({
-        success: true,
-        message: "Resellers forwarded quantity retrieved successfully",
-        data: paginatedResult,
-        pagination,
-        filters: {
-          dateRange: startDate || endDate ? { startDate, endDate } : null,
-          status,
-          resellerId: resellerId || null,
-          centerId: centerId || null,
-          productId: productId || null,
-          search: search || null,
-        },
       });
-  
-    } catch (error) {
+
+  } catch (error) {
       console.error("Error getting reseller forwarded quantity:", error);
       res.status(500).json({
-        success: false,
-        message: "Error retrieving reseller forwarded quantity",
-        error: error.message,
+          success: false,
+          message: "Error retrieving reseller forwarded quantity",
+          error: error.message,
       });
-    }
-  };
+  }
+};

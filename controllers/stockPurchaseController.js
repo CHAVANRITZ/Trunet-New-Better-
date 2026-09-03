@@ -5,6 +5,8 @@ import Product from "../models/Product.js";
 import Center from "../models/Center.js";
 import User from "../models/User.js";
 import mongoose from "mongoose";
+import ExcelJS from 'exceljs';
+import moment from 'moment';
 
 const checkStockPurchasePermissions = (req, requiredPermissions = []) => {
   const userPermissions = req.user.role?.permissions || [];
@@ -521,13 +523,13 @@ export const getAllStockPurchases = async (req, res) => {
       outlet,
       startDate,
       endDate,
+      export: exportExcel = false,
       ...otherParams
     } = req.query;
 
     const filter = {};
 
     if (permissions.view_all_purchase_stock && outlet) {
-
       filter.outlet = outlet;
     } else if (permissions.view_own_purchase_stock && !permissions.view_all_purchase_stock) {
       const userOutletId = await validateUserOutletAccess(req.user._id);
@@ -535,10 +537,14 @@ export const getAllStockPurchases = async (req, res) => {
     } else if (outlet) {
       filter.outlet = outlet;
     }
+    
+    // Improved date filtering
     if (startDate || endDate) {
       filter.date = {};
       if (startDate) {
-        filter.date.$gte = new Date(startDate);
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        filter.date.$gte = start;
       }
       if (endDate) {
         const end = new Date(endDate);
@@ -546,25 +552,23 @@ export const getAllStockPurchases = async (req, res) => {
         filter.date.$lte = end;
       }
     }
+    
     if (search) {
       filter.$or = [
         { invoiceNo: { $regex: search, $options: "i" } },
         { remark: { $regex: search, $options: "i" } },
-
         { "vendor.businessName": { $regex: search, $options: "i" } },
         { "vendor.name": { $regex: search, $options: "i" } },
         { "vendor.email": { $regex: search, $options: "i" } },
         { "vendor.mobile": { $regex: search, $options: "i" } },
-      
         { "outlet.centerName": { $regex: search, $options: "i" } },
         { "outlet.centerCode": { $regex: search, $options: "i" } },
-      
         { "products.product.productTitle": { $regex: search, $options: "i" } },
         { "products.product.productCode": { $regex: search, $options: "i" } },
-
         { "products.serialNumbers.serialNumber": { $regex: search, $options: "i" } },
       ];
     }
+    
     if (otherParams.type) {
       filter.type = otherParams.type;
     }
@@ -575,6 +579,25 @@ export const getAllStockPurchases = async (req, res) => {
 
     const sortOptions = buildStockPurchaseSortOptions(sortBy, sortOrder);
 
+    // If export Excel is requested, get all data without pagination
+    if (exportExcel === 'true' || exportExcel === true) {
+      const allPurchases = await StockPurchase.find(filter)
+        .populate(stockPurchasePopulateOptions)
+        .sort(sortOptions)
+        .lean();
+
+      if (allPurchases.length === 0) {
+        return res.status(200).json({
+          success: true,
+          message: "No stock purchases found to export",
+        });
+      }
+
+      // Generate and send Excel file
+      return await exportToExcel(allPurchases, res, { startDate, endDate });
+    }
+
+    // Regular paginated response for JSON data
     const total = await StockPurchase.countDocuments(filter);
 
     const purchases = await StockPurchase.find(filter)
@@ -613,6 +636,152 @@ export const getAllStockPurchases = async (req, res) => {
     console.error("Error retrieving stock purchases:", error);
     handleControllerError(error, res);
   }
+};
+
+// Excel export function
+const exportToExcel = async (purchases, res, dateRange = {}) => {
+  try {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Stock Purchases');
+
+    // Define columns with proper headers
+    worksheet.columns = [
+      { header: 'Invoice No', key: 'invoiceNo', width: 20 },
+      { header: 'Vendor', key: 'vendor', width: 25 },
+      { header: 'Transport Amount', key: 'transportAmount', width: 18 },
+      { header: 'Created At', key: 'createdAt', width: 20 },
+      { header: 'Center Title', key: 'centerTitle', width: 25 },
+      { header: 'Product Title', key: 'productTitle', width: 30 },
+      { header: 'Purchase Date', key: 'purchaseDate', width: 20 },
+      { header: 'Note', key: 'note', width: 30 },
+      { header: 'Quantity', key: 'quantity', width: 12 },
+      { header: 'Price', key: 'price', width: 12 },
+      { header: 'Total Amount', key: 'totalAmount', width: 15 },
+      { header: 'Type', key: 'type', width: 12 },
+      { header: 'Status', key: 'status', width: 15 },
+    ];
+
+    // Style header row
+    const headerRow = worksheet.getRow(1);
+    headerRow.font = { bold: true, size: 12 };
+    headerRow.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF4CAF50' },
+    };
+    headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
+    
+    // Freeze header row
+    worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+    // Add data rows
+    let totalQuantity = 0;
+    let totalAmount = 0;
+
+    for (const purchase of purchases) {
+      // For each product in the purchase, create a separate row
+      for (const productItem of purchase.products) {
+        const quantity = productItem.purchasedQuantity;
+        const price = productItem.price;
+        const productTotal = quantity * price;
+        
+        totalQuantity += quantity;
+        totalAmount += productTotal;
+
+        const row = worksheet.addRow({
+          invoiceNo: purchase.invoiceNo,
+          vendor: purchase.vendor?.businessName || purchase.vendor?.name || 'N/A',
+          transportAmount: purchase.transportAmount || 0,
+          createdAt: moment(purchase.createdAt).format('DD/MM/YYYY HH:mm:ss'),
+          centerTitle: purchase.outlet?.centerName || 'N/A',
+          productTitle: productItem.product?.productTitle || 'N/A',
+          purchaseDate: moment(purchase.date).format('DD/MM/YYYY'),
+          note: purchase.remark || '',
+          quantity: quantity,
+          price: price,
+          totalAmount: productTotal,
+          type: purchase.type === 'new' ? 'New' : 'Refurbish',
+          status: getStatusLabel(purchase.status),
+        });
+
+        // Apply borders to each cell
+        row.eachCell((cell) => {
+          cell.border = {
+            top: { style: 'thin' },
+            left: { style: 'thin' },
+            bottom: { style: 'thin' },
+            right: { style: 'thin' },
+          };
+          cell.alignment = { vertical: 'middle', horizontal: 'left' };
+        });
+      }
+    }
+
+    // Add summary section
+    worksheet.addRow([]); // Empty row for spacing
+    
+    const summaryTitleRow = worksheet.addRow(['SUMMARY REPORT']);
+    summaryTitleRow.getCell(1).font = { bold: true, size: 14 };
+    summaryTitleRow.getCell(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE0E0E0' },
+    };
+    
+    worksheet.addRow([`Total Purchase Orders: ${purchases.length}`]);
+    worksheet.addRow([`Total Products: ${totalQuantity}`]);
+    worksheet.addRow([`Total Amount: ₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`]);
+    
+    if (dateRange.startDate || dateRange.endDate) {
+      worksheet.addRow([]);
+      worksheet.addRow(['Date Range:']);
+      if (dateRange.startDate) worksheet.addRow([`From: ${moment(dateRange.startDate).format('DD/MM/YYYY')}`]);
+      if (dateRange.endDate) worksheet.addRow([`To: ${moment(dateRange.endDate).format('DD/MM/YYYY')}`]);
+    }
+    
+    worksheet.addRow([]);
+    worksheet.addRow([`Generated On: ${moment().format('DD/MM/YYYY HH:mm:ss')}`]);
+
+    // Auto-filter for better usability
+    worksheet.autoFilter = {
+      from: 'A1',
+      to: 'M1',
+    };
+
+    // Generate filename
+    let filename = 'stock_purchases';
+    if (dateRange.startDate || dateRange.endDate) {
+      const fromDate = dateRange.startDate ? moment(dateRange.startDate).format('DD-MM-YYYY') : 'start';
+      const toDate = dateRange.endDate ? moment(dateRange.endDate).format('DD-MM-YYYY') : 'end';
+      filename += `_${fromDate}_to_${toDate}`;
+    }
+    filename += `_${moment().format('YYYYMMDD_HHmmss')}.xlsx`;
+
+    // Set response headers for file download
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+
+    // Write to response
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error('Error generating Excel file:', error);
+    throw error;
+  }
+};
+
+// Helper function to get status label
+const getStatusLabel = (status) => {
+  const statusMap = {
+    'active': 'Active',
+    'cancelled': 'Cancelled',
+    'fully_transferred': 'Fully Transferred',
+    'partially_transferred': 'Partially Transferred',
+  };
+  return statusMap[status] || status;
 };
 
 export const getStockPurchaseById = async (req, res) => {

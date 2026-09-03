@@ -8,6 +8,14 @@ import CenterStock from "../models/CenterStock.js";
 import ReplacementRecord from "../models/ReplacementRecord.js";
 import FilledStock from "../models/FilledStock.js";
 import Center from '../models/Center.js';
+import ExcelJS from 'exceljs';
+import Reseller from '../models/Reseller.js';
+import XLSX from "xlsx";
+import moment from 'moment';
+import { Readable } from 'stream';
+import Product from '../models/Product.js';
+
+
 const checkReportPermissions = (req, requiredPermissions = []) => {
   const userPermissions = req.user.role?.permissions || [];
 
@@ -75,18 +83,29 @@ const handleControllerError = (error, res) => {
   });
 };
 
+
+
+
 export const getAllStockPurchasesReports = async (req, res) => {
   try {
+    console.log('=== getAllStockPurchasesReports START ===');
+    console.log('Request Query:', JSON.stringify(req.query, null, 2));
+    
     const { hasAccess, permissions, userCenter } = checkReportPermissions(req, [
       "view_own_report",
       "view_all_report",
     ]);
 
+    console.log('Permissions Check:', {
+      hasAccess,
+      permissions,
+      userCenter: userCenter?._id || userCenter
+    });
+
     if (!hasAccess) {
       return res.status(403).json({
         success: false,
-        message:
-          "Access denied. view_own_report or view_all_report permission required.",
+        message: "Access denied. view_own_report or view_all_report permission required.",
       });
     }
 
@@ -101,54 +120,171 @@ export const getAllStockPurchasesReports = async (req, res) => {
       search,
       center,
       centerId,
+      resellerId,
       product,
       productId,
       sortBy = "createdAt",
       sortOrder = "desc",
+      format = "json",
     } = req.query;
 
     const filter = {};
 
-    // Center/Outlet filtering
+    console.log('Initial filter:', filter);
+    console.log('resellerId received:', resellerId);
+    console.log('center/centerId received:', { center, centerId });
+
+    // Center/Outlet filtering with Reseller support - FIXED VERSION
     if (permissions.view_own_report && !permissions.view_all_report) {
       const userCenterId = userCenter?._id || userCenter;
       if (userCenterId) {
         filter.outlet = userCenterId;
+        console.log('Applied user center filter:', filter.outlet);
       }
-    } else if (permissions.view_all_report && (center || centerId)) {
-      // Support both center and centerId parameters
-      const centerFilterValue = center || centerId;
-      filter.outlet = centerFilterValue;
+    } else if (permissions.view_all_report) {
+      // If resellerId is provided, filter centers by reseller
+      if (resellerId && mongoose.Types.ObjectId.isValid(resellerId)) {
+        console.log('Filtering by resellerId:', resellerId);
+        
+        // Find all centers belonging to this reseller
+        const centers = await Center.find({ 
+          reseller: resellerId
+        }).select("_id centerName centerCode");
+        
+        console.log(`Found ${centers.length} centers for reseller ${resellerId}:`, 
+          centers.map(c => ({ id: c._id, name: c.centerName, code: c.centerCode })));
+        
+        if (centers.length === 0) {
+          console.log('No centers found for this reseller');
+          return res.status(200).json({
+            success: true,
+            message: "No centers found for this reseller",
+            data: [],
+            summary: {
+              totalPurchases: 0,
+              totalAmount: 0,
+              totalTransportAmount: 0,
+              totalQuantity: 0,
+              grandTotal: 0
+            },
+            filters: {
+              reseller: resellerId,
+              center: center || centerId || "all",
+              product: product || productId || "all",
+              type: type || "all",
+              vendor: vendor || "all",
+              startDate: startDate || "all",
+              endDate: endDate || "all",
+              invoiceNo: invoiceNo || "all",
+              search: search || ""
+            },
+            pagination: {
+              currentPage: parseInt(page),
+              totalPages: 0,
+              totalItems: 0,
+              itemsPerPage: parseInt(limit),
+            },
+          });
+        }
+        
+        const centerIds = centers.map(c => c._id);
+        
+        // Check if specific center is provided
+        const centerFilterValue = center || centerId;
+        if (centerFilterValue && mongoose.Types.ObjectId.isValid(centerFilterValue)) {
+          // If specific center is provided, check if it belongs to the reseller
+          if (centerIds.some(id => id.toString() === centerFilterValue.toString())) {
+            filter.outlet = centerFilterValue;
+            console.log('Using specific center within reseller:', centerFilterValue);
+          } else {
+            // Center doesn't belong to reseller, use all reseller centers
+            filter.outlet = { $in: centerIds };
+            console.log('Center not in reseller, using all reseller centers:', centerIds.map(id => id.toString()));
+          }
+        } else {
+          // No specific center, use all centers belonging to reseller
+          filter.outlet = { $in: centerIds };
+          console.log('Using all reseller centers:', centerIds.map(id => id.toString()));
+        }
+      } else if (resellerId) {
+        console.log('Invalid resellerId format:', resellerId);
+        return res.status(400).json({
+          success: false,
+          message: "Invalid resellerId format"
+        });
+      } else if (center || centerId) {
+        // Support both center and centerId parameters without reseller filter
+        const centerFilterValue = center || centerId;
+        if (mongoose.Types.ObjectId.isValid(centerFilterValue)) {
+          filter.outlet = centerFilterValue;
+          console.log('Applied center filter:', filter.outlet);
+        } else {
+          console.log('Invalid center format:', centerFilterValue);
+          return res.status(400).json({
+            success: false,
+            message: "Invalid centerId format"
+          });
+        }
+      }
     }
 
     // Product filtering
     const productFilterValue = product || productId;
-    if (productFilterValue) {
+    if (productFilterValue && mongoose.Types.ObjectId.isValid(productFilterValue)) {
       filter["products.product"] = productFilterValue;
+      console.log('Applied product filter:', productFilterValue);
+    } else if (productFilterValue) {
+      console.log('Invalid product ID format:', productFilterValue);
     }
 
     // Type and Vendor filtering
-    if (type) filter.type = type;
-    if (vendor) filter.vendor = vendor;
+    if (type) {
+      filter.type = type;
+      console.log('Applied type filter:', type);
+    }
+    if (vendor && mongoose.Types.ObjectId.isValid(vendor)) {
+      filter.vendor = vendor;
+      console.log('Applied vendor filter:', vendor);
+    } else if (vendor) {
+      console.log('Invalid vendor ID format:', vendor);
+    }
 
-    // Date range filtering
+    // Enhanced Date range filtering with better validation
     if (startDate || endDate) {
       filter.date = {};
+      console.log('Applying date filter:', { startDate, endDate });
+      
       if (startDate) {
         const start = new Date(startDate);
+        if (isNaN(start.getTime())) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid startDate format. Please use YYYY-MM-DD format."
+          });
+        }
         start.setHours(0, 0, 0, 0);
         filter.date.$gte = start;
+        console.log('Start date set to:', start);
       }
+      
       if (endDate) {
         const end = new Date(endDate);
+        if (isNaN(end.getTime())) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid endDate format. Please use YYYY-MM-DD format."
+          });
+        }
         end.setHours(23, 59, 59, 999);
         filter.date.$lte = end;
+        console.log('End date set to:', end);
       }
     }
 
     // Invoice number filtering
     if (invoiceNo) {
       filter.invoiceNo = { $regex: invoiceNo, $options: "i" };
+      console.log('Applied invoice filter:', invoiceNo);
     }
 
     // General search filtering
@@ -161,9 +297,14 @@ export const getAllStockPurchasesReports = async (req, res) => {
         { "outlet.centerName": { $regex: search, $options: "i" } },
         { "outlet.centerCode": { $regex: search, $options: "i" } },
       ];
+      console.log('Applied search filter:', search);
     }
 
-    console.log('Stock Purchase Filter:', JSON.stringify(filter, null, 2));
+    console.log('Final Stock Purchase Filter:', JSON.stringify(filter, null, 2));
+    
+    // Test query count
+    const testCount = await StockPurchase.countDocuments(filter);
+    console.log('Matching documents count:', testCount);
 
     // Sort options
     const sortOptions = {};
@@ -178,23 +319,31 @@ export const getAllStockPurchasesReports = async (req, res) => {
       ? sortBy
       : "createdAt";
     sortOptions[actualSortBy] = sortOrder === "desc" ? -1 : 1;
+    
+    console.log('Sort options:', sortOptions);
 
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
 
-    // Use regular find with populate for better compatibility
+    // Build query with population
     let query = StockPurchase.find(filter)
       .populate("vendor", "businessName")
-      .populate("outlet", "_id centerName centerCode centerType")
+      .populate({
+        path: "outlet",
+        populate: {
+          path: "reseller",
+          model: "Reseller",
+          select: "businessName name mobile email"
+        }
+      })
       .populate("products.product", "productTitle productCode")
-      .sort(sortOptions)
-      .skip(skip)
-      .limit(limitNum);
+      .sort(sortOptions);
 
-    // If product filter is applied, we need to filter the products array
-    if (productFilterValue) {
-      // This will be handled in post-processing
+    // Apply pagination only for JSON format
+    if (format === "json") {
+      query = query.skip(skip).limit(limitNum);
+      console.log('Applied pagination:', { pageNum, limitNum, skip });
     }
 
     const [purchases, total] = await Promise.all([
@@ -202,9 +351,12 @@ export const getAllStockPurchasesReports = async (req, res) => {
       StockPurchase.countDocuments(filter)
     ]);
 
+    console.log(`Found ${purchases.length} purchases out of ${total} total`);
+
     // Post-process to filter products array if product filter is applied
     let processedPurchases = purchases;
-    if (productFilterValue) {
+    if (productFilterValue && mongoose.Types.ObjectId.isValid(productFilterValue)) {
+      console.log('Post-processing product filter...');
       processedPurchases = purchases.map(purchase => {
         const filteredProducts = purchase.products.filter(productItem => {
           const productId = productItem.product?._id?.toString() || productItem.product?.toString();
@@ -215,33 +367,33 @@ export const getAllStockPurchasesReports = async (req, res) => {
           ...purchase,
           products: filteredProducts
         };
-      }).filter(purchase => purchase.products.length > 0); // Remove purchases with no matching products
+      }).filter(purchase => purchase.products.length > 0);
+      
+      console.log(`After product filter: ${processedPurchases.length} purchases`);
     }
 
-    // Get summary statistics - FIXED VERSION
+    // Get summary statistics
+    console.log('Building summary pipeline...');
     const summaryPipeline = [
       { $match: filter },
       { $unwind: "$products" }
     ];
 
-    // Add product filter to summary if applied
-    if (productFilterValue) {
-      const productObjectId = mongoose.Types.ObjectId.isValid(productFilterValue) 
-        ? new mongoose.Types.ObjectId(productFilterValue)
-        : productFilterValue;
-      
+    if (productFilterValue && mongoose.Types.ObjectId.isValid(productFilterValue)) {
+      const productObjectId = new mongoose.Types.ObjectId(productFilterValue);
       summaryPipeline.push({
         $match: {
           "products.product": productObjectId
         }
       });
+      console.log('Added product filter to summary pipeline');
     }
 
     summaryPipeline.push(
       {
         $group: {
           _id: null,
-          totalPurchases: { $addToSet: "$_id" }, // Get unique purchase IDs
+          totalPurchases: { $addToSet: "$_id" },
           totalAmount: { $sum: "$totalAmount" },
           totalTransportAmount: { $sum: "$transportAmount" },
           totalQuantity: { $sum: "$products.purchasedQuantity" }
@@ -249,7 +401,7 @@ export const getAllStockPurchasesReports = async (req, res) => {
       },
       {
         $project: {
-          totalPurchases: { $size: "$totalPurchases" }, // Count unique purchases
+          totalPurchases: { $size: "$totalPurchases" },
           totalAmount: 1,
           totalTransportAmount: 1,
           totalQuantity: 1,
@@ -258,7 +410,10 @@ export const getAllStockPurchasesReports = async (req, res) => {
       }
     );
 
+    console.log('Summary pipeline:', JSON.stringify(summaryPipeline, null, 2));
+    
     const summaryStats = await StockPurchase.aggregate(summaryPipeline);
+    console.log('Summary stats:', summaryStats);
     
     const summary = summaryStats.length > 0 ? summaryStats[0] : {
       totalPurchases: 0,
@@ -268,15 +423,37 @@ export const getAllStockPurchasesReports = async (req, res) => {
       grandTotal: 0
     };
 
-    // Adjust total count if product filter was applied in post-processing
-    const finalTotal = productFilterValue ? processedPurchases.length : total;
+    const finalTotal = productFilterValue && mongoose.Types.ObjectId.isValid(productFilterValue) 
+      ? processedPurchases.length 
+      : total;
 
+    console.log('Final total:', finalTotal);
+
+    // Handle Excel export
+    if (format === "excel") {
+      console.log('Exporting to Excel format');
+      return await exportToExcel(processedPurchases, summary, {
+        center: center || centerId || "all",
+        resellerId: resellerId || "all",
+        product: product || productId || "all",
+        type: type || "all",
+        vendor: vendor || "all",
+        startDate: startDate || "all",
+        endDate: endDate || "all",
+        invoiceNo: invoiceNo || "all",
+        search: search || ""
+      }, res);
+    }
+
+    // Return JSON response
+    console.log('Sending JSON response');
     res.status(200).json({
       success: true,
       message: "Stock purchases reports retrieved successfully",
       data: processedPurchases,
       summary: summary,
       filters: {
+        reseller: resellerId || "all",
         center: center || centerId || "all",
         product: product || productId || "all",
         type: type || "all",
@@ -293,11 +470,236 @@ export const getAllStockPurchasesReports = async (req, res) => {
         itemsPerPage: limitNum,
       },
     });
+    
+    console.log('=== getAllStockPurchasesReports END ===');
   } catch (error) {
     console.error("Error retrieving stock purchases reports:", error);
+    console.error("Error stack:", error.stack);
     handleControllerError(error, res);
   }
 };
+
+// Helper function to export data to Excel
+async function exportToExcel(purchases, summary, filters, res) {
+  try {
+    console.log('Generating Excel report...');
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Stock Purchases Report');
+
+    // Add title
+    worksheet.mergeCells('A1:M1');
+    worksheet.getCell('A1').value = 'STOCK PURCHASES REPORT';
+    worksheet.getCell('A1').font = { size: 16, bold: true };
+    worksheet.getCell('A1').alignment = { horizontal: 'center' };
+    
+    // Add generation date
+    worksheet.mergeCells('A2:M2');
+    worksheet.getCell('A2').value = `Generated on: ${moment().format('DD-MM-YYYY HH:mm:ss')}`;
+    worksheet.getCell('A2').font = { size: 10 };
+    worksheet.getCell('A2').alignment = { horizontal: 'center' };
+
+    // Add filters information
+    let rowIndex = 4;
+    worksheet.getCell(`A${rowIndex}`).value = 'Filters Applied:';
+    worksheet.getCell(`A${rowIndex}`).font = { bold: true };
+    rowIndex++;
+
+    // Get filter values asynchronously
+    const resellerName = filters.resellerId !== 'all' ? await getResellerName(filters.resellerId) : 'All';
+    const centerName = filters.center !== 'all' ? await getCenterName(filters.center) : 'All';
+    const productName = filters.product !== 'all' ? await getProductName(filters.product) : 'All';
+    const vendorName = filters.vendor !== 'all' ? await getVendorName(filters.vendor) : 'All';
+
+    const filterRows = [
+      `Reseller: ${resellerName}`,
+      `Center: ${centerName}`,
+      `Product: ${productName}`,
+      `Type: ${filters.type !== 'all' ? filters.type : 'All'}`,
+      `Vendor: ${vendorName}`,
+      `Date Range: ${filters.startDate !== 'all' ? filters.startDate : 'Start'} to ${filters.endDate !== 'all' ? filters.endDate : 'End'}`,
+      `Invoice No: ${filters.invoiceNo !== 'all' ? filters.invoiceNo : 'All'}`,
+      `Search: ${filters.search !== 'all' ? filters.search : 'All'}`
+    ];
+
+    filterRows.forEach(filterText => {
+      worksheet.getCell(`A${rowIndex}`).value = filterText;
+      rowIndex++;
+    });
+
+    // Add summary section
+    rowIndex++;
+    worksheet.getCell(`A${rowIndex}`).value = 'Summary:';
+    worksheet.getCell(`A${rowIndex}`).font = { bold: true };
+    rowIndex++;
+
+    const summaryRows = [
+      `Total Purchases: ${summary.totalPurchases}`,
+      `Total Quantity: ${summary.totalQuantity}`,
+      `Total Amount: ₹${summary.totalAmount.toFixed(2)}`,
+      `Total Transport Amount: ₹${summary.totalTransportAmount.toFixed(2)}`,
+      `Grand Total: ₹${summary.grandTotal.toFixed(2)}`
+    ];
+
+    summaryRows.forEach(summaryText => {
+      worksheet.getCell(`A${rowIndex}`).value = summaryText;
+      rowIndex++;
+    });
+
+    // Add empty row before table
+    rowIndex += 2;
+
+    // Define columns for main data
+    worksheet.columns = [
+      { header: 'S.No', key: 'sno', width: 8 },
+      { header: 'Date', key: 'date', width: 12 },
+      { header: 'Invoice No', key: 'invoiceNo', width: 15 },
+      { header: 'Type', key: 'type', width: 10 },
+      { header: 'Reseller', key: 'reseller', width: 20 },
+      { header: 'Center', key: 'center', width: 20 },
+      { header: 'Vendor', key: 'vendor', width: 20 },
+      { header: 'Product Name', key: 'productName', width: 30 },
+      { header: 'Product Code', key: 'productCode', width: 15 },
+      { header: 'Quantity', key: 'quantity', width: 10 },
+      { header: 'Price', key: 'price', width: 12 },
+      { header: 'Product Amount', key: 'productAmount', width: 15 },
+      { header: 'Transport', key: 'transport', width: 12 },
+      { header: 'Total Amount', key: 'totalAmount', width: 15 },
+      { header: 'Remark', key: 'remark', width: 20 }
+    ];
+
+    // Add data rows
+    let serialNo = 1;
+    purchases.forEach(purchase => {
+      // Get reseller and center info
+      const resellerName = purchase.outlet?.reseller?.businessName || purchase.outlet?.reseller?.name || 'N/A';
+      const centerName = purchase.outlet?.centerName || purchase.outlet?.name || 'N/A';
+      const vendorName = purchase.vendor?.businessName || 'N/A';
+
+      // If there are multiple products, create separate rows for each
+      if (purchase.products && purchase.products.length > 0) {
+        purchase.products.forEach(product => {
+          const row = {
+            sno: serialNo++,
+            date: moment(purchase.date).format('DD-MM-YYYY'),
+            invoiceNo: purchase.invoiceNo,
+            type: purchase.type,
+            reseller: resellerName,
+            center: centerName,
+            vendor: vendorName,
+            productName: product.product?.productTitle || 'N/A',
+            productCode: product.product?.productCode || 'N/A',
+            quantity: product.purchasedQuantity,
+            price: product.price,
+            productAmount: (product.price * product.purchasedQuantity).toFixed(2),
+            transport: purchase.transportAmount || 0,
+            totalAmount: purchase.totalAmount.toFixed(2),
+            remark: purchase.remark || ''
+          };
+          worksheet.addRow(row);
+        });
+      } else {
+        // Handle case with no products
+        const row = {
+          sno: serialNo++,
+          date: moment(purchase.date).format('DD-MM-YYYY'),
+          invoiceNo: purchase.invoiceNo,
+          type: purchase.type,
+          reseller: resellerName,
+          center: centerName,
+          vendor: vendorName,
+          productName: 'N/A',
+          productCode: 'N/A',
+          quantity: 0,
+          price: 0,
+          productAmount: '0.00',
+          transport: purchase.transportAmount || 0,
+          totalAmount: purchase.totalAmount.toFixed(2),
+          remark: purchase.remark || ''
+        };
+        worksheet.addRow(row);
+      }
+    });
+
+    // Style the header row
+    const headerRow = worksheet.getRow(rowIndex);
+    headerRow.font = { bold: true };
+    headerRow.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE0E0E0' }
+    };
+    headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+
+    // Add borders to all cells
+    worksheet.eachRow((row, rowNumber) => {
+      row.eachCell(cell => {
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        };
+      });
+    });
+
+    // Set response headers
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=stock_purchases_report_${moment().format('YYYY-MM-DD_HH-mm-ss')}.xlsx`);
+
+    // Write to response
+    await workbook.xlsx.write(res);
+    res.end();
+    console.log('Excel report generated successfully');
+  } catch (error) {
+    console.error('Error generating Excel report:', error);
+    throw error;
+  }
+}
+
+// Helper functions to get names from IDs
+async function getResellerName(resellerId) {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(resellerId)) return resellerId;
+    const reseller = await mongoose.model('Reseller').findById(resellerId).select('businessName name');
+    return reseller?.businessName || reseller?.name || resellerId;
+  } catch (error) {
+    console.error('Error getting reseller name:', error);
+    return resellerId;
+  }
+}
+
+async function getCenterName(centerId) {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(centerId)) return centerId;
+    const center = await mongoose.model('Center').findById(centerId).select('centerName centerCode');
+    return center?.centerName || center?.centerCode || centerId;
+  } catch (error) {
+    console.error('Error getting center name:', error);
+    return centerId;
+  }
+}
+
+async function getProductName(productId) {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(productId)) return productId;
+    const product = await mongoose.model('Product').findById(productId).select('productTitle productCode');
+    return product?.productTitle || product?.productCode || productId;
+  } catch (error) {
+    console.error('Error getting product name:', error);
+    return productId;
+  }
+}
+
+async function getVendorName(vendorId) {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(vendorId)) return vendorId;
+    const vendor = await mongoose.model('Vendor').findById(vendorId).select('businessName');
+    return vendor?.businessName || vendorId;
+  } catch (error) {
+    console.error('Error getting vendor name:', error);
+    return vendorId;
+  }
+}
 
 export const getAllStockRequestsReports = async (req, res) => {
   try {
@@ -751,6 +1153,7 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
       year,
       center,
       centerId,
+      resellerId,
       warehouse,
       product,
       productId,
@@ -758,13 +1161,19 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
       endDate,
       page = 1,
       limit = 50,
+      format = "json", // 'json' or 'excel'
+      sortBy = "center",
+      sortOrder = "asc",
     } = req.query;
 
     console.log('Received query params:', {
-      center, centerId, product, productId, startDate, endDate, month, year, warehouse
+      center, centerId, resellerId, product, productId, startDate, endDate, month, year, warehouse, format
     });
+
+    // ========== DATE FILTER LOGIC ==========
     let dateFilter = {};
     const currentDate = new Date();
+    let periodDisplay = '';
     
     if (startDate || endDate) {
       dateFilter = {};
@@ -778,6 +1187,7 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
         end.setHours(23, 59, 59, 999);
         dateFilter.$lte = end;
       }
+      periodDisplay = `${startDate || 'Start'} to ${endDate || 'End'}`;
     } else {
       const currentMonth = month ? parseInt(month) : currentDate.getMonth() + 1;
       const currentYear = year ? parseInt(year) : currentDate.getFullYear();
@@ -800,11 +1210,42 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
         $gte: new Date(currentYear, currentMonth - 1, 1),
         $lte: new Date(currentYear, currentMonth, 0, 23, 59, 59, 999)
       };
+      periodDisplay = `${currentMonth}/${currentYear}`;
     }
+
+    // ========== BASE FILTER ==========
     const baseFilter = {
       createdAt: dateFilter,
     };
 
+    // ========== CENTER FILTER WITH RESELLER SUPPORT ==========
+    let targetCenterIds = [];
+    
+    // If resellerId is provided, get all centers under that reseller
+    if (resellerId && mongoose.Types.ObjectId.isValid(resellerId)) {
+      const centersUnderReseller = await mongoose.model('Center').find({ 
+        reseller: resellerId,
+        status: "Enable"
+      }).select("_id");
+      
+      targetCenterIds = centersUnderReseller.map(c => c._id);
+      console.log(`Found ${targetCenterIds.length} centers under reseller ${resellerId}`);
+      
+      if (targetCenterIds.length > 0) {
+        baseFilter.center = { $in: targetCenterIds };
+      }
+    }
+    
+    // Apply specific center filter (overrides reseller centers if both provided)
+    const centerFilterValue = center || centerId;
+    if (centerFilterValue && mongoose.Types.ObjectId.isValid(centerFilterValue)) {
+      baseFilter.center = mongoose.Types.ObjectId.isValid(centerFilterValue) 
+        ? new mongoose.Types.ObjectId(centerFilterValue)
+        : centerFilterValue;
+      console.log('Applied specific center filter:', baseFilter.center);
+    }
+    
+    // Handle user permissions
     if (permissions.view_own_report && !permissions.view_all_report) {
       const userCenterId = userCenter?._id || userCenter;
       if (userCenterId) {
@@ -812,13 +1253,10 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
           ? new mongoose.Types.ObjectId(userCenterId)
           : userCenterId;
       }
-    } else if (permissions.view_all_report && (center || centerId)) {
-      const centerFilterValue = center || centerId;
-      baseFilter.center = mongoose.Types.ObjectId.isValid(centerFilterValue) 
-        ? new mongoose.Types.ObjectId(centerFilterValue)
-        : centerFilterValue;
     }
-    if (warehouse) {
+
+    // Warehouse filter
+    if (warehouse && mongoose.Types.ObjectId.isValid(warehouse)) {
       baseFilter.warehouse = mongoose.Types.ObjectId.isValid(warehouse) 
         ? new mongoose.Types.ObjectId(warehouse)
         : warehouse;
@@ -826,21 +1264,22 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
 
     console.log('Base filter:', JSON.stringify(baseFilter, null, 2));
 
+    // ========== AGGREGATION PIPELINE ==========
     const aggregationPipeline = [
       { $match: baseFilter },
       { $unwind: "$products" }
     ];
 
+    // Product filter
     const productFilterValue = product || productId;
-    if (productFilterValue) {
+    if (productFilterValue && mongoose.Types.ObjectId.isValid(productFilterValue)) {
       aggregationPipeline.push({
         $match: {
-          "products.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
-            ? new mongoose.Types.ObjectId(productFilterValue)
-            : productFilterValue
+          "products.product": new mongoose.Types.ObjectId(productFilterValue)
         }
       });
     }
+
     aggregationPipeline.push(
       {
         $lookup: {
@@ -867,9 +1306,19 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
         },
       },
       {
+        $lookup: {
+          from: "centers",
+          localField: "centerDetails.reseller",
+          foreignField: "_id",
+          as: "resellerDetails",
+        },
+      },
+      {
         $project: {
           center: { $arrayElemAt: ["$centerDetails.centerName", 0] },
           centerId: "$center",
+          resellerName: { $arrayElemAt: ["$resellerDetails.businessName", 0] },
+          resellerId: { $arrayElemAt: ["$resellerDetails._id", 0] },
           parentCenter: { $arrayElemAt: ["$warehouseDetails.centerName", 0] },
           parentCenterId: "$warehouse",
           product: { $arrayElemAt: ["$productDetails.productTitle", 0] },
@@ -889,6 +1338,8 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
           _id: {
             center: "$center",
             centerId: "$centerId",
+            resellerName: "$resellerName",
+            resellerId: "$resellerId",
             parentCenter: "$parentCenter",
             parentCenterId: "$parentCenterId",
             product: "$product",
@@ -909,6 +1360,8 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
           _id: 0,
           center: "$_id.center",
           centerId: "$_id.centerId",
+          resellerName: "$_id.resellerName",
+          resellerId: "$_id.resellerId",
           parentCenter: "$_id.parentCenter",
           parentCenterId: "$_id.parentCenterId",
           product: "$_id.product",
@@ -920,6 +1373,7 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
           requestCount: 1,
           orderNumbers: 1,
           pendingQuantity: { $subtract: ["$totalQty", "$totalReceived"] },
+          pendingApproval: { $subtract: ["$totalQty", "$totalApproved"] },
           approvalRate: {
             $cond: {
               if: { $gt: ["$totalQty", 0] },
@@ -958,9 +1412,10 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
       },
       {
         $sort: {
-          center: 1,
-          parentCenter: 1,
-          product: 1,
+          [sortBy === "center" ? "center" : 
+           sortBy === "resellerName" ? "resellerName" :
+           sortBy === "product" ? "product" :
+           sortBy === "totalQty" ? "totalQty" : "center"]: sortOrder === "desc" ? -1 : 1,
         },
       }
     );
@@ -968,49 +1423,26 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
-    const paginatedPipeline = [...aggregationPipeline, { $skip: skip }, { $limit: limitNum }];
 
-    const monthlySummary = await StockRequest.aggregate(paginatedPipeline);
-    const countPipeline = [
-      { $match: baseFilter },
-      { $unwind: "$products" }
-    ];
+    // Execute query
+    let monthlySummary = await StockRequest.aggregate(aggregationPipeline);
+    const total = monthlySummary.length;
 
-    if (productFilterValue) {
-      countPipeline.push({
-        $match: {
-          "products.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
-            ? new mongoose.Types.ObjectId(productFilterValue)
-            : productFilterValue
-        }
-      });
+    // Apply pagination for JSON response
+    if (format !== "excel") {
+      monthlySummary = monthlySummary.slice(skip, skip + limitNum);
     }
 
-    countPipeline.push({
-      $group: {
-        _id: {
-          center: "$center",
-          warehouse: "$warehouse",
-          product: "$products.product",
-        },
-      },
-    },
-    { $count: "total" });
-
-    const totalResult = await StockRequest.aggregate(countPipeline);
-    const total = totalResult.length > 0 ? totalResult[0].total : 0;
-
+    // ========== STATISTICS PIPELINE ==========
     const statsPipeline = [
       { $match: baseFilter },
       { $unwind: "$products" }
     ];
 
-    if (productFilterValue) {
+    if (productFilterValue && mongoose.Types.ObjectId.isValid(productFilterValue)) {
       statsPipeline.push({
         $match: {
-          "products.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
-            ? new mongoose.Types.ObjectId(productFilterValue)
-            : productFilterValue
+          "products.product": new mongoose.Types.ObjectId(productFilterValue)
         }
       });
     }
@@ -1037,6 +1469,7 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
         uniqueCentersCount: { $size: "$uniqueCenters" },
         uniqueWarehousesCount: { $size: "$uniqueWarehouses" },
         pendingQuantity: { $subtract: ["$totalProductsRequested", "$totalReceived"] },
+        pendingApproval: { $subtract: ["$totalProductsRequested", "$totalApproved"] },
         overallApprovalRate: {
           $cond: {
             if: { $gt: ["$totalProductsRequested", 0] },
@@ -1064,18 +1497,120 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
       uniqueCentersCount: 0,
       uniqueWarehousesCount: 0,
       pendingQuantity: 0,
+      pendingApproval: 0,
       overallApprovalRate: 0,
       overallFulfillmentRate: 0,
     };
-    let periodDisplay = '';
-    if (startDate && endDate) {
-      periodDisplay = `${new Date(startDate).toLocaleDateString()} - ${new Date(endDate).toLocaleDateString()}`;
-    } else {
-      const currentMonth = month ? parseInt(month) : currentDate.getMonth() + 1;
-      const currentYear = year ? parseInt(year) : currentDate.getFullYear();
-      periodDisplay = `${currentMonth}/${currentYear}`;
+
+    // ========== EXCEL EXPORT HANDLING ==========
+    if (format === "excel") {
+      try {
+        console.log(`[EXPORT] Generating Excel file with ${monthlySummary.length} records`);
+
+        // Prepare Excel data
+        const excelData = monthlySummary.map((item, index) => ({
+          'S.No': index + 1,
+          'Reseller': item.resellerName || 'N/A',
+          'Center': item.center,
+          'Warehouse': item.parentCenter || 'N/A',
+          'Product': item.product,
+          'Product Code': item.productCode || 'N/A',
+          'Requested Qty': item.totalQty,
+          'Approved Qty': item.totalApproved,
+          'Received Qty': item.totalReceived,
+          'Pending Qty': item.pendingQuantity,
+          'Pending Approval': item.pendingApproval,
+          'Request Count': item.requestCount,
+          'Approval Rate (%)': Math.round(item.approvalRate * 100) / 100,
+          'Fulfillment Rate (%)': Math.round(item.fulfillmentRate * 100) / 100,
+        }));
+
+        // Summary sheet data
+        const summaryData = [{
+          'Report Generated': moment().format('DD-MM-YYYY HH:mm:ss'),
+          'Period': periodDisplay,
+          'Reseller ID': resellerId || 'All',
+          'Center': center || centerId || 'All',
+          'Product': product || productId || 'All',
+          'Warehouse': warehouse || 'All',
+          'Total Requests': stats.totalRequests,
+          'Total Products Requested': stats.totalProductsRequested,
+          'Total Approved': stats.totalApproved,
+          'Total Received': stats.totalReceived,
+          'Pending Quantity': stats.pendingQuantity,
+          'Pending Approval': stats.pendingApproval,
+          'Overall Approval Rate (%)': Math.round(stats.overallApprovalRate * 100) / 100,
+          'Overall Fulfillment Rate (%)': Math.round(stats.overallFulfillmentRate * 100) / 100,
+          'Unique Products': stats.uniqueProductsCount,
+          'Unique Centers': stats.uniqueCentersCount,
+          'Unique Warehouses': stats.uniqueWarehousesCount,
+        }];
+
+        // Filters sheet
+        const filtersData = [{
+          'Filter': 'Applied Value',
+          'Start Date': startDate || 'Not Applied',
+          'End Date': endDate || 'Not Applied',
+          'Month': month || 'Current',
+          'Year': year || 'Current',
+          'Reseller ID': resellerId || 'All',
+          'Center ID': center || centerId || 'All',
+          'Product ID': product || productId || 'All',
+          'Warehouse ID': warehouse || 'All',
+        }];
+
+        // Create workbook
+        const workbook = XLSX.utils.book_new();
+
+        // Main data sheet
+        const mainSheet = XLSX.utils.json_to_sheet(excelData);
+        mainSheet['!cols'] = [
+          { wch: 8 },   // S.No
+          { wch: 25 },  // Reseller
+          { wch: 25 },  // Center
+          { wch: 25 },  // Warehouse
+          { wch: 35 },  // Product
+          { wch: 15 },  // Product Code
+          { wch: 15 },  // Requested Qty
+          { wch: 15 },  // Approved Qty
+          { wch: 15 },  // Received Qty
+          { wch: 15 },  // Pending Qty
+          { wch: 15 },  // Pending Approval
+          { wch: 15 },  // Request Count
+          { wch: 18 },  // Approval Rate
+          { wch: 18 },  // Fulfillment Rate
+        ];
+
+        XLSX.utils.book_append_sheet(workbook, mainSheet, 'Stock Requests Summary');
+
+        // Summary sheet
+        const summarySheet = XLSX.utils.json_to_sheet(summaryData);
+        XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+
+        // Filters sheet
+        const filtersSheet = XLSX.utils.json_to_sheet(filtersData);
+        XLSX.utils.book_append_sheet(workbook, filtersSheet, 'Applied Filters');
+
+        // Generate Excel file
+        const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=stock_requests_summary_${moment().format('YYYY-MM-DD_HH-mm-ss')}.xlsx`);
+        res.setHeader('Content-Length', excelBuffer.length);
+
+        return res.send(excelBuffer);
+
+      } catch (exportError) {
+        console.error("[EXPORT ERROR]", exportError);
+        return res.status(500).json({
+          success: false,
+          message: "Error generating Excel export",
+          error: exportError.message
+        });
+      }
     }
 
+    // ========== JSON RESPONSE ==========
     const response = {
       success: true,
       message: `Monthly stock requests summary for ${periodDisplay} retrieved successfully`,
@@ -1088,6 +1623,7 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
         totalReceived: stats.totalReceived,
         totalRequests: stats.totalRequests,
         pendingQuantity: stats.pendingQuantity,
+        pendingApproval: stats.pendingApproval,
         uniqueProducts: stats.uniqueProductsCount,
         uniqueCenters: stats.uniqueCentersCount,
         uniqueWarehouses: stats.uniqueWarehousesCount,
@@ -1095,6 +1631,7 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
         overallFulfillmentRate: Math.round(stats.overallFulfillmentRate * 100) / 100,
       },
       filters: {
+        reseller: resellerId || "all",
         center: center || centerId || "all",
         product: product || productId || "all",
         warehouse: warehouse || "all",
@@ -1136,6 +1673,7 @@ export const getMonthlyStockTransfersSummary = async (req, res) => {
     const {
       month,
       year,
+      resellerId,
       fromCenter,
       toCenter,
       product,
@@ -1145,18 +1683,21 @@ export const getMonthlyStockTransfersSummary = async (req, res) => {
       endDate,
       page = 1,
       limit = 50,
+      format = "json",
+      sortBy = "fromCenter",
+      sortOrder = "asc",
     } = req.query;
 
     console.log('Received query params:', {
-      fromCenter, toCenter, product, productId, startDate, endDate, month, year, status
+      fromCenter, toCenter, resellerId, product, productId, startDate, endDate, month, year, status, format
     });
 
-    // Date range handling - support both month/year and startDate/endDate
+    // ========== DATE FILTER LOGIC ==========
     let dateFilter = {};
     const currentDate = new Date();
+    let periodDisplay = '';
     
     if (startDate || endDate) {
-      // Use custom date range if provided
       dateFilter = {};
       if (startDate) {
         const start = new Date(startDate);
@@ -1168,8 +1709,8 @@ export const getMonthlyStockTransfersSummary = async (req, res) => {
         end.setHours(23, 59, 59, 999);
         dateFilter.$lte = end;
       }
+      periodDisplay = `${startDate || 'Start'} to ${endDate || 'End'}`;
     } else {
-      // Use month/year if no custom date range provided
       const currentMonth = month ? parseInt(month) : currentDate.getMonth() + 1;
       const currentYear = year ? parseInt(year) : currentDate.getFullYear();
 
@@ -1191,14 +1732,56 @@ export const getMonthlyStockTransfersSummary = async (req, res) => {
         $gte: new Date(currentYear, currentMonth - 1, 1),
         $lte: new Date(currentYear, currentMonth, 0, 23, 59, 59, 999)
       };
+      periodDisplay = `${currentMonth}/${currentYear}`;
     }
 
-    // Build base filter
+    // ========== BASE FILTER ==========
     const baseFilter = {
       createdAt: dateFilter,
     };
 
-    // Center filtering with permission check
+    // ========== RESELLER AND CENTER FILTERS ==========
+    let targetFromCenterIds = [];
+    let targetToCenterIds = [];
+    
+    if (resellerId && mongoose.Types.ObjectId.isValid(resellerId)) {
+      const centersUnderReseller = await mongoose.model('Center').find({ 
+        reseller: resellerId,
+        status: "Enable"
+      }).select("_id");
+      
+      targetFromCenterIds = centersUnderReseller.map(c => c._id);
+      targetToCenterIds = centersUnderReseller.map(c => c._id);
+      console.log(`Found ${targetFromCenterIds.length} centers under reseller ${resellerId}`);
+      
+      if (targetFromCenterIds.length > 0) {
+        baseFilter.$or = [
+          { fromCenter: { $in: targetFromCenterIds } },
+          { toCenter: { $in: targetToCenterIds } }
+        ];
+      }
+    }
+    
+    if (fromCenter && mongoose.Types.ObjectId.isValid(fromCenter)) {
+      if (baseFilter.$or) {
+        baseFilter.$or = [{ fromCenter: new mongoose.Types.ObjectId(fromCenter) }];
+      } else {
+        baseFilter.fromCenter = new mongoose.Types.ObjectId(fromCenter);
+      }
+      console.log('Applied specific fromCenter filter:', baseFilter.fromCenter);
+    }
+    
+    if (toCenter && mongoose.Types.ObjectId.isValid(toCenter)) {
+      if (baseFilter.$or) {
+        baseFilter.$or = [{ toCenter: new mongoose.Types.ObjectId(toCenter) }];
+      } else if (baseFilter.fromCenter) {
+        baseFilter.toCenter = new mongoose.Types.ObjectId(toCenter);
+      } else {
+        baseFilter.toCenter = new mongoose.Types.ObjectId(toCenter);
+      }
+      console.log('Applied specific toCenter filter:', baseFilter.toCenter);
+    }
+    
     if (permissions.view_own_report && !permissions.view_all_report) {
       const userCenterId = userCenter?._id || userCenter;
       if (userCenterId) {
@@ -1212,49 +1795,32 @@ export const getMonthlyStockTransfersSummary = async (req, res) => {
             : userCenterId 
           }
         ];
-      }
-    } else if (permissions.view_all_report) {
-      // From Center filter
-      if (fromCenter) {
-        baseFilter.fromCenter = mongoose.Types.ObjectId.isValid(fromCenter) 
-          ? new mongoose.Types.ObjectId(fromCenter)
-          : fromCenter;
-      }
-      
-      // To Center filter
-      if (toCenter) {
-        baseFilter.toCenter = mongoose.Types.ObjectId.isValid(toCenter) 
-          ? new mongoose.Types.ObjectId(toCenter)
-          : toCenter;
+        delete baseFilter.fromCenter;
+        delete baseFilter.toCenter;
       }
     }
 
-    // Status filter
     if (status) {
       baseFilter.status = status;
     }
 
     console.log('Base filter:', JSON.stringify(baseFilter, null, 2));
 
-    // Build aggregation pipeline
+    // ========== AGGREGATION PIPELINE ==========
     const aggregationPipeline = [
       { $match: baseFilter },
       { $unwind: "$products" }
     ];
 
-    // Add product filter if applied
     const productFilterValue = product || productId;
-    if (productFilterValue) {
+    if (productFilterValue && mongoose.Types.ObjectId.isValid(productFilterValue)) {
       aggregationPipeline.push({
         $match: {
-          "products.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
-            ? new mongoose.Types.ObjectId(productFilterValue)
-            : productFilterValue
+          "products.product": new mongoose.Types.ObjectId(productFilterValue)
         }
       });
     }
 
-    // Continue with the rest of the pipeline
     aggregationPipeline.push(
       {
         $lookup: {
@@ -1281,11 +1847,31 @@ export const getMonthlyStockTransfersSummary = async (req, res) => {
         },
       },
       {
+        $lookup: {
+          from: "centers",
+          localField: "fromCenterDetails.reseller",
+          foreignField: "_id",
+          as: "fromResellerDetails",
+        },
+      },
+      {
+        $lookup: {
+          from: "centers",
+          localField: "toCenterDetails.reseller",
+          foreignField: "_id",
+          as: "toResellerDetails",
+        },
+      },
+      {
         $project: {
           fromCenter: { $arrayElemAt: ["$fromCenterDetails.centerName", 0] },
           fromCenterId: "$fromCenter",
+          fromResellerName: { $arrayElemAt: ["$fromResellerDetails.businessName", 0] },
+          fromResellerId: { $arrayElemAt: ["$fromResellerDetails._id", 0] },
           toCenter: { $arrayElemAt: ["$toCenterDetails.centerName", 0] },
           toCenterId: "$toCenter",
+          toResellerName: { $arrayElemAt: ["$toResellerDetails.businessName", 0] },
+          toResellerId: { $arrayElemAt: ["$toResellerDetails._id", 0] },
           product: { $arrayElemAt: ["$productDetails.productTitle", 0] },
           productId: "$products.product",
           productCode: { $arrayElemAt: ["$productDetails.productCode", 0] },
@@ -1303,8 +1889,12 @@ export const getMonthlyStockTransfersSummary = async (req, res) => {
           _id: {
             fromCenter: "$fromCenter",
             fromCenterId: "$fromCenterId",
+            fromResellerName: "$fromResellerName",
+            fromResellerId: "$fromResellerId",
             toCenter: "$toCenter",
             toCenterId: "$toCenterId",
+            toResellerName: "$toResellerName",
+            toResellerId: "$toResellerId",
             product: "$product",
             productId: "$productId",
             productCode: "$productCode",
@@ -1321,8 +1911,12 @@ export const getMonthlyStockTransfersSummary = async (req, res) => {
       {
         $project: {
           _id: 0,
+          fromReseller: "$_id.fromResellerName",
+          fromResellerId: "$_id.fromResellerId",
           fromCenter: "$_id.fromCenter",
           fromCenterId: "$_id.fromCenterId",
+          toReseller: "$_id.toResellerName",
+          toResellerId: "$_id.toResellerId",
           toCenter: "$_id.toCenter",
           toCenterId: "$_id.toCenterId",
           product: "$_id.product",
@@ -1334,6 +1928,7 @@ export const getMonthlyStockTransfersSummary = async (req, res) => {
           transferCount: 1,
           transferNumbers: 1,
           pendingQuantity: { $subtract: ["$totalRequestedQty", "$totalReceivedQty"] },
+          pendingApproval: { $subtract: ["$totalRequestedQty", "$totalApprovedQty"] },
           approvalRate: {
             $cond: {
               if: { $gt: ["$totalRequestedQty", 0] },
@@ -1372,9 +1967,12 @@ export const getMonthlyStockTransfersSummary = async (req, res) => {
       },
       {
         $sort: {
-          fromCenter: 1,
-          toCenter: 1,
-          product: 1,
+          [sortBy === "fromCenter" ? "fromCenter" : 
+           sortBy === "toCenter" ? "toCenter" :
+           sortBy === "fromReseller" ? "fromReseller" :
+           sortBy === "toReseller" ? "toReseller" :
+           sortBy === "product" ? "product" :
+           sortBy === "totalRequestedQty" ? "totalRequestedQty" : "fromCenter"]: sortOrder === "desc" ? -1 : 1,
         },
       }
     );
@@ -1382,54 +1980,24 @@ export const getMonthlyStockTransfersSummary = async (req, res) => {
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
-    
-    // Apply pagination
-    const paginatedPipeline = [...aggregationPipeline, { $skip: skip }, { $limit: limitNum }];
 
-    const monthlySummary = await StockTransfer.aggregate(paginatedPipeline);
+    let monthlySummary = await StockTransfer.aggregate(aggregationPipeline);
+    const total = monthlySummary.length;
 
-    // Count pipeline (similar structure but without pagination)
-    const countPipeline = [
-      { $match: baseFilter },
-      { $unwind: "$products" }
-    ];
-
-    if (productFilterValue) {
-      countPipeline.push({
-        $match: {
-          "products.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
-            ? new mongoose.Types.ObjectId(productFilterValue)
-            : productFilterValue
-        }
-      });
+    if (format !== "excel") {
+      monthlySummary = monthlySummary.slice(skip, skip + limitNum);
     }
 
-    countPipeline.push({
-      $group: {
-        _id: {
-          fromCenter: "$fromCenter",
-          toCenter: "$toCenter",
-          product: "$products.product",
-        },
-      },
-    },
-    { $count: "total" });
-
-    const totalResult = await StockTransfer.aggregate(countPipeline);
-    const total = totalResult.length > 0 ? totalResult[0].total : 0;
-
-    // Enhanced statistics pipeline
+    // ========== STATISTICS PIPELINE ==========
     const statsPipeline = [
       { $match: baseFilter },
       { $unwind: "$products" }
     ];
 
-    if (productFilterValue) {
+    if (productFilterValue && mongoose.Types.ObjectId.isValid(productFilterValue)) {
       statsPipeline.push({
         $match: {
-          "products.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
-            ? new mongoose.Types.ObjectId(productFilterValue)
-            : productFilterValue
+          "products.product": new mongoose.Types.ObjectId(productFilterValue)
         }
       });
     }
@@ -1458,6 +2026,7 @@ export const getMonthlyStockTransfersSummary = async (req, res) => {
         uniqueToCentersCount: { $size: "$uniqueToCenters" },
         uniqueStatusesCount: { $size: "$uniqueStatuses" },
         pendingQuantity: { $subtract: ["$totalProductsTransferred", "$totalReceived"] },
+        pendingApproval: { $subtract: ["$totalProductsTransferred", "$totalApproved"] },
         overallApprovalRate: {
           $cond: {
             if: { $gt: ["$totalProductsTransferred", 0] },
@@ -1486,20 +2055,88 @@ export const getMonthlyStockTransfersSummary = async (req, res) => {
       uniqueToCentersCount: 0,
       uniqueStatusesCount: 0,
       pendingQuantity: 0,
+      pendingApproval: 0,
       overallApprovalRate: 0,
       overallFulfillmentRate: 0,
     };
 
-    // Determine period display
-    let periodDisplay = '';
-    if (startDate && endDate) {
-      periodDisplay = `${new Date(startDate).toLocaleDateString()} - ${new Date(endDate).toLocaleDateString()}`;
-    } else {
-      const currentMonth = month ? parseInt(month) : currentDate.getMonth() + 1;
-      const currentYear = year ? parseInt(year) : currentDate.getFullYear();
-      periodDisplay = `${currentMonth}/${currentYear}`;
+    // ========== EXCEL EXPORT HANDLING - SIMPLIFIED ==========
+    if (format === "excel") {
+      try {
+        console.log(`[EXPORT] Generating Excel file with ${monthlySummary.length} records`);
+
+        // Prepare Excel data with ONLY 4 columns as requested
+        const excelData = monthlySummary.map((item, index) => ({
+          'Center': item.fromCenter || 'N/A',
+          'Parent Center': item.toCenter || 'N/A',
+          'Product': item.product || 'N/A',
+          'Total Qty': item.totalRequestedQty || 0
+        }));
+
+        // Create workbook
+        const workbook = XLSX.utils.book_new();
+
+        // Main data sheet with only 4 columns
+        const mainSheet = XLSX.utils.json_to_sheet(excelData);
+        
+        // Set column widths
+        mainSheet['!cols'] = [
+          { wch: 30 }, // Center
+          { wch: 30 }, // Parent Center
+          { wch: 40 }, // Product
+          { wch: 12 }, // Total Qty
+        ];
+
+        // Style the header row
+        const headerRange = XLSX.utils.decode_range(mainSheet['!ref'] || 'A1:D1');
+        for (let C = headerRange.s.c; C <= headerRange.e.c; ++C) {
+          const address = XLSX.utils.encode_cell({ r: 0, c: C });
+          if (!mainSheet[address]) continue;
+          mainSheet[address].s = {
+            font: { bold: true, sz: 12, color: { rgb: "FFFFFF" } },
+            fill: { fgColor: { rgb: "4F81BD" } },
+            alignment: { horizontal: "center", vertical: "center" }
+          };
+        }
+
+        XLSX.utils.book_append_sheet(workbook, mainSheet, 'Stock Transfers Summary');
+
+        // Optional: Add a summary sheet with filter information
+        const summaryData = [{
+          'Report Generated': moment().format('DD-MM-YYYY HH:mm:ss'),
+          'Period': periodDisplay,
+          'Reseller ID': resellerId || 'All',
+          'From Center': fromCenter || 'All',
+          'To Center': toCenter || 'All',
+          'Product': product || productId || 'All',
+          'Status': status || 'All',
+          'Total Records': monthlySummary.length,
+          'Total Quantity': stats.totalProductsTransferred
+        }];
+        
+        const summarySheet = XLSX.utils.json_to_sheet(summaryData);
+        XLSX.utils.book_append_sheet(workbook, summarySheet, 'Report Info');
+
+        // Generate Excel file
+        const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=stock_transfers_summary_${moment().format('YYYY-MM-DD')}.xlsx`);
+        res.setHeader('Content-Length', excelBuffer.length);
+
+        return res.send(excelBuffer);
+
+      } catch (exportError) {
+        console.error("[EXPORT ERROR]", exportError);
+        return res.status(500).json({
+          success: false,
+          message: "Error generating Excel export",
+          error: exportError.message
+        });
+      }
     }
 
+    // ========== JSON RESPONSE ==========
     const response = {
       success: true,
       message: `Monthly stock transfers summary for ${periodDisplay} retrieved successfully`,
@@ -1512,6 +2149,7 @@ export const getMonthlyStockTransfersSummary = async (req, res) => {
         totalReceived: stats.totalReceived,
         totalTransfers: stats.totalTransfers,
         pendingQuantity: stats.pendingQuantity,
+        pendingApproval: stats.pendingApproval,
         uniqueProducts: stats.uniqueProductsCount,
         uniqueFromCenters: stats.uniqueFromCentersCount,
         uniqueToCenters: stats.uniqueToCentersCount,
@@ -1520,6 +2158,7 @@ export const getMonthlyStockTransfersSummary = async (req, res) => {
         overallFulfillmentRate: Math.round(stats.overallFulfillmentRate * 100) / 100,
       },
       filters: {
+        reseller: resellerId || "all",
         fromCenter: fromCenter || "all",
         toCenter: toCenter || "all",
         product: product || productId || "all",
@@ -1562,13 +2201,17 @@ export const getAllStockTransfersReports = async (req, res) => {
     const {
       page = 1,
       limit = 100,
+      format = "json",
       status,
       fromCenter,
       toCenter,
       center,
       centerId,
+      resellerId,
       product,
       productId,
+      month,
+      year,
       startDate,
       endDate,
       createdBy,
@@ -1587,37 +2230,109 @@ export const getAllStockTransfersReports = async (req, res) => {
     const filter = {};
 
     console.log('Received query params:', {
-      center, centerId, product, productId, startDate, endDate, fromCenter, toCenter
+      center, centerId, resellerId, product, productId, month, year, startDate, endDate, fromCenter, toCenter, format
     });
 
-    // Center filtering with permission check
+    // ========== DATE RANGE FILTERING WITH MONTH/YEAR SUPPORT ==========
+    let periodDisplay = '';
+    const currentDate = new Date();
+    
+    if (startDate || endDate) {
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        filter[dateField] = { ...filter[dateField], $gte: start };
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        filter[dateField] = { ...filter[dateField], $lte: end };
+      }
+      periodDisplay = `${startDate || 'Start'} to ${endDate || 'End'}`;
+    } else if (month || year) {
+      const selectedMonth = month ? parseInt(month) : currentDate.getMonth() + 1;
+      const selectedYear = year ? parseInt(year) : currentDate.getFullYear();
+
+      if (selectedMonth < 1 || selectedMonth > 12) {
+        return res.status(400).json({
+          success: false,
+          message: "Month must be between 1 and 12",
+        });
+      }
+
+      if (selectedYear < 2000 || selectedYear > 2100) {
+        return res.status(400).json({
+          success: false,
+          message: "Year must be between 2000 and 2100",
+        });
+      }
+
+      filter[dateField] = {
+        $gte: new Date(selectedYear, selectedMonth - 1, 1),
+        $lte: new Date(selectedYear, selectedMonth, 0, 23, 59, 59, 999)
+      };
+      periodDisplay = `${selectedMonth}/${selectedYear}`;
+    }
+
+    // ========== RESELLER AND CENTER FILTERING ==========
+    let targetCenterIds = [];
+    
+    if (resellerId && mongoose.Types.ObjectId.isValid(resellerId)) {
+      const centersUnderReseller = await mongoose.model('Center').find({ 
+        reseller: resellerId,
+        status: "Enable"
+      }).select("_id");
+      
+      targetCenterIds = centersUnderReseller.map(c => c._id);
+      console.log(`Found ${targetCenterIds.length} centers under reseller ${resellerId}`);
+      
+      if (targetCenterIds.length > 0) {
+        filter.$or = [
+          { fromCenter: { $in: targetCenterIds } },
+          { toCenter: { $in: targetCenterIds } }
+        ];
+      }
+    }
+
     if (permissions.view_own_report && !permissions.view_all_report) {
       const userCenterId = userCenter?._id || userCenter;
       if (userCenterId) {
         filter.$or = [{ fromCenter: userCenterId }, { toCenter: userCenterId }];
       }
     } else if (permissions.view_all_report) {
-      // Support center filter for both fromCenter and toCenter
       const centerFilterValue = center || centerId;
-      if (centerFilterValue) {
-        filter.$or = [
-          { fromCenter: centerFilterValue },
-          { toCenter: centerFilterValue }
-        ];
+      if (centerFilterValue && mongoose.Types.ObjectId.isValid(centerFilterValue)) {
+        if (filter.$or) {
+          filter.$and = [
+            { $or: filter.$or },
+            { $or: [{ fromCenter: centerFilterValue }, { toCenter: centerFilterValue }] }
+          ];
+          delete filter.$or;
+        } else {
+          filter.$or = [
+            { fromCenter: centerFilterValue },
+            { toCenter: centerFilterValue }
+          ];
+        }
       } else {
-        // Individual center filters
-        if (fromCenter) filter.fromCenter = fromCenter;
-        if (toCenter) filter.toCenter = toCenter;
+        if (fromCenter && mongoose.Types.ObjectId.isValid(fromCenter)) {
+          if (filter.$or) delete filter.$or;
+          filter.fromCenter = new mongoose.Types.ObjectId(fromCenter);
+        }
+        if (toCenter && mongoose.Types.ObjectId.isValid(toCenter)) {
+          if (filter.$or) delete filter.$or;
+          filter.toCenter = new mongoose.Types.ObjectId(toCenter);
+        }
       }
     }
 
-    // Product filtering
+    // ========== PRODUCT FILTERING ==========
     const productFilterValue = product || productId;
-    if (productFilterValue) {
-      filter["products.product"] = productFilterValue;
+    if (productFilterValue && mongoose.Types.ObjectId.isValid(productFilterValue)) {
+      filter["products.product"] = new mongoose.Types.ObjectId(productFilterValue);
     }
 
-    // Status filtering
+    // ========== STATUS FILTERING ==========
     if (status) {
       filter.status = status;
     }
@@ -1629,39 +2344,24 @@ export const getAllStockTransfersReports = async (req, res) => {
       filter.status = { $in: statusArray };
     }
 
-    // Date range filtering with proper time boundaries
-    if (startDate || endDate) {
-      filter[dateField] = {};
-      if (startDate) {
-        const start = new Date(startDate);
-        start.setHours(0, 0, 0, 0);
-        filter[dateField].$gte = start;
-      }
-      if (endDate) {
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        filter[dateField].$lte = end;
-      }
+    // ========== USER FILTERING ==========
+    if (createdBy && mongoose.Types.ObjectId.isValid(createdBy)) {
+      filter.createdBy = new mongoose.Types.ObjectId(createdBy);
     }
 
-    // User filtering
-    if (createdBy) {
-      filter.createdBy = createdBy;
+    if (approvedBy && mongoose.Types.ObjectId.isValid(approvedBy)) {
+      filter["adminApproval.approvedBy"] = new mongoose.Types.ObjectId(approvedBy);
     }
 
-    if (approvedBy) {
-      filter["adminApproval.approvedBy"] = approvedBy;
+    if (shippedBy && mongoose.Types.ObjectId.isValid(shippedBy)) {
+      filter["shippingInfo.shippedBy"] = new mongoose.Types.ObjectId(shippedBy);
     }
 
-    if (shippedBy) {
-      filter["shippingInfo.shippedBy"] = shippedBy;
+    if (receivedBy && mongoose.Types.ObjectId.isValid(receivedBy)) {
+      filter["receivingInfo.receivedBy"] = new mongoose.Types.ObjectId(receivedBy);
     }
 
-    if (receivedBy) {
-      filter["receivingInfo.receivedBy"] = receivedBy;
-    }
-
-    // Enhanced search filtering
+    // ========== SEARCH FILTERING ==========
     if (search) {
       filter.$or = [
         { transferNumber: { $regex: search, $options: "i" } },
@@ -1674,20 +2374,14 @@ export const getAllStockTransfersReports = async (req, res) => {
             $options: "i",
           },
         },
-        { "products.product.productTitle": { $regex: search, $options: "i" } },
-        { "fromCenter.centerName": { $regex: search, $options: "i" } },
-        { "fromCenter.centerCode": { $regex: search, $options: "i" } },
-        { "toCenter.centerName": { $regex: search, $options: "i" } },
-        { "toCenter.centerCode": { $regex: search, $options: "i" } },
       ];
     }
 
     console.log('Final filter:', JSON.stringify(filter, null, 2));
 
-    // Use regular find with populate for better compatibility
+    // ========== BUILD QUERY ==========
     let query = StockTransfer.find(filter);
 
-    // Populate options
     const populateOptions = [
       {
         path: "createdBy",
@@ -1696,10 +2390,18 @@ export const getAllStockTransfersReports = async (req, res) => {
       {
         path: "fromCenter",
         select: "centerName centerCode centerType",
+        populate: {
+          path: "reseller",
+          select: "businessName email phone"
+        }
       },
       {
         path: "toCenter",
         select: "centerName centerCode centerType",
+        populate: {
+          path: "reseller",
+          select: "businessName email phone"
+        }
       },
       {
         path: "products.product",
@@ -1719,23 +2421,6 @@ export const getAllStockTransfersReports = async (req, res) => {
       );
     }
 
-    if (includeCenterDetails) {
-      const fromCenterIndex = populateOptions.findIndex(
-        (p) => p.path === "fromCenter"
-      );
-      const toCenterIndex = populateOptions.findIndex(
-        (p) => p.path === "toCenter"
-      );
-
-      if (fromCenterIndex !== -1) {
-        populateOptions[fromCenterIndex].select += " address phone";
-      }
-      if (toCenterIndex !== -1) {
-        populateOptions[toCenterIndex].select += " address phone";
-      }
-    }
-
-    // Sort options
     const sort = {};
     const validSortFields = [
       "createdAt",
@@ -1753,19 +2438,17 @@ export const getAllStockTransfersReports = async (req, res) => {
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
 
-    const [stockTransfers, total] = await Promise.all([
-      query
-        .populate(populateOptions)
-        .sort(sort)
-        .skip(skip)
-        .limit(limitNum)
-        .lean(),
-      StockTransfer.countDocuments(filter)
-    ]);
+    let stockTransfers = await query
+      .populate(populateOptions)
+      .sort(sort)
+      .lean();
 
-    console.log(`Found ${stockTransfers.length} records out of ${total} total`);
+    const total = stockTransfers.length;
 
-    // Post-process to filter products array if product filter is applied
+    if (format !== "excel") {
+      stockTransfers = stockTransfers.slice(skip, skip + limitNum);
+    }
+
     let processedTransfers = stockTransfers;
     if (productFilterValue) {
       processedTransfers = stockTransfers.map(transfer => {
@@ -1779,98 +2462,52 @@ export const getAllStockTransfersReports = async (req, res) => {
           ...transfer,
           products: filteredProducts
         };
-      }).filter(transfer => transfer.products.length > 0); // Remove transfers with no matching products
+      }).filter(transfer => transfer.products.length > 0);
     }
 
-    // Fetch stock data for each product
+    // ========== FETCH STOCK DATA ==========
     const CenterStock = mongoose.model("CenterStock");
 
     for (const transfer of processedTransfers) {
       for (const productItem of transfer.products) {
         if (productItem.product && transfer.fromCenter && transfer.toCenter) {
           try {
+            const fromCenterId = transfer.fromCenter._id || transfer.fromCenter;
+            const toCenterId = transfer.toCenter._id || transfer.toCenter;
+            const productId = productItem.product._id || productItem.product;
+
             const fromCenterStock = await CenterStock.findOne({
-              center: transfer.fromCenter._id,
-              product: productItem.product._id,
-            })
-              .select(
-                "availableQuantity totalQuantity inTransitQuantity consumedQuantity"
-              )
-              .lean();
+              center: fromCenterId,
+              product: productId,
+            }).lean();
 
             const toCenterStock = await CenterStock.findOne({
-              center: transfer.toCenter._id,
-              product: productItem.product._id,
-            })
-              .select(
-                "availableQuantity totalQuantity inTransitQuantity consumedQuantity"
-              )
-              .lean();
+              center: toCenterId,
+              product: productId,
+            }).lean();
 
             productItem.fromCenterStock = fromCenterStock
               ? {
                   availableQuantity: fromCenterStock.availableQuantity || 0,
                   totalQuantity: fromCenterStock.totalQuantity || 0,
-                  inTransitQuantity: fromCenterStock.inTransitQuantity || 0,
-                  consumedQuantity: fromCenterStock.consumedQuantity || 0,
                 }
-              : {
-                  availableQuantity: 0,
-                  totalQuantity: 0,
-                  inTransitQuantity: 0,
-                  consumedQuantity: 0,
-                };
+              : { availableQuantity: 0, totalQuantity: 0 };
 
             productItem.toCenterStock = toCenterStock
               ? {
                   availableQuantity: toCenterStock.availableQuantity || 0,
                   totalQuantity: toCenterStock.totalQuantity || 0,
-                  inTransitQuantity: toCenterStock.inTransitQuantity || 0,
-                  consumedQuantity: toCenterStock.consumedQuantity || 0,
                 }
-              : {
-                  availableQuantity: 0,
-                  totalQuantity: 0,
-                  inTransitQuantity: 0,
-                  consumedQuantity: 0,
-                };
+              : { availableQuantity: 0, totalQuantity: 0 };
           } catch (error) {
-            console.error(
-              `Error fetching center stock data for product ${productItem.product._id}:`,
-              error
-            );
-
-            productItem.fromCenterStock = {
-              availableQuantity: 0,
-              totalQuantity: 0,
-              inTransitQuantity: 0,
-              consumedQuantity: 0,
-            };
-            productItem.toCenterStock = {
-              availableQuantity: 0,
-              totalQuantity: 0,
-              inTransitQuantity: 0,
-              consumedQuantity: 0,
-            };
+            productItem.fromCenterStock = { availableQuantity: 0, totalQuantity: 0 };
+            productItem.toCenterStock = { availableQuantity: 0, totalQuantity: 0 };
           }
-        } else {
-          productItem.fromCenterStock = {
-            availableQuantity: 0,
-            totalQuantity: 0,
-            inTransitQuantity: 0,
-            consumedQuantity: 0,
-          };
-          productItem.toCenterStock = {
-            availableQuantity: 0,
-            totalQuantity: 0,
-            inTransitQuantity: 0,
-            consumedQuantity: 0,
-          };
         }
       }
     }
 
-    // Get summary statistics
+    // ========== SUMMARY STATISTICS ==========
     const summaryStats = await StockTransfer.aggregate([
       { $match: filter },
       { $unwind: "$products" },
@@ -1887,6 +2524,7 @@ export const getAllStockTransfersReports = async (req, res) => {
           totalTransfers: { $addToSet: "$_id" },
           totalProducts: { $sum: 1 },
           totalQuantity: { $sum: "$products.quantity" },
+          totalApproved: { $sum: "$products.approvedQuantity" },
           totalShipped: { $sum: "$products.shippedQuantity" },
           totalReceived: { $sum: "$products.receivedQuantity" }
         }
@@ -1896,9 +2534,11 @@ export const getAllStockTransfersReports = async (req, res) => {
           totalTransfers: { $size: "$totalTransfers" },
           totalProducts: 1,
           totalQuantity: 1,
+          totalApproved: 1,
           totalShipped: 1,
           totalReceived: 1,
-          pendingShipment: { $subtract: ["$totalQuantity", "$totalShipped"] },
+          pendingApproval: { $subtract: ["$totalQuantity", "$totalApproved"] },
+          pendingShipment: { $subtract: ["$totalApproved", "$totalShipped"] },
           pendingReceipt: { $subtract: ["$totalShipped", "$totalReceived"] }
         }
       }
@@ -1908,8 +2548,10 @@ export const getAllStockTransfersReports = async (req, res) => {
       totalTransfers: 0,
       totalProducts: 0,
       totalQuantity: 0,
+      totalApproved: 0,
       totalShipped: 0,
       totalReceived: 0,
+      pendingApproval: 0,
       pendingShipment: 0,
       pendingReceipt: 0
     };
@@ -1929,41 +2571,182 @@ export const getAllStockTransfersReports = async (req, res) => {
       statusFilters[item._id] = item.count;
     });
 
-    const centerStats = await StockTransfer.aggregate([
-      { $match: filter },
-      {
-        $facet: {
-          fromCenters: [
-            { $group: { _id: "$fromCenter", count: { $sum: 1 } } },
-            { $count: "total" },
-          ],
-          toCenters: [
-            { $group: { _id: "$toCenter", count: { $sum: 1 } } },
-            { $count: "total" },
-          ],
-        },
-      },
-    ]);
-
-    // Adjust total count if product filter was applied in post-processing
     const finalTotal = productFilterValue ? processedTransfers.length : total;
 
+    // ========== EXCEL EXPORT WITH REQUIRED FORMAT ==========
+    if (format === "excel") {
+      try {
+        console.log(`[EXPORT] Generating Excel file with ${processedTransfers.length} transfers`);
+
+        // Prepare Excel data in the exact format requested
+        const excelData = [];
+        
+        processedTransfers.forEach((transfer) => {
+          transfer.products.forEach((productItem) => {
+            excelData.push({
+              'Invoice No.': transfer.transferNumber || 'N/A',
+              'Date': transfer.date ? moment(transfer.date).format('DD MMM YYYY') : (transfer.createdAt ? moment(transfer.createdAt).format('DD MMM YYYY') : 'N/A'),
+              'Center': transfer.fromCenter?.centerName || 'N/A',
+              'Parent Center': transfer.toCenter?.centerName || 'N/A',
+              'Product': productItem.product?.productTitle || 'N/A',
+              'Quantity': productItem.quantity || 0,
+              'Center Stock': productItem.fromCenterStock?.availableQuantity || 0,
+              'Parent Stock': productItem.toCenterStock?.availableQuantity || 0,
+              'Product Remark': productItem.productRemark || transfer.remark || 'N/A',
+              'Approved Quantity': productItem.approvedQuantity || 0,
+              'Approved Remark': productItem.approvedRemark || transfer.adminApproval?.remark || 'N/A',
+              'Received Qty.': productItem.receivedQuantity || 0,
+              'Received Remark': productItem.receivedRemark || transfer.receivingInfo?.remark || 'N/A',
+            });
+          });
+        });
+
+        // Summary sheet data
+        const summaryData = [{
+          'Report Generated': moment().format('DD-MM-YYYY HH:mm:ss'),
+          'Period': periodDisplay || 'All Time',
+          'Date Field': dateField,
+          'Start Date': startDate || (month ? `Month ${month}/${year}` : 'Not Applied'),
+          'End Date': endDate || (month ? `Month ${month}/${year}` : 'Not Applied'),
+          'Reseller ID': resellerId || 'All',
+          'From Center': fromCenter || center || centerId || 'All',
+          'To Center': toCenter || 'All',
+          'Product': product || productId || 'All',
+          'Status': status || statuses || 'All',
+          'Total Transfers': summary.totalTransfers,
+          'Total Products': summary.totalProducts,
+          'Total Quantity': summary.totalQuantity,
+          'Total Approved': summary.totalApproved,
+          'Total Shipped': summary.totalShipped,
+          'Total Received': summary.totalReceived,
+          'Pending Approval': summary.pendingApproval,
+          'Pending Shipment': summary.pendingShipment,
+          'Pending Receipt': summary.pendingReceipt,
+        }];
+
+        // Filters applied sheet
+        const filtersData = [{
+          'Filter Name': 'Applied Value',
+          'Reseller ID': resellerId || 'All',
+          'From Center ID': fromCenter || 'All',
+          'To Center ID': toCenter || 'All',
+          'Center ID': center || centerId || 'All',
+          'Product ID': product || productId || 'All',
+          'Status': status || statuses || 'All',
+          'Start Date': startDate || 'Not Applied',
+          'End Date': endDate || 'Not Applied',
+          'Month': month || 'Not Applied',
+          'Year': year || 'Not Applied',
+          'Date Field': dateField,
+          'Created By': createdBy || 'All',
+          'Approved By': approvedBy || 'All',
+          'Shipped By': shippedBy || 'All',
+          'Received By': receivedBy || 'All',
+          'Search Term': search || 'None',
+        }];
+
+        // Create workbook
+        const workbook = XLSX.utils.book_new();
+
+        // Main data sheet with required columns
+        const mainSheet = XLSX.utils.json_to_sheet(excelData);
+        
+        // Set column widths
+        mainSheet['!cols'] = [
+          { wch: 20 }, // Invoice No.
+          { wch: 15 }, // Date
+          { wch: 25 }, // Center
+          { wch: 25 }, // Parent Center
+          { wch: 40 }, // Product
+          { wch: 10 }, // Quantity
+          { wch: 12 }, // Center Stock
+          { wch: 12 }, // Parent Stock
+          { wch: 30 }, // Product Remark
+          { wch: 15 }, // Approved Quantity
+          { wch: 30 }, // Approved Remark
+          { wch: 15 }, // Received Qty.
+          { wch: 30 }, // Received Remark
+        ];
+
+        // Style the header row (make it bold)
+        const headerRange = XLSX.utils.decode_range(mainSheet['!ref'] || 'A1:M1');
+        for (let C = headerRange.s.c; C <= headerRange.e.c; ++C) {
+          const address = XLSX.utils.encode_cell({ r: 0, c: C });
+          if (!mainSheet[address]) continue;
+          mainSheet[address].s = {
+            font: { bold: true, sz: 12 },
+            fill: { fgColor: { rgb: "4F81BD" } },
+            alignment: { horizontal: "center" }
+          };
+        }
+
+        XLSX.utils.book_append_sheet(workbook, mainSheet, 'Stock Transfers');
+
+        // Summary sheet
+        const summarySheet = XLSX.utils.json_to_sheet(summaryData);
+        XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+
+        // Filters sheet
+        const filtersSheet = XLSX.utils.json_to_sheet(filtersData);
+        XLSX.utils.book_append_sheet(workbook, filtersSheet, 'Applied Filters');
+
+        // Status breakdown sheet
+        const statusData = Object.keys(statusFilters).map(status => ({
+          'Status': status,
+          'Count': statusFilters[status]
+        }));
+        const statusSheet = XLSX.utils.json_to_sheet(statusData);
+        XLSX.utils.book_append_sheet(workbook, statusSheet, 'Status Breakdown');
+
+        // Generate Excel file
+        const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=stock_transfers_${moment().format('YYYY-MM-DD_HH-mm-ss')}.xlsx`);
+        res.setHeader('Content-Length', excelBuffer.length);
+
+        return res.send(excelBuffer);
+
+      } catch (exportError) {
+        console.error("[EXPORT ERROR]", exportError);
+        return res.status(500).json({
+          success: false,
+          message: "Error generating Excel export",
+          error: exportError.message
+        });
+      }
+    }
+
+    // ========== JSON RESPONSE ==========
     const response = {
       success: true,
       message: "Stock transfers retrieved successfully",
       data: processedTransfers,
-      summary: summary,
+      summary: {
+        period: periodDisplay || 'All Time',
+        totalTransfers: summary.totalTransfers,
+        totalProducts: summary.totalProducts,
+        totalQuantity: summary.totalQuantity,
+        totalApproved: summary.totalApproved,
+        totalShipped: summary.totalShipped,
+        totalReceived: summary.totalReceived,
+        pendingApproval: summary.pendingApproval,
+        pendingShipment: summary.pendingShipment,
+        pendingReceipt: summary.pendingReceipt,
+      },
       filters: {
+        reseller: resellerId || "all",
         center: center || centerId || "all",
-        product: product || productId || "all",
         fromCenter: fromCenter || "all",
         toCenter: toCenter || "all",
+        product: product || productId || "all",
         status: statusFilters,
-        startDate: startDate || "all",
-        endDate: endDate || "all",
-        total: finalTotal,
-        uniqueFromCenters: centerStats[0]?.fromCenters[0]?.total || 0,
-        uniqueToCenters: centerStats[0]?.toCenters[0]?.total || 0,
+        dateRange: {
+          startDate: startDate || (month ? `Month ${month}/${year}` : "all"),
+          endDate: endDate || (month ? `Month ${month}/${year}` : "all"),
+          dateField: dateField,
+        },
+        search: search || "none",
       },
       pagination: {
         currentPage: pageNum,
@@ -2303,6 +3086,7 @@ export const getMonthlyStockUsageSummary = async (req, res) => {
       year,
       center,
       centerId,
+      resellerId,
       usageType,
       product,
       productId,
@@ -2311,16 +3095,21 @@ export const getMonthlyStockUsageSummary = async (req, res) => {
       endDate,
       page = 1,
       limit = 50,
+      format = "json",
+      sortBy = "date",
+      sortOrder = "desc",
     } = req.query;
 
     console.log('Received query params:', {
-      center, centerId, usageType, product, productId, status, startDate, endDate, month, year
+      center, centerId, resellerId, usageType, product, productId, status, startDate, endDate, month, year, format
     });
+
+    // ========== DATE FILTER LOGIC ==========
     let dateFilter = {};
     const currentDate = new Date();
+    let periodDisplay = '';
     
     if (startDate || endDate) {
-      dateFilter = {};
       if (startDate) {
         const start = new Date(startDate);
         start.setHours(0, 0, 0, 0);
@@ -2331,6 +3120,7 @@ export const getMonthlyStockUsageSummary = async (req, res) => {
         end.setHours(23, 59, 59, 999);
         dateFilter.$lte = end;
       }
+      periodDisplay = `${startDate || 'Start'} to ${endDate || 'End'}`;
     } else {
       const currentMonth = month ? parseInt(month) : currentDate.getMonth() + 1;
       const currentYear = year ? parseInt(year) : currentDate.getFullYear();
@@ -2353,10 +3143,28 @@ export const getMonthlyStockUsageSummary = async (req, res) => {
         $gte: new Date(currentYear, currentMonth - 1, 1),
         $lte: new Date(currentYear, currentMonth, 0, 23, 59, 59, 999)
       };
+      periodDisplay = `${currentMonth}/${currentYear}`;
     }
-    const baseFilter = {
-      date: dateFilter,
-    };
+
+    const baseFilter = { date: dateFilter };
+
+    // ========== RESELLER AND CENTER FILTERS ==========
+    let targetCenterIds = [];
+    
+    if (resellerId && mongoose.Types.ObjectId.isValid(resellerId)) {
+      const centersUnderReseller = await mongoose.model('Center').find({ 
+        reseller: resellerId,
+        status: "Enable"
+      }).select("_id");
+      
+      targetCenterIds = centersUnderReseller.map(c => c._id);
+      console.log(`Found ${targetCenterIds.length} centers under reseller ${resellerId}`);
+      
+      if (targetCenterIds.length > 0) {
+        baseFilter.center = { $in: targetCenterIds };
+      }
+    }
+
     if (permissions.view_own_report && !permissions.view_all_report) {
       const userCenterId = userCenter?._id || userCenter;
       if (userCenterId) {
@@ -2364,32 +3172,33 @@ export const getMonthlyStockUsageSummary = async (req, res) => {
           ? new mongoose.Types.ObjectId(userCenterId)
           : userCenterId;
       }
-    } else if (permissions.view_all_report && (center || centerId)) {
+    } else if (permissions.view_all_report) {
       const centerFilterValue = center || centerId;
-      baseFilter.center = mongoose.Types.ObjectId.isValid(centerFilterValue) 
-        ? new mongoose.Types.ObjectId(centerFilterValue)
-        : centerFilterValue;
+      if (centerFilterValue && mongoose.Types.ObjectId.isValid(centerFilterValue)) {
+        baseFilter.center = new mongoose.Types.ObjectId(centerFilterValue);
+      }
     }
-    if (usageType) baseFilter.usageType = usageType;
 
+    if (usageType) baseFilter.usageType = usageType;
     if (status) baseFilter.status = status;
 
     console.log('Base filter:', JSON.stringify(baseFilter, null, 2));
+
+    // ========== AGGREGATION PIPELINE ==========
     const aggregationPipeline = [
       { $match: baseFilter },
       { $unwind: "$items" }
     ];
 
     const productFilterValue = product || productId;
-    if (productFilterValue) {
+    if (productFilterValue && mongoose.Types.ObjectId.isValid(productFilterValue)) {
       aggregationPipeline.push({
         $match: {
-          "items.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
-            ? new mongoose.Types.ObjectId(productFilterValue)
-            : productFilterValue
+          "items.product": new mongoose.Types.ObjectId(productFilterValue)
         }
       });
     }
+
     aggregationPipeline.push(
       {
         $lookup: {
@@ -2416,22 +3225,33 @@ export const getMonthlyStockUsageSummary = async (req, res) => {
         },
       },
       {
+        $lookup: {
+          from: "buildings",
+          localField: "fromBuilding",
+          foreignField: "_id",
+          as: "buildingDetails",
+        },
+      },
+      {
         $project: {
+          date: 1,
+          usageType: 1,
           center: { $arrayElemAt: ["$centerDetails.centerName", 0] },
           centerId: "$center",
-          usageType: 1,
           product: { $arrayElemAt: ["$productDetails.productTitle", 0] },
           productId: "$items.product",
           productCode: { $arrayElemAt: ["$productDetails.productCode", 0] },
-          customer: { $arrayElemAt: ["$customerDetails.name", 0] },
+          productType: { $arrayElemAt: ["$productDetails.productCategory.productCategory", 0] },
           quantity: "$items.quantity",
-          oldStock: "$items.oldStock",
-          newStock: "$items.newStock",
-          totalStock: "$items.totalStock",
+          customerName: { $arrayElemAt: ["$customerDetails.name", 0] },
+          customerMobile: { $arrayElemAt: ["$customerDetails.mobile", 0] },
+          customerAddress: { $arrayElemAt: ["$customerDetails.address1", 0] },
+          buildingName: { $arrayElemAt: ["$buildingDetails.buildingName", 0] },
+          buildingAddress: { $arrayElemAt: ["$buildingDetails.address1", 0] },
           status: 1,
-          date: 1,
           remark: 1,
           connectionType: 1,
+          packageDuration: 1,
           packageAmount: 1,
           onuCharges: 1,
           installationCharges: 1,
@@ -2440,89 +3260,65 @@ export const getMonthlyStockUsageSummary = async (req, res) => {
         },
       },
       {
-        $group: {
-          _id: {
-            center: "$center",
-            centerId: "$centerId",
-            usageType: "$usageType",
-            product: "$product",
-            productId: "$productId",
-            productCode: "$productCode",
+        $addFields: {
+          userOrBuilding: {
+            $cond: {
+              if: { $eq: ["$usageType", "Customer"] },
+              then: "$customerName",
+              else: { $ifNull: ["$buildingName", "$customerName"] }
+            }
           },
-          totalQuantity: { $sum: "$quantity" },
-          totalOldStock: { $avg: "$oldStock" },
-          totalNewStock: { $avg: "$newStock" },
-          totalStockValue: { $avg: "$totalStock" },
-          usageCount: { $sum: 1 },
-          totalPackageAmount: { $sum: "$packageAmount" },
-          totalOnuCharges: { $sum: "$onuCharges" },
-          totalInstallationCharges: { $sum: "$installationCharges" },
-          totalShiftingAmount: { $sum: "$shiftingAmount" },
-          totalWireChangeAmount: { $sum: "$wireChangeAmount" },
-          statuses: { $push: "$status" },
-          customerUsageCount: {
-            $sum: {
-              $cond: [{ $eq: ["$usageType", "Customer"] }, 1, 0],
-            },
+          address: {
+            $cond: {
+              if: { $eq: ["$usageType", "Customer"] },
+              then: "$customerAddress",
+              else: { $ifNull: ["$buildingAddress", "$customerAddress"] }
+            }
           },
-        },
+          mobile: {
+            $cond: {
+              if: { $eq: ["$usageType", "Customer"] },
+              then: "$customerMobile",
+              else: "N/A"
+            }
+          }
+        }
       },
       {
         $project: {
-          _id: 0,
-          Center: "$_id.center",
-          CenterId: "$_id.centerId",
-          UsageType: "$_id.usageType",
-          Product: "$_id.product",
-          ProductId: "$_id.productId",
-          ProductCode: "$_id.productCode",
-          TotalQuantity: "$totalQuantity",
-          AverageOldStock: { $round: ["$totalOldStock", 2] },
-          AverageNewStock: { $round: ["$totalNewStock", 2] },
-          AverageTotalStock: { $round: ["$totalStockValue", 2] },
-          UsageCount: "$usageCount",
-          CustomerUsageCount: "$customerUsageCount",
-          TotalPackageAmount: "$totalPackageAmount",
-          TotalOnuCharges: "$totalOnuCharges",
-          TotalInstallationCharges: "$totalInstallationCharges",
-          TotalShiftingAmount: "$totalShiftingAmount",
-          TotalWireChangeAmount: "$totalWireChangeAmount",
-          TotalRevenue: {
+          Date: "$date",
+          Type: "$usageType",
+          Center: "$center",
+          Product: "$product",
+          ProductType: "$productType",
+          Qty: "$quantity",
+          UserBuilding: "$userOrBuilding",
+          Address: "$address",
+          Mobile: "$mobile",
+          PackageDuration: "$packageDuration",
+          Status: "$status",
+          ONUChrg: "$onuCharges",
+          PktAmt: "$packageAmount",
+          InstChrg: "$installationCharges",
+          ShiftingAmount: "$shiftingAmount",
+          WireChangeAmount: "$wireChangeAmount",
+          TotalAmount: {
             $add: [
-              "$totalPackageAmount",
-              "$totalOnuCharges",
-              "$totalInstallationCharges",
-              "$totalShiftingAmount",
-              "$totalWireChangeAmount"
+              { $ifNull: ["$packageAmount", 0] },
+              { $ifNull: ["$onuCharges", 0] },
+              { $ifNull: ["$installationCharges", 0] },
+              { $ifNull: ["$shiftingAmount", 0] },
+              { $ifNull: ["$wireChangeAmount", 0] }
             ]
           },
-          statusBreakdown: {
-            $arrayToObject: {
-              $map: {
-                input: "$statuses",
-                as: "status",
-                in: {
-                  k: "$$status",
-                  v: {
-                    $size: {
-                      $filter: {
-                        input: "$statuses",
-                        as: "s",
-                        cond: { $eq: ["$$s", "$$status"] },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
+          Reason: "$remark"
+        }
       },
       {
         $sort: {
-          Center: 1,
-          UsageType: 1,
-          Product: 1,
+          [sortBy === "date" ? "Date" : 
+           sortBy === "center" ? "Center" :
+           sortBy === "product" ? "Product" : "Date"]: sortOrder === "desc" ? -1 : 1,
         },
       }
     );
@@ -2531,49 +3327,23 @@ export const getMonthlyStockUsageSummary = async (req, res) => {
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
 
-    const paginatedPipeline = [...aggregationPipeline, { $skip: skip }, { $limit: limitNum }];
+    let monthlySummary = await StockUsage.aggregate(aggregationPipeline);
+    const total = monthlySummary.length;
 
-    const monthlySummary = await StockUsage.aggregate(paginatedPipeline);
-
-    const countPipeline = [
-      { $match: baseFilter },
-      { $unwind: "$items" }
-    ];
-
-    if (productFilterValue) {
-      countPipeline.push({
-        $match: {
-          "items.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
-            ? new mongoose.Types.ObjectId(productFilterValue)
-            : productFilterValue
-        }
-      });
+    if (format !== "excel") {
+      monthlySummary = monthlySummary.slice(skip, skip + limitNum);
     }
 
-    countPipeline.push({
-      $group: {
-        _id: {
-          center: "$center",
-          usageType: "$usageType",
-          product: "$items.product",
-        },
-      },
-    },
-    { $count: "total" });
-
-    const totalResult = await StockUsage.aggregate(countPipeline);
-    const total = totalResult.length > 0 ? totalResult[0].total : 0;
+    // ========== STATISTICS ==========
     const statsPipeline = [
       { $match: baseFilter },
       { $unwind: "$items" }
     ];
 
-    if (productFilterValue) {
+    if (productFilterValue && mongoose.Types.ObjectId.isValid(productFilterValue)) {
       statsPipeline.push({
         $match: {
-          "items.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
-            ? new mongoose.Types.ObjectId(productFilterValue)
-            : productFilterValue
+          "items.product": new mongoose.Types.ObjectId(productFilterValue)
         }
       });
     }
@@ -2596,23 +3366,6 @@ export const getMonthlyStockUsageSummary = async (req, res) => {
         },
         uniqueProducts: { $addToSet: "$items.product" },
         uniqueCenters: { $addToSet: "$center" },
-        uniqueUsageTypes: { $addToSet: "$usageType" },
-        customerUsages: {
-          $sum: {
-            $cond: [{ $eq: ["$usageType", "Customer"] }, 1, 0],
-          },
-        },
-      },
-    },
-    {
-      $project: {
-        totalProductsUsed: 1,
-        totalUsages: 1,
-        totalRevenue: 1,
-        uniqueProductsCount: { $size: "$uniqueProducts" },
-        uniqueCentersCount: { $size: "$uniqueCenters" },
-        uniqueUsageTypesCount: { $size: "$uniqueUsageTypes" },
-        customerUsages: 1,
       },
     });
 
@@ -2623,66 +3376,129 @@ export const getMonthlyStockUsageSummary = async (req, res) => {
       totalRevenue: 0,
       uniqueProductsCount: 0,
       uniqueCentersCount: 0,
-      uniqueUsageTypesCount: 0,
-      customerUsages: 0,
     };
-    const usageTypeStats = await StockUsage.aggregate([
-      { $match: baseFilter },
-      { $unwind: "$items" },
-      {
-        $group: {
-          _id: "$usageType",
-          count: { $sum: 1 },
-          totalQuantity: { $sum: "$items.quantity" },
-          totalRevenue: {
-            $sum: {
-              $add: [
-                "$packageAmount",
-                "$onuCharges",
-                "$installationCharges",
-                "$shiftingAmount",
-                "$wireChangeAmount",
-              ],
-            },
-          },
-        },
-      },
-    ]);
 
-    const usageTypeBreakdown = {};
-    usageTypeStats.forEach((stat) => {
-      usageTypeBreakdown[stat._id] = {
-        count: stat.count,
-        totalQuantity: stat.totalQuantity,
-        totalRevenue: stat.totalRevenue,
-      };
-    });
-    let periodDisplay = '';
-    if (startDate && endDate) {
-      periodDisplay = `${new Date(startDate).toLocaleDateString()} - ${new Date(endDate).toLocaleDateString()}`;
-    } else {
-      const currentMonth = month ? parseInt(month) : currentDate.getMonth() + 1;
-      const currentYear = year ? parseInt(year) : currentDate.getFullYear();
-      periodDisplay = `${currentMonth}/${currentYear}`;
+    // ========== EXCEL EXPORT ==========
+    if (format === "excel") {
+      try {
+        console.log(`[EXPORT] Generating Excel file with ${monthlySummary.length} records`);
+
+        // Prepare Excel data with all requested columns
+        const excelData = monthlySummary.map((item, index) => ({
+          'Date': item.Date ? moment(item.Date).format('DD-MM-YYYY') : 'N/A',
+          'Type': item.Type || 'N/A',
+          'Center': item.Center || 'N/A',
+          'Product': item.Product || 'N/A',
+          'Product Type': item.ProductType || 'N/A',
+          'Qty': item.Qty || 0,
+          'User/Building': item.UserBuilding || 'N/A',
+          'Address': item.Address || 'N/A',
+          'Mobile': item.Mobile || 'N/A',
+          'Package Duration': item.PackageDuration || 'N/A',
+          'Status': item.Status || 'N/A',
+          'ONU Chrg.': item.ONUChrg || 0,
+          'Pkt. Amt.': item.PktAmt || 0,
+          'Inst. Chrg.': item.InstChrg || 0,
+          'Shifting Amount': item.ShiftingAmount || 0,
+          'Wire Change Amount': item.WireChangeAmount || 0,
+          'Total Amount': item.TotalAmount || 0,
+          'Reason': item.Reason || 'N/A',
+        }));
+
+        // Create workbook
+        const workbook = XLSX.utils.book_new();
+
+        // Main data sheet
+        const mainSheet = XLSX.utils.json_to_sheet(excelData);
+        
+        // Set column widths
+        mainSheet['!cols'] = [
+          { wch: 12 }, // Date
+          { wch: 15 }, // Type
+          { wch: 25 }, // Center
+          { wch: 35 }, // Product
+          { wch: 15 }, // Product Type
+          { wch: 8 },  // Qty
+          { wch: 25 }, // User/Building
+          { wch: 40 }, // Address
+          { wch: 15 }, // Mobile
+          { wch: 15 }, // Package Duration
+          { wch: 12 }, // Status
+          { wch: 12 }, // ONU Chrg.
+          { wch: 12 }, // Pkt. Amt.
+          { wch: 12 }, // Inst. Chrg.
+          { wch: 12 }, // Shifting Amount
+          { wch: 15 }, // Wire Change Amount
+          { wch: 15 }, // Total Amount
+          { wch: 30 }, // Reason
+        ];
+
+        // Style header row
+        const headerRange = XLSX.utils.decode_range(mainSheet['!ref'] || 'A1:R1');
+        for (let C = headerRange.s.c; C <= headerRange.e.c; ++C) {
+          const address = XLSX.utils.encode_cell({ r: 0, c: C });
+          if (!mainSheet[address]) continue;
+          mainSheet[address].s = {
+            font: { bold: true, sz: 12, color: { rgb: "FFFFFF" } },
+            fill: { fgColor: { rgb: "4F81BD" } },
+            alignment: { horizontal: "center", vertical: "center" }
+          };
+        }
+
+        XLSX.utils.book_append_sheet(workbook, mainSheet, 'Stock Usage Summary');
+
+        // Summary sheet
+        const summaryData = [{
+          'Report Generated': moment().format('DD-MM-YYYY HH:mm:ss'),
+          'Period': periodDisplay,
+          'Reseller ID': resellerId || 'All',
+          'Center ID': center || centerId || 'All',
+          'Usage Type': usageType || 'All',
+          'Product': product || productId || 'All',
+          'Status': status || 'All',
+          'Total Usages': basicStats.totalUsages,
+          'Total Products Used': basicStats.totalProductsUsed,
+          'Total Revenue': basicStats.totalRevenue,
+          'Unique Centers': basicStats.uniqueCentersCount,
+          'Unique Products': basicStats.uniqueProductsCount,
+        }];
+        
+        const summarySheet = XLSX.utils.json_to_sheet(summaryData);
+        XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+
+        const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=stock_usage_summary_${moment().format('YYYY-MM-DD_HH-mm-ss')}.xlsx`);
+        res.setHeader('Content-Length', excelBuffer.length);
+
+        return res.send(excelBuffer);
+
+      } catch (exportError) {
+        console.error("[EXPORT ERROR]", exportError);
+        return res.status(500).json({
+          success: false,
+          message: "Error generating Excel export",
+          error: exportError.message
+        });
+      }
     }
 
+    // ========== JSON RESPONSE ==========
     const response = {
       success: true,
       message: `Monthly stock usage summary for ${periodDisplay} retrieved successfully`,
       data: monthlySummary,
       summary: {
         period: periodDisplay,
-        dateRange: dateFilter,
         totalProductsUsed: basicStats.totalProductsUsed,
         totalUsages: basicStats.totalUsages,
         totalRevenue: basicStats.totalRevenue,
         uniqueProducts: basicStats.uniqueProductsCount,
         uniqueCenters: basicStats.uniqueCentersCount,
-        uniqueUsageTypes: basicStats.uniqueUsageTypesCount,
-        customerUsages: basicStats.customerUsages,
-        usageTypeBreakdown: usageTypeBreakdown,
       },
       filters: {
+        reseller: resellerId || "all",
         center: center || centerId || "all",
         product: product || productId || "all",
         usageType: usageType || "all",
@@ -2692,12 +3508,12 @@ export const getMonthlyStockUsageSummary = async (req, res) => {
         month: month || "current",
         year: year || "current",
       },
-      pagination: {
+      pagination: format !== "excel" ? {
         currentPage: pageNum,
         totalPages: Math.ceil(total / limitNum),
         totalItems: total,
         itemsPerPage: limitNum,
-      },
+      } : null,
     };
 
     res.status(200).json(response);
@@ -2726,12 +3542,18 @@ export const getAllStockUsageReports = async (req, res) => {
     const {
       page = 1,
       limit = 100,
+      format = "json",
       status,
       center,
+      centerId,
+      resellerId,
       usageType,
       product,
+      productId,
       connectionType,
       customer,
+      month,
+      year,
       startDate,
       endDate,
       createdBy,
@@ -2750,73 +3572,108 @@ export const getAllStockUsageReports = async (req, res) => {
     } = req.query;
 
     console.log('Received query params:', {
-      center, usageType, product, connectionType, customer, startDate, endDate, status
+      center, centerId, resellerId, usageType, product, productId, connectionType, 
+      customer, month, year, startDate, endDate, status, format
     });
 
     const filter = {};
+
+    // ========== DATE RANGE FILTERING ==========
+    let periodDisplay = '';
+    const currentDate = new Date();
+    
+    if (startDate || endDate) {
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        filter[dateField] = { ...filter[dateField], $gte: start };
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        filter[dateField] = { ...filter[dateField], $lte: end };
+      }
+      periodDisplay = `${startDate || 'Start'} to ${endDate || 'End'}`;
+    } else if (month || year) {
+      const selectedMonth = month ? parseInt(month) : currentDate.getMonth() + 1;
+      const selectedYear = year ? parseInt(year) : currentDate.getFullYear();
+
+      if (selectedMonth < 1 || selectedMonth > 12) {
+        return res.status(400).json({
+          success: false,
+          message: "Month must be between 1 and 12",
+        });
+      }
+
+      if (selectedYear < 2000 || selectedYear > 2100) {
+        return res.status(400).json({
+          success: false,
+          message: "Year must be between 2000 and 2100",
+        });
+      }
+
+      filter[dateField] = {
+        $gte: new Date(selectedYear, selectedMonth - 1, 1),
+        $lte: new Date(selectedYear, selectedMonth, 0, 23, 59, 59, 999)
+      };
+      periodDisplay = `${selectedMonth}/${selectedYear}`;
+    }
+
+    // ========== RESELLER AND CENTER FILTERS ==========
+    let targetCenterIds = [];
+    
+    if (resellerId && mongoose.Types.ObjectId.isValid(resellerId)) {
+      const centersUnderReseller = await mongoose.model('Center').find({ 
+        reseller: resellerId,
+        status: "Enable"
+      }).select("_id");
+      
+      targetCenterIds = centersUnderReseller.map(c => c._id);
+      console.log(`Found ${targetCenterIds.length} centers under reseller ${resellerId}`);
+      
+      if (targetCenterIds.length > 0) {
+        filter.center = { $in: targetCenterIds };
+      }
+    }
 
     if (permissions.view_own_report && !permissions.view_all_report) {
       const userCenterId = userCenter?._id || userCenter;
       if (userCenterId) {
         filter.center = userCenterId;
       }
-    } else if (permissions.view_all_report && center) {
-      filter.center = center;
+    } else if (permissions.view_all_report) {
+      const centerFilterValue = center || centerId;
+      if (centerFilterValue && mongoose.Types.ObjectId.isValid(centerFilterValue)) {
+        filter.center = new mongoose.Types.ObjectId(centerFilterValue);
+      }
     }
 
-    if (status) {
-      filter.status = status;
-    }
-
+    // ========== OTHER FILTERS ==========
+    if (status) filter.status = status;
     if (statuses) {
-      const statusArray = Array.isArray(statuses)
-        ? statuses
-        : statuses.split(",");
+      const statusArray = Array.isArray(statuses) ? statuses : statuses.split(",");
       filter.status = { $in: statusArray };
     }
-
-    if (usageType) {
-      filter.usageType = usageType;
-    }
-    if (customer) {
-      filter.customer = mongoose.Types.ObjectId.isValid(customer) 
-        ? new mongoose.Types.ObjectId(customer)
-        : customer;
+    if (usageType) filter.usageType = usageType;
+    if (customer && mongoose.Types.ObjectId.isValid(customer)) {
+      filter.customer = new mongoose.Types.ObjectId(customer);
     }
 
-    if (product) {
-      filter["items.product"] = mongoose.Types.ObjectId.isValid(product) 
-        ? new mongoose.Types.ObjectId(product)
-        : product;
+    const productFilterValue = product || productId;
+    if (productFilterValue && mongoose.Types.ObjectId.isValid(productFilterValue)) {
+      filter["items.product"] = new mongoose.Types.ObjectId(productFilterValue);
     }
-    if (connectionType) {
-      filter.connectionType = connectionType;
-    }
+    
+    if (connectionType) filter.connectionType = connectionType;
 
-    if (startDate || endDate) {
-      filter[dateField] = {};
-      if (startDate) {
-        const start = new Date(startDate);
-        start.setHours(0, 0, 0, 0);
-        filter[dateField].$gte = start;
-      }
-      if (endDate) {
-        const endDateObj = new Date(endDate);
-        endDateObj.setHours(23, 59, 59, 999);
-        filter[dateField].$lte = endDateObj;
-      }
+    if (createdBy && mongoose.Types.ObjectId.isValid(createdBy)) {
+      filter.createdBy = new mongoose.Types.ObjectId(createdBy);
     }
-
-    if (createdBy) {
-      filter.createdBy = createdBy;
+    if (approvedBy && mongoose.Types.ObjectId.isValid(approvedBy)) {
+      filter.approvedBy = new mongoose.Types.ObjectId(approvedBy);
     }
-
-    if (approvedBy) {
-      filter.approvedBy = approvedBy;
-    }
-
-    if (rejectedBy) {
-      filter.rejectedBy = rejectedBy;
+    if (rejectedBy && mongoose.Types.ObjectId.isValid(rejectedBy)) {
+      filter.rejectedBy = new mongoose.Types.ObjectId(rejectedBy);
     }
 
     if (search) {
@@ -2828,6 +3685,11 @@ export const getAllStockUsageReports = async (req, res) => {
       ];
     }
 
+    console.log('Final filter:', JSON.stringify(filter, null, 2));
+
+    // ========== BUILD QUERY WITH ALL POPULATES ==========
+    let query = StockUsage.find(filter);
+
     const populateOptions = [
       {
         path: "createdBy",
@@ -2836,73 +3698,30 @@ export const getAllStockUsageReports = async (req, res) => {
       {
         path: "center",
         select: "centerName centerCode centerType",
+        populate: { path: "reseller", select: "businessName email phone" }
+      },
+      {
+        path: "customer",
+        select: "username name email mobile address1 address2 city state pincode connectionType",
+      },
+      {
+        path: "fromBuilding",
+        select: "buildingName displayName address1 address2 landmark pincode city",
+      },
+      {
+        path: "toBuilding",
+        select: "buildingName displayName address1 address2 landmark pincode city",
+      },
+      {
+        path: "fromControlRoom",
+        select: "buildingName displayName address1 address2 landmark pincode city",
+      },
+      {
+        path: "items.product",
+        select: "productTitle productPrice productCode productImage productCategory trackSerialNumber",
+        populate: { path: "productCategory", select: "productCategory" },
       },
     ];
-
-    if (usageType) {
-      switch (usageType) {
-        case "Customer":
-          populateOptions.push({
-            path: "customer",
-            select:
-              "username name email mobile address1 address2 city state connectionType",
-          });
-          break;
-        case "Building":
-          populateOptions.push({
-            path: "fromBuilding",
-            select:
-              "buildingName displayName address1 address2 landmark pincode",
-          });
-          break;
-        case "Building to Building":
-          populateOptions.push(
-            {
-              path: "fromBuilding",
-              select:
-                "buildingName displayName address1 address2 landmark pincode",
-            },
-            {
-              path: "toBuilding",
-              select:
-                "buildingName displayName address1 address2 landmark pincode",
-            }
-          );
-          break;
-        case "Control Room":
-          populateOptions.push({
-            path: "fromControlRoom",
-            select:
-              "buildingName displayName address1 address2 landmark pincode",
-          });
-          break;
-        case "Damage":
-        case "Stolen from Center":
-        case "Stolen from Field":
-        case "Other":
-          break;
-      }
-    } else {
-      populateOptions.push(
-        {
-          path: "customer",
-          select:
-            "username name email mobile address1 address2 city state connectionType",
-        },
-        {
-          path: "fromBuilding",
-          select: "buildingName displayName address1 address2 landmark pincode",
-        },
-        {
-          path: "toBuilding",
-          select: "buildingName displayName address1 address2 landmark pincode",
-        },
-        {
-          path: "fromControlRoom",
-          select: "buildingName displayName address1 address2 landmark pincode",
-        }
-      );
-    }
 
     if (includeUserDetails) {
       populateOptions.push(
@@ -2911,144 +3730,29 @@ export const getAllStockUsageReports = async (req, res) => {
       );
     }
 
-    if (includeCenterDetails) {
-      const centerIndex = populateOptions.findIndex((p) => p.path === "center");
-      if (centerIndex !== -1) {
-        populateOptions[centerIndex].select += " address phone";
-      }
-    }
-
-    if (includeCustomerDetails && !usageType) {
-      const customerIndex = populateOptions.findIndex(
-        (p) => p.path === "customer"
-      );
-      if (customerIndex === -1) {
-        populateOptions.push({
-          path: "customer",
-          select:
-            "username name email mobile address1 address2 city state connectionType",
-        });
-      }
-    }
-
-    if (includeBuildingDetails && !usageType) {
-      const fromBuildingIndex = populateOptions.findIndex(
-        (p) => p.path === "fromBuilding"
-      );
-      const toBuildingIndex = populateOptions.findIndex(
-        (p) => p.path === "toBuilding"
-      );
-
-      if (fromBuildingIndex === -1) {
-        populateOptions.push({
-          path: "fromBuilding",
-          select: "buildingName displayName address1 address2 landmark pincode",
-        });
-      }
-      if (toBuildingIndex === -1) {
-        populateOptions.push({
-          path: "toBuilding",
-          select: "buildingName displayName address1 address2 landmark pincode",
-        });
-      }
-    }
-
-    if (includeControlRoomDetails && !usageType) {
-      const controlRoomIndex = populateOptions.findIndex(
-        (p) => p.path === "fromControlRoom"
-      );
-      if (controlRoomIndex === -1) {
-        populateOptions.push({
-          path: "fromControlRoom",
-          select: "buildingName displayName address1 address2 landmark pincode",
-        });
-      }
-    }
-
-    populateOptions.push({
-      path: "items.product",
-      select:
-        "productTitle productPrice productCode productImage productCategory trackSerialNumber",
-      populate: {
-        path: "productCategory",
-        select: "productCategory",
-      },
-    });
-
+    // ========== SORTING ==========
     const sort = {};
-    const validSortFields = [
-      "createdAt",
-      "updatedAt",
-      "date",
-      "usageType",
-      "status",
-      "connectionType"
-    ];
+    const validSortFields = ["createdAt", "updatedAt", "date", "usageType", "status", "connectionType"];
     const actualSortBy = validSortFields.includes(sortBy) ? sortBy : "date";
     sort[actualSortBy] = sortOrder === "desc" ? -1 : 1;
 
-    const options = {
-      page: parseInt(page),
-      limit: parseInt(limit),
-      sort,
-    };
-    const stockUsages = await StockUsage.find(filter)
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    let stockUsages = await query
       .sort(sort)
-      .skip((options.page - 1) * options.limit)
-      .limit(options.limit)
       .populate(populateOptions)
       .lean();
 
-    const CenterStock = mongoose.model("CenterStock");
+    const total = stockUsages.length;
 
+    if (format !== "excel") {
+      stockUsages = stockUsages.slice(skip, skip + limitNum);
+    }
+
+    // ========== PROCESS DATA FOR EXCEL ==========
     for (const usage of stockUsages) {
-      for (const item of usage.items) {
-        if (item.product && usage.center) {
-          try {
-            const centerStock = await CenterStock.findOne({
-              center: usage.center._id,
-              product: item.product._id,
-            })
-              .select(
-                "availableQuantity totalQuantity inTransitQuantity consumedQuantity"
-              )
-              .lean();
-
-            item.currentCenterStock = centerStock
-              ? {
-                  availableQuantity: centerStock.availableQuantity || 0,
-                  totalQuantity: centerStock.totalQuantity || 0,
-                  inTransitQuantity: centerStock.inTransitQuantity || 0,
-                  consumedQuantity: centerStock.consumedQuantity || 0,
-                }
-              : {
-                  availableQuantity: 0,
-                  totalQuantity: 0,
-                  inTransitQuantity: 0,
-                  consumedQuantity: 0,
-                };
-          } catch (error) {
-            console.error(
-              `Error fetching center stock for product ${item.product._id}:`,
-              error
-            );
-            item.currentCenterStock = {
-              availableQuantity: 0,
-              totalQuantity: 0,
-              inTransitQuantity: 0,
-              consumedQuantity: 0,
-            };
-          }
-        } else {
-          item.currentCenterStock = {
-            availableQuantity: 0,
-            totalQuantity: 0,
-            inTransitQuantity: 0,
-            consumedQuantity: 0,
-          };
-        }
-      }
-
       usage.totalRevenue =
         (usage.packageAmount || 0) +
         (usage.onuCharges || 0) +
@@ -3056,66 +3760,25 @@ export const getAllStockUsageReports = async (req, res) => {
         (usage.shiftingAmount || 0) +
         (usage.wireChangeAmount || 0);
 
-      usage.totalQuantityUsed = usage.items.reduce(
-        (sum, item) => sum + item.quantity,
-        0
-      );
-
-      usage.usageDetails = getUsageTypeDetails(usage);
+      usage.totalQuantityUsed = usage.items.reduce((sum, item) => sum + item.quantity, 0);
+      
+      // Get user/building info
+      if (usage.usageType === "Customer") {
+        usage.userOrBuilding = usage.customer?.name || usage.customer?.username || 'N/A';
+        usage.address = usage.customer?.address1 || 'N/A';
+        usage.mobile = usage.customer?.mobile || 'N/A';
+      } else if (usage.usageType === "Building" || usage.usageType === "Building to Building") {
+        usage.userOrBuilding = usage.fromBuilding?.buildingName || 'N/A';
+        usage.address = usage.fromBuilding?.address1 || 'N/A';
+        usage.mobile = 'N/A';
+      } else {
+        usage.userOrBuilding = 'N/A';
+        usage.address = 'N/A';
+        usage.mobile = 'N/A';
+      }
     }
-    const total = await StockUsage.countDocuments(filter);
 
-    const statusCounts = await StockUsage.aggregate([
-      { $match: filter },
-      {
-        $group: {
-          _id: "$status",
-          count: { $sum: 1 },
-        },
-      },
-    ]);
-    const usageTypeCounts = await StockUsage.aggregate([
-      { $match: filter },
-      {
-        $group: {
-          _id: "$usageType",
-          count: { $sum: 1 },
-          totalQuantity: { $sum: { $sum: "$items.quantity" } },
-        },
-      },
-    ]);
-
-    const connectionTypeCounts = await StockUsage.aggregate([
-      { $match: filter },
-      {
-        $match: { usageType: "Customer" }
-      },
-      {
-        $group: {
-          _id: "$connectionType",
-          count: { $sum: 1 },
-        },
-      },
-    ]);
-
-    const statusFilters = {};
-    statusCounts.forEach((item) => {
-      statusFilters[item._id] = item.count;
-    });
-
-    const usageTypeFilters = {};
-    usageTypeCounts.forEach((item) => {
-      usageTypeFilters[item._id] = {
-        count: item.count,
-        totalQuantity: item.totalQuantity,
-      };
-    });
-
-    const connectionTypeFilters = {};
-    connectionTypeCounts.forEach((item) => {
-      connectionTypeFilters[item._id] = item.count;
-    });
-
+    // ========== STATISTICS ==========
     const revenueStats = await StockUsage.aggregate([
       { $match: filter },
       {
@@ -3123,50 +3786,151 @@ export const getAllStockUsageReports = async (req, res) => {
           _id: null,
           totalRevenue: {
             $sum: {
-              $add: [
-                "$packageAmount",
-                "$onuCharges",
-                "$installationCharges",
-                "$shiftingAmount",
-                "$wireChangeAmount",
-              ],
+              $add: ["$packageAmount", "$onuCharges", "$installationCharges", "$shiftingAmount", "$wireChangeAmount"],
             },
           },
-          totalCustomerUsages: {
-            $sum: { $cond: [{ $eq: ["$usageType", "Customer"] }, 1, 0] },
-          },
+          totalCustomerUsages: { $sum: { $cond: [{ $eq: ["$usageType", "Customer"] }, 1, 0] } },
         },
       },
     ]);
 
+    // ========== EXCEL EXPORT WITH FULL COLUMNS ==========
+    if (format === "excel") {
+      try {
+        console.log(`[EXPORT] Generating Excel file with ${stockUsages.length} usage records`);
+
+        // Prepare Excel data with all requested columns
+        const excelData = [];
+        
+        stockUsages.forEach((usage) => {
+          usage.items.forEach((item) => {
+            excelData.push({
+              'Date': usage.date ? moment(usage.date).format('DD-MM-YYYY') : (usage.createdAt ? moment(usage.createdAt).format('DD-MM-YYYY') : 'N/A'),
+              'Type': usage.usageType || 'N/A',
+              'Center': usage.center?.centerName || 'N/A',
+              'Product': item.product?.productTitle || 'N/A',
+              'Product Type': item.product?.productCategory?.productCategory || 'N/A',
+              'Qty': item.quantity || 0,
+              'User/Building': usage.userOrBuilding || 'N/A',
+              'Address': usage.address || 'N/A',
+              'Mobile': usage.mobile || 'N/A',
+              'Package Duration': usage.packageDuration || 'N/A',
+              'Status': usage.status || 'N/A',
+              'ONU Chrg.': usage.onuCharges || 0,
+              'Pkt. Amt.': usage.packageAmount || 0,
+              'Inst. Chrg.': usage.installationCharges || 0,
+              'Shifting Amount': usage.shiftingAmount || 0,
+              'Wire Change Amount': usage.wireChangeAmount || 0,
+              'Total Amount': usage.totalRevenue || 0,
+              'Reason': usage.remark || usage.approvalRemark || usage.rejectionRemark || 'N/A',
+            });
+          });
+        });
+
+        // Create workbook
+        const workbook = XLSX.utils.book_new();
+
+        // Main data sheet
+        const mainSheet = XLSX.utils.json_to_sheet(excelData);
+        
+        // Set column widths
+        mainSheet['!cols'] = [
+          { wch: 12 }, // Date
+          { wch: 15 }, // Type
+          { wch: 25 }, // Center
+          { wch: 35 }, // Product
+          { wch: 15 }, // Product Type
+          { wch: 8 },  // Qty
+          { wch: 25 }, // User/Building
+          { wch: 40 }, // Address
+          { wch: 15 }, // Mobile
+          { wch: 15 }, // Package Duration
+          { wch: 12 }, // Status
+          { wch: 12 }, // ONU Chrg.
+          { wch: 12 }, // Pkt. Amt.
+          { wch: 12 }, // Inst. Chrg.
+          { wch: 12 }, // Shifting Amount
+          { wch: 15 }, // Wire Change Amount
+          { wch: 15 }, // Total Amount
+          { wch: 30 }, // Reason
+        ];
+
+        // Style header row
+        const headerRange = XLSX.utils.decode_range(mainSheet['!ref'] || 'A1:R1');
+        for (let C = headerRange.s.c; C <= headerRange.e.c; ++C) {
+          const address = XLSX.utils.encode_cell({ r: 0, c: C });
+          if (!mainSheet[address]) continue;
+          mainSheet[address].s = {
+            font: { bold: true, sz: 12, color: { rgb: "FFFFFF" } },
+            fill: { fgColor: { rgb: "4F81BD" } },
+            alignment: { horizontal: "center", vertical: "center" }
+          };
+        }
+
+        XLSX.utils.book_append_sheet(workbook, mainSheet, 'Stock Usage Report');
+
+        // Summary sheet
+        const summaryData = [{
+          'Report Generated': moment().format('DD-MM-YYYY HH:mm:ss'),
+          'Period': periodDisplay || 'All Time',
+          'Reseller ID': resellerId || 'All',
+          'Center ID': center || centerId || 'All',
+          'Usage Type': usageType || 'All',
+          'Product': product || productId || 'All',
+          'Connection Type': connectionType || 'All',
+          'Status': status || statuses || 'All',
+          'Total Records': stockUsages.length,
+          'Total Items Used': excelData.length,
+          'Total Revenue': revenueStats.length > 0 ? revenueStats[0].totalRevenue : 0,
+        }];
+        
+        const summarySheet = XLSX.utils.json_to_sheet(summaryData);
+        XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+
+        const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=stock_usage_report_${moment().format('YYYY-MM-DD_HH-mm-ss')}.xlsx`);
+        res.setHeader('Content-Length', excelBuffer.length);
+
+        return res.send(excelBuffer);
+
+      } catch (exportError) {
+        console.error("[EXPORT ERROR]", exportError);
+        return res.status(500).json({
+          success: false,
+          message: "Error generating Excel export",
+          error: exportError.message
+        });
+      }
+    }
+
+    // ========== JSON RESPONSE ==========
     const response = {
       success: true,
       message: "Stock usage reports retrieved successfully",
       data: stockUsages,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / options.limit),
+      pagination: format !== "excel" ? {
+        currentPage: pageNum,
+        totalPages: Math.ceil(total / limitNum),
         totalItems: total,
-        itemsPerPage: parseInt(limit),
-      },
-      filters: {
-        status: statusFilters,
-        usageType: usageTypeFilters,
-        connectionType: connectionTypeFilters,
-        total: total,
-        totalRevenue:
-          revenueStats.length > 0 ? revenueStats[0].totalRevenue : 0,
-        totalCustomerUsages:
-          revenueStats.length > 0 ? revenueStats[0].totalCustomerUsages : 0,
+        itemsPerPage: limitNum,
+      } : null,
+      summary: {
+        period: periodDisplay || 'All Time',
+        totalRecords: total,
+        totalRevenue: revenueStats.length > 0 ? revenueStats[0].totalRevenue : 0,
+        totalCustomerUsages: revenueStats.length > 0 ? revenueStats[0].totalCustomerUsages : 0,
       },
       appliedFilters: {
-        center: center || "all",
+        reseller: resellerId || "all",
+        center: center || centerId || "all",
         usageType: usageType || "all",
-        product: product || "all",
+        product: product || productId || "all",
         connectionType: connectionType || "all",
         customer: customer || "all",
-        startDate: startDate || "none",
-        endDate: endDate || "none",
+        startDate: startDate || (month ? `Month ${month}/${year}` : "none"),
+        endDate: endDate || (month ? `Month ${month}/${year}` : "none"),
         status: status || "all",
       },
     };
@@ -4091,22 +4855,48 @@ export const getProductDetailsBySerialNumber = async (req, res) => {
     const serialDetails = [];
 
     for (const centerStock of centerStocks) {
-      for (const serial of centerStock.serialNumbers) {
-        if (serialNumber && serial.serialNumber !== serialNumber) {
-          continue;
-        }
+  if (!Array.isArray(centerStock.serialNumbers)) {
+    continue;
+  }
 
-        if (status && status !== "all" && status !== "Own Product" && status !== "Not in Use" && serial.status !== status) {
-          continue;
-        }
-        
-        if (status === "Not in Use" && (serial.status === "consumed" || serial.status === "damaged")) {
-          continue;
-        }
-        
-        if (search && !serial.serialNumber.toLowerCase().includes(search.toLowerCase())) {
-          continue;
-        }
+  for (const serial of centerStock.serialNumbers) {
+    if (!serial || !serial.serialNumber) {
+      continue;
+    }
+
+    const serialValue = String(serial.serialNumber).trim();
+
+    if (!serialValue) {
+      continue;
+    }
+
+    if (serialNumber && serialValue !== serialNumber) {
+      continue;
+    }
+
+    if (
+      status &&
+      status !== "all" &&
+      status !== "Own Product" &&
+      status !== "Not in Use" &&
+      serial.status !== status
+    ) {
+      continue;
+    }
+
+    if (
+      status === "Not in Use" &&
+      (serial.status === "consumed" || serial.status === "damaged")
+    ) {
+      continue;
+    }
+
+    if (
+      search &&
+      !serialValue.toLowerCase().includes(String(search).toLowerCase())
+    ) {
+      continue;
+    }
 
         let consumptionDetails = null;
         if (serial.status === "consumed" || serial.status === "damaged") {
@@ -4122,28 +4912,35 @@ export const getProductDetailsBySerialNumber = async (req, res) => {
         let actionDate = "";
 
         if (latestTransfer) {
-          actionAt = latestTransfer.toCenter
-            ? `${latestTransfer.fromCenter?.centerName || "Unknown"} → ${latestTransfer.toCenter?.centerName || "Unknown"}`
-            : `${latestTransfer.fromCenter?.centerName || "Unknown"}`;
-          actionType = latestTransfer.transferType || "transfer";
-          actionDate = latestTransfer.transferDate || centerStock.lastUpdated;
-        } else if (serial.consumedDate) {
-          actionAt = "Consumed";
-          actionType = "consumption";
-          actionDate = serial.consumedDate;
-        } else if (serial.status === "available") {
-          actionAt = centerStock.center.centerName;
-          actionType = "available";
-          actionDate = centerStock.lastUpdated;
-        } else {
-          actionAt = centerStock.center.centerName;
-          actionType = serial.status;
-          actionDate = centerStock.lastUpdated;
-        }
+  actionAt = latestTransfer.toCenter
+    ? `${latestTransfer.fromCenter?.centerName || "Unknown"} → ${latestTransfer.toCenter?.centerName || "Unknown"}`
+    : `${latestTransfer.fromCenter?.centerName || "Unknown"}`;
+
+  actionType = latestTransfer.transferType || "transfer";
+  actionDate = latestTransfer.transferDate || centerStock.lastUpdated;
+
+} else if (serial.consumedDate) {
+
+  actionAt = "Consumed";
+  actionType = "consumption";
+  actionDate = serial.consumedDate;
+
+} else if (serial.status === "available") {
+
+  actionAt = centerStock.center?.centerName || "Unknown Center";
+  actionType = "available";
+  actionDate = centerStock.lastUpdated;
+
+} else {
+
+  actionAt = centerStock.center?.centerName || "Unknown Center";
+  actionType = serial.status || "unknown";
+  actionDate = centerStock.lastUpdated;
+}
 
         const serialDetail = {
           _id: serial._id,
-          Serial: serial.serialNumber,
+          Serial: serialValue,
           PurchaseCenter: serial.originalOutlet
             ? {
                 _id: serial.originalOutlet._id,
@@ -4423,13 +5220,39 @@ export const getONUTrackReport = async (req, res) => {
       search,
       product,
       reseller,
+      resellerId,
+      connectionType,
+      month,
+      year,
       page = 1,
       limit = 100,
+      format = "json",
       sortBy = "date",
       sortOrder = "desc",
     } = req.query;
 
     const filter = {};
+
+    // ========== DATE RANGE FILTERING WITH MONTH/YEAR SUPPORT ==========
+    if (startDate || endDate || month || year) {
+      let start, end;
+      
+      if (startDate && endDate) {
+        start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+      } else if (month) {
+        const targetYear = year || new Date().getFullYear();
+        const targetMonth = parseInt(month) - 1;
+        start = new Date(targetYear, targetMonth, 1);
+        end = new Date(targetYear, targetMonth + 1, 0, 23, 59, 59, 999);
+      }
+      
+      if (start && end) {
+        filter.date = { $gte: start, $lte: end };
+      }
+    }
 
     if (status === "Own Product") {
       // Show data only for the logged-in user's center/outlet
@@ -4461,46 +5284,46 @@ export const getONUTrackReport = async (req, res) => {
       }
     }
 
-    // 🔹 Reseller filter
-    // if (reseller) {
-    //   filter["center.reseller"] = reseller;
-    // }
-
-    // 🔹 Reseller filter
-if (reseller) {
-  const centers = await Center.find({ reseller: reseller }).select('_id');
-  const centerIds = centers.map(c => c._id);
-  
-  if (centerIds.length > 0) {
-    if (filter.center) {
-      filter.center = { $in: centerIds, $eq: filter.center };
-    } else {
-      filter.center = { $in: centerIds };
+    // 🔹 Reseller filter (using resellerId or reseller)
+    const resellerFilterValue = resellerId || reseller;
+    if (resellerFilterValue && mongoose.Types.ObjectId.isValid(resellerFilterValue)) {
+      const centers = await Center.find({ reseller: resellerFilterValue }).select('_id');
+      const centerIds = centers.map(c => c._id);
+      
+      if (centerIds.length > 0) {
+        if (filter.center) {
+          filter.center = { $in: centerIds, $eq: filter.center };
+        } else {
+          filter.center = { $in: centerIds };
+        }
+      } else {
+        filter.center = null;
+      }
     }
-  } else {
-    filter.center = null;
-  }
-}
 
     // 🔹 Product filter
-    if (product) {
+    if (product && mongoose.Types.ObjectId.isValid(product)) {
       filter["items.product"] = product;
     }
 
-    // 🔹 Other filters
+    // 🔹 Connection Type filter
+    if (connectionType) {
+      filter.connectionType = connectionType;
+    }
+
     if (usageType) filter.usageType = usageType;
     if (customer) filter.customer = customer;
+    
     if (dateFilter || startDate || endDate) {
       filter.date = buildDateFilter(dateFilter, startDate, endDate);
     }
 
-    // 🔹 Search filter
     if (search) {
       filter.$or = [
         { "center.centerName": { $regex: search, $options: "i" } },
         { "customer.name": { $regex: search, $options: "i" } },
         { "items.product.productTitle": { $regex: search, $options: "i" } },
-        { "items.serialNumbers": { $regex: search, $options: "i" } }, // Search in serial numbers
+        { "items.serialNumbers": { $regex: search, $options: "i" } },
       ];
     }
 
@@ -4510,7 +5333,6 @@ if (reseller) {
     const sort = {};
     sort[sortBy] = sortOrder === "desc" ? -1 : 1;
 
-    // 🔹 Fetch stock usage data
     const stockUsage = await StockUsage.find(filter)
       .populate({
         path: "center",
@@ -4520,7 +5342,7 @@ if (reseller) {
           { path: "area", select: "areaName" },
         ],
       })
-      .populate("customer", "username name mobile")
+      .populate("customer", "username name email mobile address1 address2 city")
       .populate("createdBy", "name email")
       .populate({
         path: "items.product",
@@ -4543,7 +5365,6 @@ if (reseller) {
       .limit(limitNum)
       .lean();
 
-    // 🔹 Collect center/product combinations
     const centerProductPairs = [];
     stockUsage.forEach((usage) => {
       usage.items.forEach((item) => {
@@ -4570,10 +5391,10 @@ if (reseller) {
         product: p.product,
       })),
     })
-      .select("center product serialNumbers.serialNumber serialNumbers.status serialNumbers.currentLocation serialNumbers.purchaseId")
+      .select("center product serialNumbers.serialNumber serialNumbers.status serialNumbers.currentLocation serialNumbers.purchaseId serialNumbers.consumedDate")
       .lean();
 
-    // 🔹 Build lookup map: { centerId_productId: { serialNumber: {status, currentLocation, purchaseId} } }
+    // 🔹 Build lookup map: { centerId_productId: { serialNumber: {status, currentLocation, purchaseId, consumedDate} } }
     const centerStockMap = {};
     centerStocks.forEach((cs) => {
       const key = `${cs.center.toString()}_${cs.product.toString()}`;
@@ -4583,6 +5404,7 @@ if (reseller) {
           status: sn.status,
           currentLocation: sn.currentLocation,
           purchaseId: sn.purchaseId,
+          consumedDate: sn.consumedDate,
         };
       });
     });
@@ -4600,6 +5422,7 @@ if (reseller) {
             status: serialData ? serialData.status : "unknown",
             currentLocation: serialData ? serialData.currentLocation : null,
             purchaseId: serialData ? serialData.purchaseId : null,
+            consumedDate: serialData ? serialData.consumedDate : null,
           };
         }).filter(serial => {
           // Apply status filtering
@@ -4638,7 +5461,6 @@ if (reseller) {
     
     if (status && status !== "all" && status !== "Own Product") {
       // For status filters, we need to count after applying the filters
-      // This is less efficient but necessary for accurate pagination
       const allStockUsage = await StockUsage.find(filter)
         .populate({
           path: "center",
@@ -4684,7 +5506,73 @@ if (reseller) {
 
     const totalPages = Math.ceil(total / limitNum);
 
-    // 🔹 Response
+    // ========== EXCEL EXPORT ==========
+    if (format === "excel") {
+      try {
+        console.log(`[EXPORT] Generating Excel file with ONU track data`);
+
+        // Prepare Excel data with requested columns
+        const excelData = [];
+        
+        for (const usage of filteredStockUsage) {
+          for (const item of usage.items) {
+            for (const serial of item.serialNumbers) {
+              const activationDate = serial.consumedDate || usage.date;
+              
+              excelData.push({
+                'Activation Date': activationDate ? moment(activationDate).format('DD-MM-YYYY') : 'N/A',
+                'Customer': usage.customer?.name || usage.customer?.username || 'N/A',
+                'Serial Number': serial.serialNumber,
+                'Connection Type': usage.connectionType || 'N/A',
+                'Reseller Name': usage.center?.reseller?.businessName || 'N/A',
+                'Area': usage.center?.area?.areaName || 'N/A',
+                'Center': usage.center?.centerName || 'N/A',
+                'ONU Amount': usage.onuCharges || 0,
+              });
+            }
+          }
+        }
+
+        // Create workbook
+        const workbook = XLSX.utils.book_new();
+
+        // Main data sheet
+        const mainSheet = XLSX.utils.json_to_sheet(excelData);
+        
+        // Set column widths
+        mainSheet['!cols'] = [
+          { wch: 15 }, // Activation Date
+          { wch: 25 }, // Customer
+          { wch: 20 }, // Serial Number
+          { wch: 15 }, // Connection Type
+          { wch: 25 }, // Reseller Name
+          { wch: 20 }, // Area
+          { wch: 25 }, // Center
+          { wch: 12 }, // ONU Amount
+        ];
+
+        XLSX.utils.book_append_sheet(workbook, mainSheet, 'ONU Track Report');
+
+        // Generate Excel file
+        const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=onu_track_report_${moment().format('YYYY-MM-DD_HH-mm-ss')}.xlsx`);
+        res.setHeader('Content-Length', excelBuffer.length);
+
+        return res.send(excelBuffer);
+
+      } catch (exportError) {
+        console.error("[EXPORT ERROR]", exportError);
+        return res.status(500).json({
+          success: false,
+          message: "Error generating Excel export",
+          error: exportError.message
+        });
+      }
+    }
+
+    // 🔹 Response (EXISTING STRUCTURE - UNCHANGED)
     res.json({
       success: true,
       data: filteredStockUsage,
@@ -4698,10 +5586,15 @@ if (reseller) {
       filters: {
         status: status || 'all',
         product: product || '',
-        reseller: reseller || '',
+        reseller: reseller || resellerId || '',
         search: search || '',
         usageType: usageType || '',
-        customer: customer || ''
+        customer: customer || '',
+        connectionType: connectionType || '',
+        startDate: startDate || '',
+        endDate: endDate || '',
+        month: month || '',
+        year: year || '',
       }
     });
   } catch (error) {

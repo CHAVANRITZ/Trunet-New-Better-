@@ -1,0 +1,1 @@
+{"indexes":[{"v":{"$numberInt":"2"},"key":{"_id":{"$numberInt":"1"}},"name":"_id_"},{"v":{"$numberInt":"2"},"key":{"requestNumber":{"$numberInt":"1"}},"name":"requestNumber_1","background":true,"unique":true}],"uuid":"79db469299134826802f50f236a641db","collectionName":"testingmaterials","type":"collection"}

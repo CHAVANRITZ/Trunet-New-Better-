@@ -33,25 +33,23 @@ const MODULE = "Usage";
 router.get(
   "/pending",
   protect,
-  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
   getPendingDamageRequests
 );
 router.get(
   "/requests",
   protect,
-  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
   getDamageRequestsByStatus
 );
-
 
 router.get(
   "/damage-return",
   protect,
-  // authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
   getDamageReturnRecordsWithStats
 );
-router.get("/faulty-stock",protect,
-  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+router.get("/faulty-stock", protect,
+  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
   getAllFaultyStock);
 
 router.post(
@@ -77,7 +75,7 @@ router.get(
 router.get(
   "/:id",
   protect,
-  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
   getStockUsageById
 );
 router.put(
@@ -92,7 +90,6 @@ router.delete(
   authorizeAccess(MODULE, "manage_usage_own_center", "manage_usage_all_center"),
   deleteStockUsage
 );
-
 
 router.patch(
   "/:id/approve",
@@ -111,44 +108,43 @@ router.patch(
 router.get(
   "/customer/:customerId",
   protect,
-  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
   getStockUsageByCustomer
 );
 router.get(
   "/building/:buildingId",
   protect,
-  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
   getStockUsageByBuilding
 );
 router.get(
   "/control-room/:controlRoomId",
   protect,
-  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
   getStockUsageByControlRoom
 );
 router.get(
   "/customer/:customerId/devices",
   protect,
-  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
   getProductDevicesByCustomer
 );
 router.get(
   "/building/:buildingId/devices",
   protect,
-  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
   getProductDevicesByBuilding
 );
 router.get(
   "/control-room/:controlRoomId/devices",
   protect,
-  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
   getProductDevicesByControlRoom
 );
 
 router.patch(
   "/damage/:id/damage-return",
   protect,
-  // authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
   changeToDamageReturn
 );
 

@@ -1,0 +1,1 @@
+{"indexes":[{"v":{"$numberInt":"2"},"key":{"_id":{"$numberInt":"1"}},"name":"_id_"},{"v":{"$numberInt":"2"},"key":{"voucherNo":{"$numberInt":"1"}},"name":"voucherNo_1","background":true,"unique":true}],"uuid":"3aa0d57bb227429e861526da17fab072","collectionName":"raisepos","type":"collection"}

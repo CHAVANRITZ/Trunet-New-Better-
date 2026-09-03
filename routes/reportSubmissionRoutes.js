@@ -6,6 +6,7 @@ import {
   updateStockClosing,
   deleteStockClosing,
   updateStockClosingStatus,
+  getMonthlyStockClosingStatus
 } from "../controllers/reportSubmissionController.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
@@ -26,7 +27,11 @@ router.get(
   authorizeAccess(MODULE, "view_closing_stock_own_center", "view_closing_stock_all_center"),
   getAllStockClosings
 );
-
+router.get(
+  "/monthly-submission-status",
+  protect,
+  getMonthlyStockClosingStatus
+);
 router.get(
   "/:id",
   protect,

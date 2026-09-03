@@ -1135,7 +1135,7 @@ export const importCustomers = async (req, res) => {
                 username: row.username,
                 name: row.name || '',
                 mobile: row.mobile,
-                email: row.email, // ONLY ADD THIS LINE - just map the email
+                email: row.email || '', // Get email from CSV, default to empty
                 address1: row.address1 || '',
                 address2: row.address2 || '',
                 city: row.city || '',
@@ -1176,8 +1176,8 @@ export const importCustomers = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Missing required field: 'center' or 'center_title'",
-        requiredFormat: "center_title, username, name, mobile, address1, address2, city, state",
-        note: "CSV must have header row. 'center_title' should contain center name"
+        requiredFormat: "center_title, username, name, mobile, email, address1, address2, city, state",
+        note: "CSV must have header row. 'center_title' should contain center name. Email is optional."
       });
     }
 
@@ -1188,8 +1188,8 @@ export const importCustomers = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: `Missing required fields in CSV: ${missingFields.join(', ')}`,
-        requiredFormat: "center_title, username, name, mobile, address1, address2, city, state",
-        note: "CSV must have header row with exact field names as shown above. Mobile is optional and will default to 0000000000 if missing."
+        requiredFormat: "center_title, username, name, mobile, email, address1, address2, city, state",
+        note: "CSV must have header row with exact field names as shown above. Email and Mobile are optional."
       });
     }
 
@@ -1261,6 +1261,57 @@ export const importCustomers = async (req, res) => {
       return cleaned;
     };
 
+    // ========== NEW: Email validation helper function ==========
+    const isValidEmail = (email) => {
+      if (!email || email.trim() === '') return false;
+      // Simple but strict email validation regex
+      const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+      return emailRegex.test(email.trim());
+    };
+
+    // ========== NEW: Clean and normalize email ==========
+    const normalizeEmail = (email) => {
+      if (!email) return '';
+      // Remove spaces
+      let clean = email.trim().replace(/\s+/g, '');
+      // Remove common invalid patterns
+      clean = clean.replace(/^E-mail/i, '');
+      clean = clean.replace(/^Email/i, '');
+      clean = clean.replace(/^mail/i, '');
+      // Fix common mistakes
+      clean = clean.replace(/@gmailcom$/, '@gmail.com');
+      clean = clean.replace(/@gmail\s*com$/, '@gmail.com');
+      clean = clean.replace(/@gmail\.\s*com$/, '@gmail.com');
+      clean = clean.replace(/@redifmail$/, '@rediffmail.com');
+      clean = clean.replace(/@redifmail\.com$/, '@rediffmail.com');
+      clean = clean.replace(/@yahoo\.\s*com$/, '@yahoo.com');
+      clean = clean.replace(/@yahoo\s*com$/, '@yahoo.com');
+      clean = clean.replace(/@gmail\.\s*in$/, '@gmail.com');
+      clean = clean.replace(/@gmail\s*in$/, '@gmail.com');
+      clean = clean.replace(/@gmail\.$/g, '@gmail.com');
+      clean = clean.replace(/@gmail$/g, '@gmail.com');
+      return clean.trim();
+    };
+
+    // ========== NEW: Generate unique email ==========
+    const generateUniqueEmail = async (username, index) => {
+      let baseEmail = `${username}@example.com`;
+      let uniqueEmail = baseEmail;
+      let counter = 0;
+      
+      // Check if email exists in database
+      while (true) {
+        const existingEmail = await Customer.findOne({ email: uniqueEmail });
+        if (!existingEmail) {
+          break;
+        }
+        counter++;
+        uniqueEmail = `${username}${Date.now()}${index}${counter}@example.com`;
+      }
+      
+      return uniqueEmail;
+    };
+
     const existingUsernames = new Set();
 
     if (customersData.length > 1000) {
@@ -1274,6 +1325,8 @@ export const importCustomers = async (req, res) => {
 
     // Track rows where default mobile was added
     const defaultMobileRows = [];
+    // ========== NEW: Track rows where invalid emails were fixed ==========
+    const invalidEmailRows = [];
 
     for (let i = 0; i < customersData.length; i++) {
       const row = customersData[i];
@@ -1293,7 +1346,7 @@ export const importCustomers = async (req, res) => {
         const username = processedRow.username;
         const name = processedRow.name;
         let mobile = normalizeMobileNumber(processedRow.mobile);
-        const email = processedRow.email; // Just get the email from CSV
+        const email = processedRow.email || ''; // Get email from CSV
         const address1 = processedRow.address1;
         const address2 = processedRow.address2;
         const city = processedRow.city;
@@ -1309,7 +1362,7 @@ export const importCustomers = async (req, res) => {
           });
         }
 
-        // Check for required fields (mobile is now optional)
+        // Check for required fields (mobile and email are now optional)
         if (!username || !centerIdentifier) {
           errors.push({
             row: rowNumber,
@@ -1384,25 +1437,49 @@ export const importCustomers = async (req, res) => {
           continue;
         }
 
-        // SIMPLE EMAIL HANDLING - just use what's in CSV or generate if empty
+        // ========== NEW: IMPROVED EMAIL HANDLING ==========
         let customerEmail;
+        let emailWasInvalid = false;
+        let originalEmail = email;
+        
+        // Check if email is provided and not empty
         if (email && email.trim() !== '') {
-          // Use email from CSV if provided
-          customerEmail = email.trim();
-        } else {
-          // Generate email only if CSV email is empty
-          customerEmail = `${username}@example.com`;
+          // Clean the email first
+          const cleanedEmail = normalizeEmail(email);
           
-          // Make it unique if needed (keep your existing logic)
-          if (customersData.length > 10000) {
-            customerEmail = `${username}${Date.now()}${i}@example.com`;
+          // Validate the cleaned email
+          if (isValidEmail(cleanedEmail)) {
+            customerEmail = cleanedEmail;
           } else {
-            const existingEmail = await Customer.findOne({ email: customerEmail });
-            if (existingEmail) {
-              customerEmail = `${username}${Date.now()}${i}@example.com`;
-            }
+            // Email is invalid, generate one
+            emailWasInvalid = true;
+            customerEmail = await generateUniqueEmail(username, i);
+            
+            // Track invalid email
+            invalidEmailRows.push({
+              row: rowNumber,
+              username: username,
+              originalEmail: email,
+              cleanedEmail: cleanedEmail,
+              reason: 'Invalid email format'
+            });
+            
+            console.log(`Row ${rowNumber}: Invalid email "${email}" for user "${username}", using generated email "${customerEmail}"`);
           }
+        } else {
+          // No email provided, generate one
+          customerEmail = await generateUniqueEmail(username, i);
+          
+          invalidEmailRows.push({
+            row: rowNumber,
+            username: username,
+            originalEmail: '(empty)',
+            reason: 'No email provided'
+          });
         }
+
+        // ========== NEW: Check if generated email already exists ==========
+        // This is already handled in generateUniqueEmail function
 
         // Validate mobile format (should always be 10 digits after normalization)
         const mobileRegex = /^[0-9]{10}$/;
@@ -1421,7 +1498,7 @@ export const importCustomers = async (req, res) => {
           username,
           name: name || '',
           mobile,
-          email: customerEmail, // Use the email (either from CSV or generated)
+          email: customerEmail,
           center: center._id,
           address1: address1 || '',
           address2: address2 || '',
@@ -1500,8 +1577,20 @@ export const importCustomers = async (req, res) => {
       };
     }
 
+    // ========== NEW: Add invalid email summary ==========
+    if (invalidEmailRows.length > 0) {
+      response.invalidEmailSummary = {
+        count: invalidEmailRows.length,
+        message: `${invalidEmailRows.length} rows had invalid or missing emails. Generated valid emails instead.`,
+        rows: invalidEmailRows.slice(0, 50),
+        note: invalidEmailRows.length > 50 ? 
+          `... and ${invalidEmailRows.length - 50} more rows had email issues` :
+          'All rows with email issues have been resolved with generated emails'
+      };
+    }
+
     response.notes = [
-      "Email field was not in CSV. Generated email addresses automatically.",
+      `Email handling: ${invalidEmailRows.length} rows had invalid/missing emails and were auto-generated.`,
       `Mobile numbers that were missing or invalid were normalized. ${defaultMobileRows.length} rows received default mobile number.`,
       "Center names are matched against enabled centers only.",
       "Duplicate usernames are prevented but duplicate mobile numbers are allowed.",

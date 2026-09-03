@@ -1,0 +1,1 @@
+{"indexes":[{"v":{"$numberInt":"2"},"key":{"_id":{"$numberInt":"1"}},"name":"_id_"},{"v":{"$numberInt":"2"},"key":{"batchNumber":{"$numberInt":"1"}},"name":"batchNumber_1","background":true}],"uuid":"6c234bf9db664038b149f5648f8c2ad6","collectionName":"faultystocks","type":"collection"}

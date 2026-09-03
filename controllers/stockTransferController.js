@@ -168,6 +168,22 @@ export const createStockTransfer = async (req, res) => {
       productApprovals = [],
     } = req.body;
 
+    // Debug: Log incoming request
+    console.log("===== CREATE STOCK TRANSFER REQUEST =====");
+    console.log("[DEBUG] Request body:", {
+      fromCenter,
+      transferNumber,
+      products: products?.map(p => ({
+        productId: p.product,
+        quantity: p.quantity,
+        productRemark: p.productRemark
+      })),
+      status,
+      date,
+      user: req.user?.id
+    });
+
+    // Check permissions for own center
     if (
       permissions.manage_stock_transfer_own_center &&
       !permissions.manage_stock_transfer_all_center &&
@@ -183,6 +199,7 @@ export const createStockTransfer = async (req, res) => {
       }
     }
 
+    // Validate transfer number
     if (!transferNumber || transferNumber.trim() === "") {
       return res.status(400).json({
         success: false,
@@ -190,6 +207,7 @@ export const createStockTransfer = async (req, res) => {
       });
     }
 
+    // Validate status
     const validStatuses = ["Draft", "Submitted"];
     if (status && !validStatuses.includes(status)) {
       return res.status(400).json({
@@ -199,6 +217,7 @@ export const createStockTransfer = async (req, res) => {
       });
     }
 
+    // Check for existing transfer number
     const existingTransfer = await StockTransfer.findOne({
       transferNumber: transferNumber.trim(),
     });
@@ -213,6 +232,7 @@ export const createStockTransfer = async (req, res) => {
       });
     }
 
+    // Get user and center
     const user = await User.findById(req.user.id).populate("center");
     if (!user || !user.center) {
       return res.status(400).json({
@@ -222,6 +242,8 @@ export const createStockTransfer = async (req, res) => {
     }
 
     const toCenterId = user.center._id;
+    
+    // Validate reseller
     const resellerValidation = await validateResellerForTransfer(fromCenter, toCenterId);
     
     if (!resellerValidation.isValid) {
@@ -240,7 +262,7 @@ export const createStockTransfer = async (req, res) => {
     console.log(`[DEBUG] Transfer: ${resellerValidation.fromCenterType} → ${resellerValidation.toCenterType}`);
     console.log(`[DEBUG] Reseller validation: ${resellerValidation.requiresValidation ? 'Applied' : 'Not required'}`);
 
-
+    // Check destination center permission
     if (
       permissions.manage_stock_transfer_own_center &&
       !permissions.manage_stock_transfer_all_center &&
@@ -256,6 +278,7 @@ export const createStockTransfer = async (req, res) => {
       }
     }
 
+    // Validate products array
     if (!products || !Array.isArray(products) || products.length === 0) {
       return res.status(400).json({
         success: false,
@@ -263,6 +286,7 @@ export const createStockTransfer = async (req, res) => {
       });
     }
 
+    // Validate each product
     for (const product of products) {
       if (!product.product || !product.quantity) {
         return res.status(400).json({
@@ -279,6 +303,7 @@ export const createStockTransfer = async (req, res) => {
       }
     }
 
+    // Validate date
     let transferDate = new Date();
     if (date) {
       transferDate = new Date(date);
@@ -290,6 +315,205 @@ export const createStockTransfer = async (req, res) => {
       }
     }
 
+    // ⭐⭐⭐ CRITICAL FIX: Validate stock availability for Submitted status ⭐⭐⭐
+    if (status === "Submitted") {
+      console.log("[DEBUG] ⚠️ Validating stock availability for Submitted status...");
+      
+      // Get the center type to determine which stock model to use
+      const fromCenterObj = await Center.findById(fromCenter);
+      const isOutlet = fromCenterObj?.centerType === "Outlet";
+      
+      console.log(`[DEBUG] Source center type: ${fromCenterObj?.centerType || 'Unknown'}`);
+      
+      for (const productItem of products) {
+        // Get product details
+        const product = await Product.findById(productItem.product);
+        if (!product) {
+          return res.status(400).json({
+            success: false,
+            message: `Product not found: ${productItem.product}`
+          });
+        }
+
+        let availableQuantity = 0;
+        let stockSource = null;
+
+        // Check CenterStock first (for Centers)
+        let centerStock = await CenterStock.findOne({
+          center: fromCenter,
+          product: productItem.product
+        });
+
+        if (centerStock) {
+          availableQuantity = centerStock.availableQuantity || 0;
+          stockSource = 'CenterStock';
+          console.log(`[DEBUG] 📦 Found CenterStock for ${product.productTitle}:`, {
+            availableQuantity: centerStock.availableQuantity,
+            totalQuantity: centerStock.totalQuantity,
+            inTransitQuantity: centerStock.inTransitQuantity
+          });
+        }
+
+        // If no CenterStock or it has 0 stock, check OutletStock (for Outlets)
+        if (availableQuantity === 0) {
+          const outletStock = await OutletStock.findOne({
+            outlet: fromCenter,
+            product: productItem.product
+          });
+
+          if (outletStock) {
+            availableQuantity = outletStock.availableQuantity || 0;
+            stockSource = 'OutletStock';
+            console.log(`[DEBUG] 📦 Found OutletStock for ${product.productTitle}:`, {
+              availableQuantity: outletStock.availableQuantity,
+              totalQuantity: outletStock.totalQuantity,
+              inTransitQuantity: outletStock.inTransitQuantity
+            });
+          }
+        }
+
+        // If still no stock, check if the product has stock data embedded
+        if (availableQuantity === 0) {
+          // Try to get stock from the product's center-specific stock
+          // This is a fallback for cases where CenterStock/OutletStock doesn't exist
+          console.log(`[DEBUG] ⚠️ No CenterStock or OutletStock found for ${product.productTitle}`);
+          console.log(`[DEBUG] 🔍 Checking if product has stock data in the response...`);
+          
+          // If the product has trackSerialNumber: "Yes", check serial numbers
+          if (product.trackSerialNumber === "Yes") {
+            // Try to find serial numbers for this center
+            const serialNumbers = await CenterStock.aggregate([
+              {
+                $match: {
+                  center: new mongoose.Types.ObjectId(fromCenter),
+                  product: new mongoose.Types.ObjectId(productItem.product)
+                }
+              },
+              { $unwind: "$serialNumbers" },
+              {
+                $match: {
+                  "serialNumbers.status": "available"
+                }
+              },
+              { $count: "totalAvailable" }
+            ]);
+
+            if (serialNumbers.length > 0) {
+              availableQuantity = serialNumbers[0].totalAvailable;
+              stockSource = 'SerialNumbers (from CenterStock)';
+              console.log(`[DEBUG] 📦 Found ${availableQuantity} available serials for ${product.productTitle}`);
+            }
+          }
+        }
+
+        console.log(`[DEBUG] 📊 Final stock check for ${product.productTitle}:`, {
+          productId: productItem.product,
+          fromCenter,
+          availableQuantity,
+          requestedQuantity: productItem.quantity,
+          stockSource: stockSource || 'No stock source found'
+        });
+
+        // If still no stock available, create a CenterStock record or return error
+        if (availableQuantity === 0) {
+          // Option 1: Create a CenterStock record with 0 stock (for future tracking)
+          // This ensures the record exists for future transfers
+          if (!centerStock) {
+            console.log(`[DEBUG] 🔧 Creating CenterStock record for ${product.productTitle} with 0 stock`);
+            try {
+              centerStock = new CenterStock({
+                center: fromCenter,
+                product: productItem.product,
+                totalQuantity: 0,
+                availableQuantity: 0,
+                inTransitQuantity: 0,
+                consumedQuantity: 0,
+                serialNumbers: []
+              });
+              await centerStock.save();
+              console.log(`[DEBUG] ✅ CenterStock record created for ${product.productTitle}`);
+            } catch (err) {
+              console.log(`[DEBUG] ⚠️ Could not create CenterStock: ${err.message}`);
+            }
+          }
+
+          // Check if the product actually has stock in the system (check product's total stock)
+          // This is a fallback for products that exist but don't have CenterStock records
+          const productTotalStock = await Product.aggregate([
+            { $match: { _id: new mongoose.Types.ObjectId(productItem.product) } },
+            {
+              $lookup: {
+                from: 'centerstocks',
+                let: { productId: '$_id' },
+                pipeline: [
+                  { $match: { $expr: { $eq: ['$product', '$$productId'] } } },
+                  { $group: { _id: null, total: { $sum: '$totalQuantity' } } }
+                ],
+                as: 'stockData'
+              }
+            },
+            { $project: { totalStock: { $arrayElemAt: ['$stockData.total', 0] } } }
+          ]);
+
+          const totalInSystem = productTotalStock[0]?.totalStock || 0;
+          console.log(`[DEBUG] 📊 Total stock for ${product.productTitle} across all centers: ${totalInSystem}`);
+
+          if (totalInSystem === 0) {
+            return res.status(400).json({
+              success: false,
+              message: `No stock found for product ${product.productTitle} at the source center. Total stock in system: ${totalInSystem}`,
+              details: {
+                productId: productItem.product,
+                productTitle: product.productTitle,
+                fromCenter: fromCenter,
+                requestedQuantity: productItem.quantity,
+                totalInSystem: totalInSystem,
+                recommendation: "Please purchase stock first or check if the product is properly linked to this center."
+              }
+            });
+          } else {
+            // Stock exists but not at this center
+            return res.status(400).json({
+              success: false,
+              message: `Product ${product.productTitle} has stock in the system (${totalInSystem}) but not at this center. Please add stock to this center first.`,
+              details: {
+                productId: productItem.product,
+                productTitle: product.productTitle,
+                fromCenter: fromCenter,
+                requestedQuantity: productItem.quantity,
+                totalInSystem: totalInSystem,
+                availableAtSource: 0
+              }
+            });
+          }
+        }
+
+        // Final check: Is there enough stock?
+        if (availableQuantity < productItem.quantity) {
+          console.log(`[DEBUG] ❌ INSUFFICIENT STOCK for ${product.productTitle}:`, {
+            available: availableQuantity,
+            requested: productItem.quantity,
+            source: stockSource
+          });
+          
+          return res.status(400).json({
+            success: false,
+            message: `Insufficient stock for product ${product.productTitle}. Available: ${availableQuantity}, Requested: ${productItem.quantity}`,
+            details: {
+              productId: productItem.product,
+              productTitle: product.productTitle,
+              availableQuantity: availableQuantity,
+              requestedQuantity: productItem.quantity,
+              stockSource: stockSource || 'Unknown'
+            }
+          });
+        }
+        
+        console.log(`[DEBUG] ✅ Stock validation PASSED for ${product.productTitle} (${stockSource})`);
+      }
+    }
+
+    // Create stock transfer document
     const stockTransfer = new StockTransfer({
       transferNumber: transferNumber.trim(),
       fromCenter,
@@ -301,8 +525,10 @@ export const createStockTransfer = async (req, res) => {
       createdBy: req.user.id,
     });
 
+    // Process if status is Submitted
     if (status === "Submitted") {
       try {
+        // Now call the model's validation (which uses availableQuantity)
         await stockTransfer.validateStockAvailability();
 
         if (productApprovals && productApprovals.length > 0) {
@@ -346,16 +572,23 @@ export const createStockTransfer = async (req, res) => {
         }
 
         await stockTransfer.validateTransferSerialNumbers();
+        
+        console.log(`[DEBUG] ✅ All validations passed for Submitted status`);
       } catch (validationError) {
+        console.error(`[DEBUG] ❌ Validation error:`, validationError.message);
         return res.status(400).json({
           success: false,
           message: `Cannot create transfer with Submitted status: ${validationError.message}`,
+          stack: process.env.NODE_ENV === "development" ? validationError.stack : undefined
         });
       }
     }
 
+    // Save the transfer
     const savedStockTransfer = await stockTransfer.save();
+    console.log(`[DEBUG] ✅ Stock transfer saved with ID: ${savedStockTransfer._id}`);
 
+    // Populate and return
     const populatedTransfer = await StockTransfer.findById(
       savedStockTransfer._id
     )
@@ -373,7 +606,8 @@ export const createStockTransfer = async (req, res) => {
       data: populatedTransfer,
     });
   } catch (error) {
-    console.error("Error creating stock transfer:", error);
+    console.error("❌ Error creating stock transfer:", error);
+    console.error("Error stack:", error.stack);
 
     if (error.code === 11000) {
       const duplicateField = Object.keys(error.keyPattern)[0];
@@ -410,6 +644,7 @@ export const createStockTransfer = async (req, res) => {
         process.env.NODE_ENV === "development"
           ? error.message
           : "Internal server error",
+      stack: process.env.NODE_ENV === "development" ? error.stack : undefined
     });
   }
 };

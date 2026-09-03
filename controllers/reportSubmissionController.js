@@ -1,17 +1,17 @@
 import StockClosing from "../models/ReportSubmission.js";
 import mongoose from "mongoose";
 import User from "../models/User.js";
-
+import Center from "../models/Center.js";
+import Reseller from "../models/Reseller.js";
+import { getMonthsBetweenDates, getCurrentMonthInfo } from "../utils/dateHelper.js";
 const checkStockClosingPermissions = (req, requiredPermissions = []) => {
   const userPermissions = req.user.role?.permissions || [];
   const closingModule = userPermissions.find(
     (perm) => perm.module === "Closing"
   );
-
   if (!closingModule) {
     return { hasAccess: false, permissions: {} };
   }
-
   const permissions = {
     manage_closing_stock_own_center: closingModule.permissions.includes(
       "manage_closing_stock_own_center"
@@ -334,10 +334,12 @@ export const createStockClosing = async (req, res) => {
 
     const {
       date,
-      center, // Center ID from frontend (required for outlet users creating for other centers)
+      center,
       products,
       status,
       remark,
+      reportMonth, // NEW: Add this field to track which month the report is for
+      reportYear   // NEW: Add this field to track which year the report is for
     } = req.body;
 
     if (!products || !Array.isArray(products) || products.length === 0) {
@@ -398,14 +400,12 @@ export const createStockClosing = async (req, res) => {
 
     // Determine stockClosingForOtherCenter based on user type
     let stockClosingForOtherCenter = false;
-    let targetCenter = userClosingCenter; // Default to user's own center
+    let targetCenter = userClosingCenter;
 
     if (isOutlet) {
-      // For outlet users, stockClosingForOtherCenter is always TRUE
       stockClosingForOtherCenter = true;
       
       if (center) {
-        // If center is provided, validate it
         const targetCenterData = await Center.findById(center);
         if (!targetCenterData) {
           return res.status(400).json({
@@ -414,7 +414,6 @@ export const createStockClosing = async (req, res) => {
           });
         }
 
-        // Check permissions for outlet user to create for other centers
         if (
           permissions.manage_closing_stock_own_center &&
           !permissions.manage_closing_stock_all_center
@@ -428,19 +427,27 @@ export const createStockClosing = async (req, res) => {
 
         targetCenter = center;
       }
-      // If no center provided, targetCenter remains user's own center
     } else if (isCenter) {
-      // For center users, stockClosingForOtherCenter is always FALSE
       stockClosingForOtherCenter = false;
-      targetCenter = userClosingCenter; // Always their own center
+      targetCenter = userClosingCenter;
       
-      // Center users cannot create for other centers
       if (center && center.toString() !== userClosingCenter.toString()) {
         return res.status(400).json({
           success: false,
           message: "Center users can only create stock closing for their own center",
         });
       }
+    }
+
+    // Determine the report month/year
+    let reportMonthValue = reportMonth;
+    let reportYearValue = reportYear;
+    
+    if (!reportMonthValue || !reportYearValue) {
+      // If not provided, use the date or current date
+      const closingDate = date ? new Date(date) : new Date();
+      reportMonthValue = closingDate.getMonth() + 1; // 1-12
+      reportYearValue = closingDate.getFullYear();
     }
 
     // Create single stock closing entry
@@ -453,6 +460,8 @@ export const createStockClosing = async (req, res) => {
       status: status || "Draft",
       createdBy: req.user?.id,
       remark: remark || "",
+      reportMonth: reportMonthValue, // NEW: Store the month
+      reportYear: reportYearValue,   // NEW: Store the year
     };
 
     const stockClosing = new StockClosing(stockClosingData);
@@ -705,7 +714,7 @@ export const getAllStockClosings = async (req, res) => {
 
     const {
       page = 1,
-      limit = 100,
+      limit = 100000,
       sortBy = "date",
       sortOrder = "desc",
       centerType,
@@ -786,6 +795,8 @@ export const getAllStockClosings = async (req, res) => {
     handleControllerError(error, res);
   }
 };
+
+
 export const getStockClosingById = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockClosingPermissions(
@@ -1226,7 +1237,6 @@ export const updateStockClosingStatus = async (req, res) => {
       "manage_closing_stock_own_center", 
       "manage_closing_stock_all_center"
     ]);
-
     if (!hasAccess) {
       return res.status(403).json({
         success: false,
@@ -1279,7 +1289,6 @@ export const updateStockClosingStatus = async (req, res) => {
         ],
       };
     }
-
     const existingStockClosing = await StockClosing.findOne(filter);
     
     if (!existingStockClosing) {
@@ -1367,5 +1376,204 @@ export const updateStockClosingStatus = async (req, res) => {
   } catch (error) {
     console.error("Update stock closing status error:", error);
     handleControllerError(error, res);
+  }
+};
+
+/**
+ * Get monthly stock closing report submission status
+ * Checks if centers have submitted reports by the 1st of next month
+ * 
+ * @param {Object} req - Request object
+ * @param {Object} res - Response object
+ * 
+ * Query params:
+ * - year: (optional) Year to check, defaults to previous month's year
+ * - month: (optional) Month to check (1-12), defaults to previous month
+ * - centerType: (optional) Filter by "Center" or "Outlet"
+ * - resellerId: (optional) Filter by specific reseller
+ */
+
+export const getMonthlyStockClosingStatus = async (req, res) => {
+  try {
+    const { year, month, centerType, resellerId } = req.query;
+    
+    // Determine which month to check (default to CURRENT month)
+    let targetDate = new Date();
+    let targetYear, targetMonth;
+    
+    if (year && month) {
+      targetYear = parseInt(year);
+      targetMonth = parseInt(month) - 1;
+      targetDate = new Date(targetYear, targetMonth, 1);
+    } else {
+      // Use PREVIOUS month by default
+      const now = new Date();
+      targetDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      targetYear = targetDate.getFullYear();
+      targetMonth = targetDate.getMonth();
+    }
+    
+    // Calculate month boundaries for display
+    const monthStart = new Date(targetYear, targetMonth, 1);
+    monthStart.setHours(0, 0, 0, 0);
+    
+    const monthEnd = new Date(targetYear, targetMonth + 1, 0);
+    monthEnd.setHours(23, 59, 59, 999);
+    
+    const lastDayOfMonth = new Date(targetYear, targetMonth + 1, 0);
+    lastDayOfMonth.setHours(23, 59, 59, 999);
+    
+    const today = new Date();
+    
+    // Check if deadline has passed (1st of next month)
+    const firstDayOfNextMonth = new Date(targetYear, targetMonth + 1, 1);
+    firstDayOfNextMonth.setHours(0, 0, 0, 0);
+    const isDeadlinePassed = today >= firstDayOfNextMonth;
+    
+    // Build center filter
+    let centerFilter = {};
+    if (centerType) {
+      centerFilter.centerType = centerType;
+    }
+    if (resellerId && mongoose.Types.ObjectId.isValid(resellerId)) {
+      centerFilter.reseller = resellerId;
+    }
+    
+    // Get all centers
+    const centers = await Center.find(centerFilter)
+      .populate('reseller', 'businessName name email mobile')
+      .lean();
+    
+    if (centers.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "No centers found",
+        data: {
+          year: targetYear,
+          month: targetMonth + 1,
+          monthName: targetDate.toLocaleString('default', { month: 'long' }),
+          isDeadlinePassed: isDeadlinePassed,
+          summary: {
+            totalCenters: 0,
+            submitted: 0,
+            pending: 0,
+            missed: 0,
+            submissionRate: "0%"
+          },
+          centers: []
+        }
+      });
+    }
+    
+    const centerIds = centers.map(c => c._id);
+    
+    // Get ALL stock closings for this specific month (not just submitted/approved)
+    const monthStockClosings = await StockClosing.find({
+      closingCenter: { $in: centerIds },
+      reportMonth: targetMonth + 1,  // 1-12
+      reportYear: targetYear,
+      status: { $in: ["Submitted", "Approved"] }
+    })
+    .populate('createdBy', 'fullName email')
+    .sort({ createdAt: -1 })
+    .lean();
+    
+    console.log(`📊 Stock closings found for ${targetDate.toLocaleString('default', { month: 'long' })} ${targetYear}: ${monthStockClosings.length}`);
+    
+    // Create a map of center-wise submissions for this specific month
+    const submissionsMap = new Map();
+    monthStockClosings.forEach(closing => {
+      const centerId = closing.closingCenter?.toString();
+      if (centerId && !submissionsMap.has(centerId)) {
+        submissionsMap.set(centerId, closing);
+      }
+    });
+    
+    console.log(`✅ Centers that submitted for ${targetDate.toLocaleString('default', { month: 'long' })}: ${submissionsMap.size}`);
+    
+    // Prepare response data for each center
+    let submittedCount = 0;
+    const centersData = [];
+    
+    for (const center of centers) {
+      const submission = submissionsMap.get(center._id.toString());
+      const hasSubmitted = !!submission;
+      
+      if (hasSubmitted && submission.status === "Approved") {
+        submittedCount++;
+      }
+      
+      // ALL centers that have submitted get "submitted" status
+      // NO other conditions - just mark as submitted if they have a record
+      let submissionStatus = "pending";
+      let remarks = "";
+      
+      if (hasSubmitted && submission.status === "Approved") {
+        submissionStatus = "approved";
+        const submittedDate = new Date(submission.createdAt || submission.date);
+        remarks = `✅ Report approved (submitted on ${submittedDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })})`;
+      } else if (hasSubmitted) {
+        submissionStatus = "awaited";
+        const submittedDate = new Date(submission.createdAt || submission.date);
+        remarks = `⏳ Report submitted on ${submittedDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}, awaiting approval`;
+      } else if (isDeadlinePassed) {
+        submissionStatus = "missed";
+        remarks = `❌ No report submitted for ${targetDate.toLocaleString('default', { month: 'long' })} ${targetYear}`;
+      } else {
+        submissionStatus = "pending";
+        remarks = `⏳ Awaiting submission for ${targetDate.toLocaleString('default', { month: 'long' })} ${targetYear}`;
+      }
+      
+      centersData.push({
+        centerId: center._id,
+        centerName: center.centerName,
+        centerCode: center.centerCode,
+        centerType: center.centerType,
+        reseller: center.reseller || null,
+        submissionStatus: submissionStatus, // This will be "submitted" for ALL who have a record
+        submittedOn: submission ? submission.createdAt : null,
+        submittedBy: submission ? submission.createdBy : null,
+        reportId: submission ? submission._id : null,
+        reportDate: submission ? submission.date : null,
+        reportMonth: targetMonth + 1,
+        reportYear: targetYear,
+        remarks: remarks,
+        lastDateToSubmit: lastDayOfMonth
+      });
+    }
+    
+    // Calculate submission rate
+    const submissionRate = submittedCount === 0 ? "0" : ((submittedCount / centers.length) * 100).toFixed(2);
+    
+    res.status(200).json({
+      success: true,
+      message: `📋 Stock closing report status for ${targetDate.toLocaleString('default', { month: 'long' })} ${targetYear}`,
+      data: {
+        year: targetYear,
+        month: targetMonth + 1,
+        monthName: targetDate.toLocaleString('default', { month: 'long' }),
+        monthStart: monthStart,
+        monthEnd: monthEnd,
+        lastSubmissionDate: lastDayOfMonth,
+        isDeadlinePassed: isDeadlinePassed,
+        checkDate: today,
+        summary: {
+          totalCenters: centers.length,
+          submitted: submittedCount,
+          pending: centers.length - submittedCount,
+          missed: isDeadlinePassed ? (centers.length - submittedCount) : 0,
+          submissionRate: submissionRate + "%"
+        },
+        centers: centersData
+      }
+    });
+    
+  } catch (error) {
+    console.error("❌ Error getting monthly stock closing status:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message
+    });
   }
 };

@@ -1,0 +1,1 @@
+{"indexes":[{"v":{"$numberInt":"2"},"key":{"_id":{"$numberInt":"1"}},"name":"_id_"},{"v":{"$numberInt":"2"},"key":{"centerCode":{"$numberInt":"1"}},"name":"centerCode_1","background":true,"unique":true,"sparse":true}],"uuid":"7f99cacf7831430cb32d5ad831860683","collectionName":"centers","type":"collection"}

@@ -8,24 +8,117 @@ import ReplacementRecord from "../models/ReplacementRecord.js";
 import Center from "../models/Center.js";
 import ReturnRecord from "../models/ReturnRecord.js";
 
+// ============================================================
+// Helper: Parse DD-MM-YYYY string into a proper Date object
+// (Fixes the bug where new Date("31-08-2026") returns Invalid Date
+// because JS assumes MM-DD-YYYY by default)
+// ============================================================
+function parseDDMMYYYY(dateStr) {
+  if (!dateStr) return null;
+
+  const parts = dateStr.split("-");
+  if (parts.length !== 3) return null;
+
+  const [day, month, year] = parts.map(Number);
+
+  if (
+    !day || !month || !year ||
+    day < 1 || day > 31 ||
+    month < 1 || month > 12
+  ) {
+    return null;
+  }
+
+  const parsed = new Date(year, month - 1, day);
+
+  // Guard against JS auto-correcting invalid dates (e.g. 31-02-2026 -> March 3)
+  if (
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return parsed;
+}
+
+// ============================================================
+// Helper: Build a { startDate, endDate } range from query params
+// Priority: explicit startDate/endDate > month/year > current month
+// ============================================================
+function getDateRange(startDate, endDate, month, year) {
+  let start, end;
+
+  if (startDate && endDate) {
+    start = parseDDMMYYYY(startDate);
+    end = parseDDMMYYYY(endDate);
+
+    if (!start || !end) {
+      throw new Error(
+        `Invalid date format. Expected DD-MM-YYYY, got startDate="${startDate}", endDate="${endDate}"`
+      );
+    }
+
+    if (start > end) {
+      throw new Error("startDate cannot be after endDate");
+    }
+
+    // Include the entire end day (23:59:59.999), not just midnight
+    end.setHours(23, 59, 59, 999);
+  } else if (month && year) {
+    const m = parseInt(month);
+    const y = parseInt(year);
+
+    if (!m || m < 1 || m > 12 || !y) {
+      throw new Error(`Invalid month/year: month=${month}, year=${year}`);
+    }
+
+    start = new Date(y, m - 1, 1, 0, 0, 0, 0);
+    end = new Date(y, m, 0, 23, 59, 59, 999); // day 0 of next month = last day of this month
+  } else {
+    // Default: current month
+    const now = new Date();
+    start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+    end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  }
+
+  return { startDate: start, endDate: end };
+}
+// ============================================================
+// Controller: getUsageSummary
+// ============================================================
 export const getUsageSummary = async (req, res) => {
   try {
-    const { 
-      startDate, 
-      endDate, 
-      centerId, 
-      productId, 
+    const {
+      startDate,
+      endDate,
+      centerId,
+      productId,
       month,
       year,
       page = 1,
       limit = 100
     } = req.query;
-    
+
     const user = req.user;
-    let dateRange = getDateRange(startDate, endDate, month, year);
-    
+
+    let dateRange;
+    try {
+      dateRange = getDateRange(startDate, endDate, month, year);
+    } catch (dateError) {
+      return res.status(400).json({
+        success: false,
+        message: dateError.message
+      });
+    }
+
+    console.log(
+      `Date filter resolved: ${dateRange.startDate.toISOString()} to ${dateRange.endDate.toISOString()}`
+    );
+
     let targetCenters = await getTargetCenters(centerId, user);
-    
+
     if (!targetCenters || targetCenters.length === 0) {
       return res.status(400).json({
         success: false,
@@ -36,10 +129,10 @@ export const getUsageSummary = async (req, res) => {
     console.log(`Processing data for ${targetCenters.length} centers, productId: ${productId}`);
 
     const allCenterData = [];
-    
+
     for (const center of targetCenters) {
       console.log(`Processing center: ${center.centerName} (${center._id})`);
-      
+
       const [
         stockRequests,
         stockTransfers,
@@ -47,7 +140,7 @@ export const getUsageSummary = async (req, res) => {
         damageReturns,
         replacementRecords,
         stockClosings,
-        returnRecords, 
+        returnRecords,
         openingStock
       ] = await Promise.all([
         getStockRequestData(center._id, dateRange, productId),
@@ -57,9 +150,9 @@ export const getUsageSummary = async (req, res) => {
         getReplacementRecordData(center._id, dateRange, productId),
         getStockClosingData(center._id, dateRange, productId),
         getReturnRecordData(center._id, dateRange, productId),
-        getOpeningStockData(center._id, dateRange.startDate, productId) 
+        getOpeningStockData(center._id, dateRange.startDate, productId)
       ]);
-      
+
       const usageSummary = processUsageSummary({
         stockRequests,
         stockTransfers,
@@ -78,21 +171,25 @@ export const getUsageSummary = async (req, res) => {
     const pageSize = parseInt(limit);
     const startIndex = (currentPage - 1) * pageSize;
     const endIndex = startIndex + pageSize;
-    
+
     const paginatedData = allCenterData.slice(startIndex, endIndex);
     const totalRecords = allCenterData.length;
     const totalPages = Math.ceil(totalRecords / pageSize);
 
     // Prepare filters response
+    // FIXED: month/year now derived from the ACTUAL resolved dateRange,
+    // instead of falling back to the literal string 'current' whenever
+    // the request used startDate/endDate instead of month/year.
     const filters = {
       dateRange: {
         startDate: dateRange.startDate,
         endDate: dateRange.endDate
       },
       productId,
-      month: month || 'current',
-      year: year || new Date().getFullYear()
+      month: dateRange.startDate.getMonth() + 1, // 1-12, derived from resolved range
+      year: dateRange.startDate.getFullYear()     // derived from resolved range
     };
+
     if (targetCenters.length === 1) {
       filters.center = {
         id: targetCenters[0]._id,
@@ -244,28 +341,28 @@ const getTargetCenters = async (requestedCenterId, user) => {
   }
 };
 
-const getDateRange = (startDate, endDate, month, year) => {
-  let start, end;
+// const getDateRange = (startDate, endDate, month, year) => {
+//   let start, end;
   
-  if (startDate && endDate) {
-    start = new Date(startDate);
-    end = new Date(endDate);
-  } else if (month) {
-    const targetYear = year || new Date().getFullYear();
-    const targetMonth = parseInt(month) - 1;
+//   if (startDate && endDate) {
+//     start = new Date(startDate);
+//     end = new Date(endDate);
+//   } else if (month) {
+//     const targetYear = year || new Date().getFullYear();
+//     const targetMonth = parseInt(month) - 1;
     
-    start = new Date(targetYear, targetMonth, 1);
-    end = new Date(targetYear, targetMonth + 1, 0, 23, 59, 59, 999);
-  } else {
-    const now = new Date();
-    start = new Date(now.getFullYear(), now.getMonth(), 1);
-    end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-  }
+//     start = new Date(targetYear, targetMonth, 1);
+//     end = new Date(targetYear, targetMonth + 1, 0, 23, 59, 59, 999);
+//   } else {
+//     const now = new Date();
+//     start = new Date(now.getFullYear(), now.getMonth(), 1);
+//     end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+//   }
   
-  start.setHours(0, 0, 0, 0);
+//   start.setHours(0, 0, 0, 0);
   
-  return { startDate: start, endDate: end };
-};
+//   return { startDate: start, endDate: end };
+// };
 
 const getStockRequestData = async (centerId, dateRange, productId) => {
   const matchStage = {
@@ -284,7 +381,7 @@ const getStockRequestData = async (centerId, dateRange, productId) => {
     matchStage['products.product'] = new mongoose.Types.ObjectId(productId);
   }
 
-  return await StockRequest.aggregate([
+  const results = await StockRequest.aggregate([
     { $match: matchStage },
     { $unwind: "$products" },
     {
@@ -312,6 +409,11 @@ const getStockRequestData = async (centerId, dateRange, productId) => {
       }
     },
     {
+      $addFields: {
+        quantityValue: 0  // Set quantity to 0 using $addFields instead
+      }
+    },
+    {
       $project: {
         _id: 1,
         date: 1,
@@ -321,14 +423,20 @@ const getStockRequestData = async (centerId, dateRange, productId) => {
         warehouse: { $arrayElemAt: ["$warehouseInfo", 0] },
         product: "$products.product",
         productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
-        // quantity: "$products.quantity",
-        quantity:"$products.approvedQuantity",
+        quantity: "$quantityValue",  // Use the field we set to 0
         approvedQuantity: "$products.approvedQuantity",
         receivedQuantity: "$products.receivedQuantity",
         status: 1
       }
     }
   ]);
+
+  console.log(`[StockRequest] Found ${results.length} records`);
+  results.forEach(r => {
+    console.log(`  - ${r.productName}: ${r.quantity} (approved: ${r.approvedQuantity}, received: ${r.receivedQuantity})`);
+  });
+
+  return results;
 };
 
 const getStockTransferData = async (centerId, dateRange, productId) => {
@@ -348,7 +456,7 @@ const getStockTransferData = async (centerId, dateRange, productId) => {
     matchStage['products.product'] = new mongoose.Types.ObjectId(productId);
   }
 
-  return await StockTransfer.aggregate([
+  const results = await StockTransfer.aggregate([
     { $match: matchStage },
     { $unwind: "$products" },
     {
@@ -391,14 +499,27 @@ const getStockTransferData = async (centerId, dateRange, productId) => {
         toCenter: { $arrayElemAt: ["$toCenterInfo", 0] },
         product: "$products.product",
         productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
-        // quantity: "$products.quantity",
-        quantity:"$products.approvedQuantity",
+        // FIX: Use appropriate quantity based on transfer direction
+        quantity: {
+          $cond: [
+            { $eq: ["$fromCenter", new mongoose.Types.ObjectId(centerId)] },
+            { $ifNull: ["$products.approvedQuantity", "$products.quantity"] }, // Transfer Given uses approved/quantity
+            { $ifNull: ["$products.receivedQuantity", { $ifNull: ["$products.approvedQuantity", "$products.quantity"] }] } // Transfer Receive uses received
+          ]
+        },
         approvedQuantity: "$products.approvedQuantity",
         receivedQuantity: "$products.receivedQuantity",
         status: 1
       }
     }
   ]);
+
+  console.log(`[StockTransfer] Found ${results.length} records`);
+  results.forEach(r => {
+    console.log(`  - ${r.productName}: ${r.quantity} (Type: ${r.type})`);
+  });
+
+  return results;
 };
 
 const getStockUsageData = async (centerId, dateRange, productId) => {
@@ -644,165 +765,404 @@ const getStockClosingData = async (centerId, dateRange, productId) => {
     }
   ]);
 };
+
 const getOpeningStockData = async (centerId, startDate, productId) => {
   try {
     const currentStartDate = new Date(startDate);
     
-    // Get previous month
-    const previousMonthEnd = new Date(currentStartDate);
-    previousMonthEnd.setDate(0); // Last day of previous month
-    previousMonthEnd.setHours(23, 59, 59, 999);
-    
-    const previousMonthStart = new Date(previousMonthEnd);
-    previousMonthStart.setDate(1);
-    previousMonthStart.setHours(0, 0, 0, 0);
-
     console.log(`========================================`);
     console.log(`Getting opening stock for center: ${centerId}`);
-    console.log(`Previous month range: ${previousMonthStart.toISOString()} to ${previousMonthEnd.toISOString()}`);
+    console.log(`For month starting: ${currentStartDate.toISOString()}`);
 
-    // Get all transactions from previous month
-    const [
-      prevMonthRequests,
-      prevMonthTransfers,
-      prevMonthUsages,
-      prevMonthDamageReturns,
-      prevMonthReplacementRecords,
-      prevMonthClosings,
-      prevMonthReturnRecords
-    ] = await Promise.all([
-      getStockRequestData(centerId, { startDate: previousMonthStart, endDate: previousMonthEnd }, productId),
-      getStockTransferData(centerId, { startDate: previousMonthStart, endDate: previousMonthEnd }, productId),
-      getStockUsageData(centerId, { startDate: previousMonthStart, endDate: previousMonthEnd }, productId),
-      getDamageReturnData(centerId, { startDate: previousMonthStart, endDate: previousMonthEnd }, productId),
-      getReplacementRecordData(centerId, { startDate: previousMonthStart, endDate: previousMonthEnd }, productId),
-      getStockClosingData(centerId, { startDate: previousMonthStart, endDate: previousMonthEnd }, productId),
-      getReturnRecordData(centerId, { startDate: previousMonthStart, endDate: previousMonthEnd }, productId)  // ADD THIS CALL
+    // 1. Get all purchases BEFORE current month
+    const purchases = await StockRequest.aggregate([
+      {
+        $match: {
+          $or: [
+            { center: new mongoose.Types.ObjectId(centerId) },
+            { warehouse: new mongoose.Types.ObjectId(centerId) }
+          ],
+          status: { $in: ["Completed", "Confirmed", "Shipped"] },
+          date: { $lt: currentStartDate }
+        }
+      },
+      { $unwind: "$products" },
+      {
+        $match: productId ? { 'products.product': new mongoose.Types.ObjectId(productId) } : {}
+      },
+      {
+        $group: {
+          _id: '$products.product',
+          total: { 
+            $sum: { 
+              $ifNull: [
+                '$products.receivedQuantity', 
+                { $ifNull: ['$products.approvedQuantity', '$products.quantity'] }
+              ] 
+            } 
+          }
+        }
+      }
     ]);
-
-    console.log(`Previous month transactions found:`);
-    console.log(`- Stock Requests: ${prevMonthRequests.length}`);
-    console.log(`- Stock Transfers: ${prevMonthTransfers.length}`);
-    console.log(`- Stock Usages: ${prevMonthUsages.length}`);
-    console.log(`- Damage Returns: ${prevMonthDamageReturns.length}`);
-    console.log(`- Replacement Records: ${prevMonthReplacementRecords.length}`);
-    console.log(`- Stock Closings: ${prevMonthClosings.length}`);
-    console.log(`- Return Records: ${prevMonthReturnRecords.length}`);  // ADD THIS
-
-    // Combine all data
-    const allPrevMonthData = [
-      ...prevMonthRequests,
-      ...prevMonthTransfers,
-      ...prevMonthUsages,
-      ...prevMonthDamageReturns,
-      ...prevMonthReplacementRecords,
-      ...prevMonthClosings,
-      ...prevMonthReturnRecords,  // ADD THIS
-    ];
-
-    // Group by product
-    const productSummary = {};
     
-    // Process each transaction
-    allPrevMonthData.forEach(item => {
-      const productIdFromItem = item.product?.toString();
-      const type = item.type;
-      
-      if (!productIdFromItem) return;
-      if (productId && productIdFromItem !== productId) return;
-
-      if (!productSummary[productIdFromItem]) {
-        productSummary[productIdFromItem] = {
-          product: item.product,
-          productName: item.productName || 'Unknown Product',
-          opening: 0,
-          purchase: 0,
-          transferReceive: 0,
-          transferGiven: 0,
-          usage: 0,
-          damage: 0,
-          replaceReturn: 0,
-          replaceDamage: 0,
-          return: 0,  // ADD THIS
-          closing: 0
-        };
+    // 2. Get all transfers received BEFORE current month — use 'date' field, NOT 'completionInfo.completedOn'
+    const transfersIn = await StockTransfer.aggregate([
+      {
+        $match: {
+          toCenter: new mongoose.Types.ObjectId(centerId),
+          status: 'Completed',
+          date: { $lt: currentStartDate }   // FIXED: was completionInfo.completedOn
+        }
+      },
+      { $unwind: "$products" },
+      {
+        $match: productId ? { 'products.product': new mongoose.Types.ObjectId(productId) } : {}
+      },
+      {
+        $group: {
+          _id: '$products.product',
+          total: { 
+            $sum: { 
+              $ifNull: [
+                '$products.receivedQuantity', 
+                { $ifNull: ['$products.approvedQuantity', '$products.quantity'] }
+              ] 
+            } 
+          }
+        }
       }
-
-      const quantity = item.quantity || item.qty || item.productQty || 0;
-      const damageQty = item.damageQty || 0;
-
-      switch (type) {
-        case "Purchase":
-          productSummary[productIdFromItem].purchase += quantity;
-          break;
-        case "Transfer Receive":
-          productSummary[productIdFromItem].transferReceive += quantity;
-          break;
-        case "Transfer Given":
-          productSummary[productIdFromItem].transferGiven += quantity;
-          break;
-        case "Usage":
-        case "NC":
-        case "Convert":
-        case "Shifting":
-        case "Building Usage":
-        case "Other":
-        case "Repair":
-          productSummary[productIdFromItem].usage += quantity;
-          break;
-        case "Damage":
-          productSummary[productIdFromItem].damage += quantity;
-          break;
-        case "Return":
-          productSummary[productIdFromItem].return += quantity;
-          break;
-        case "Replace Return":
-          productSummary[productIdFromItem].replaceReturn += quantity;
-          break;
-        case "Replace Damage":
-          productSummary[productIdFromItem].replaceDamage += quantity;
-          break;
-        case "Closing":
-          productSummary[productIdFromItem].closing += (quantity + damageQty);
-          break;
+    ]);
+    
+    // 3. Get all transfers given BEFORE current month — use 'date' field, NOT 'completionInfo.completedOn'
+    const transfersOut = await StockTransfer.aggregate([
+      {
+        $match: {
+          fromCenter: new mongoose.Types.ObjectId(centerId),
+          status: 'Completed',
+          date: { $lt: currentStartDate }   // FIXED: was completionInfo.completedOn
+        }
+      },
+      { $unwind: "$products" },
+      {
+        $match: productId ? { 'products.product': new mongoose.Types.ObjectId(productId) } : {}
+      },
+      {
+        $group: {
+          _id: '$products.product',
+          total: { 
+            $sum: { 
+              $ifNull: ['$products.approvedQuantity', '$products.quantity'] 
+            } 
+          }
+        }
       }
+    ]);
+    
+    // 4. Get all usages BEFORE current month
+    const usages = await StockUsage.aggregate([
+      {
+        $match: {
+          center: new mongoose.Types.ObjectId(centerId),
+          status: "completed",
+          date: { $lt: currentStartDate }
+        }
+      },
+      { $unwind: "$items" },
+      {
+        $match: productId ? { 'items.product': new mongoose.Types.ObjectId(productId) } : {}
+      },
+      {
+        $group: {
+          _id: '$items.product',
+          total: { $sum: '$items.quantity' }
+        }
+      }
+    ]);
+    
+    // 5. Get all returns BEFORE current month
+    const returns = await ReturnRecord.aggregate([
+      {
+        $match: {
+          center: new mongoose.Types.ObjectId(centerId),
+          status: "completed",
+          date: { $lt: currentStartDate }
+        }
+      },
+      { $unwind: "$items" },
+      {
+        $match: productId ? { 'items.product': new mongoose.Types.ObjectId(productId) } : {}
+      },
+      {
+        $group: {
+          _id: '$items.product',
+          total: { $sum: '$items.quantity' }
+        }
+      }
+    ]);
+    
+    // 6. Get all damages BEFORE current month
+    const damages = await DamageReturn.aggregate([
+      {
+        $match: {
+          center: new mongoose.Types.ObjectId(centerId),
+          status: { $in: ["approved", "pending", "replaced"] },
+          date: { $lt: currentStartDate }
+        }
+      },
+      {
+        $match: productId ? { product: new mongoose.Types.ObjectId(productId) } : {}
+      },
+      {
+        $group: {
+          _id: '$product',
+          total: { $sum: '$quantity' }
+        }
+      }
+    ]);
+    
+    // Combine all product IDs seen across all queries
+    const allProducts = new Set();
+    [...purchases, ...transfersIn, ...transfersOut, ...usages, ...returns, ...damages].forEach(item => {
+      if (item._id) allProducts.add(item._id.toString());
     });
-
-    // Calculate closing stock for each product (this becomes opening for next month)
-    const openingData = Object.values(productSummary).map(item => {
-      // Calculate closing stock with return adjustment
-      const calculatedClosing = 
-        item.opening + 
-        item.purchase +
-        item.transferReceive +
-        item.return -  // ADD RETURN TO CALCULATION
-        item.usage -
-        item.transferGiven -
-        item.damage;
-      
-      // Use actual closing if available, otherwise use calculated
-      const finalClosing = item.closing > 0 ? item.closing : (calculatedClosing > 0 ? calculatedClosing : 0);
-      
-      return {
-        product: item.product,
-        productName: item.productName,
-        quantity: finalClosing,
-        stockType: "Calculated Previous Month Closing",
-        date: previousMonthEnd
+    
+    // If filtering by productId, only process that one product
+    if (productId) {
+      allProducts.clear();
+      allProducts.add(productId);
+    }
+    
+    const ProductModel = mongoose.model('Product');
+    const openingData = [];
+    
+    for (const prodId of allProducts) {
+      const getTotal = (arr, id) => {
+        const found = arr.find(item => item._id && item._id.toString() === id);
+        return found ? found.total : 0;
       };
-    });
-
-    console.log(`Calculated ${openingData.length} products with opening stock`);
-    openingData.forEach(item => {
-      console.log(`- ${item.productName}: ${item.quantity}`);
-    });
+      
+      const purchaseTotal   = getTotal(purchases,    prodId);
+      const transferInTotal = getTotal(transfersIn,  prodId);
+      const transferOutTotal= getTotal(transfersOut, prodId);
+      const usageTotal      = getTotal(usages,       prodId);
+      const returnTotal     = getTotal(returns,      prodId);
+      const damageTotal     = getTotal(damages,      prodId);
+      
+      // Opening = (Purchases + Transfers In + Returns) - (Transfers Out + Usages + Damages)
+      const openingStock = 
+        purchaseTotal + transferInTotal + returnTotal 
+        - transferOutTotal - usageTotal - damageTotal;
+      
+      const productDoc = await ProductModel.findById(prodId);
+      const productName = productDoc?.productTitle || 'Unknown Product';
+      
+      console.log(`[Opening Stock] ${productName} = ${openingStock}`);
+      console.log(`   Purchases: ${purchaseTotal}`);
+      console.log(`   + Transfers In: ${transferInTotal}`);
+      console.log(`   + Returns: ${returnTotal}`);
+      console.log(`   - Transfers Out: ${transferOutTotal}`);
+      console.log(`   - Usages: ${usageTotal}`);
+      console.log(`   - Damages: ${damageTotal}`);
+      
+      // Always include the product if filtering by productId, even if opening is 0
+      if (openingStock !== 0 || productId) {
+        openingData.push({
+          product: new mongoose.Types.ObjectId(prodId),
+          productName: productName,
+          quantity: Math.max(0, openingStock),
+          stockType: "Calculated from All Previous Transactions",
+          date: currentStartDate
+        });
+      }
+    }
     
+    console.log(`Returning ${openingData.length} products with opening stock`);
     console.log(`========================================`);
-
     return openingData;
-
+    
   } catch (error) {
     console.error("Error in getOpeningStockData:", error);
+    return [];
+  }
+};
+
+// REMOVE the getPreviousMonthClosingStock function entirely - it's causing infinite recursion!
+
+// NEW FUNCTION: Get previous month's closing stock from Summary calculations
+const getPreviousMonthClosingStock = async (centerId, previousMonthStart, previousMonthEnd, productId) => {
+  try {
+    // 1. Get purchases in previous month
+    const purchases = await StockRequest.aggregate([
+      {
+        $match: {
+          $or: [
+            { center: new mongoose.Types.ObjectId(centerId) },
+            { warehouse: new mongoose.Types.ObjectId(centerId) }
+          ],
+          status: { $in: ["Completed", "Confirmed", "Shipped"] },
+          date: { $gte: previousMonthStart, $lte: previousMonthEnd }
+        }
+      },
+      { $unwind: "$products" },
+      {
+        $match: productId ? { 'products.product': new mongoose.Types.ObjectId(productId) } : {}
+      },
+      {
+        $group: {
+          _id: '$products.product',
+          totalQuantity: { 
+            $sum: { 
+              $ifNull: [
+                '$products.receivedQuantity', 
+                { $ifNull: ['$products.approvedQuantity', '$products.quantity'] }
+              ]
+            } 
+          }
+        }
+      }
+    ]);
+    
+    // 2. Get transfers IN during previous month — FIXED: use 'date' not 'completionInfo.completedOn'
+    const transfersIn = await StockTransfer.aggregate([
+      {
+        $match: {
+          toCenter: new mongoose.Types.ObjectId(centerId),
+          status: 'Completed',
+          date: { $gte: previousMonthStart, $lte: previousMonthEnd }   // FIXED
+        }
+      },
+      { $unwind: "$products" },
+      {
+        $match: productId ? { 'products.product': new mongoose.Types.ObjectId(productId) } : {}
+      },
+      {
+        $group: {
+          _id: '$products.product',
+          totalQuantity: { 
+            $sum: { 
+              $ifNull: [
+                '$products.receivedQuantity', 
+                { $ifNull: ['$products.approvedQuantity', '$products.quantity'] }
+              ]
+            } 
+          }
+        }
+      }
+    ]);
+    
+    // 3. Get transfers OUT during previous month — FIXED: use 'date' not 'completionInfo.completedOn'
+    const transfersOut = await StockTransfer.aggregate([
+      {
+        $match: {
+          fromCenter: new mongoose.Types.ObjectId(centerId),
+          status: 'Completed',
+          date: { $gte: previousMonthStart, $lte: previousMonthEnd }   // FIXED
+        }
+      },
+      { $unwind: "$products" },
+      {
+        $match: productId ? { 'products.product': new mongoose.Types.ObjectId(productId) } : {}
+      },
+      {
+        $group: {
+          _id: '$products.product',
+          totalQuantity: { 
+            $sum: { 
+              $ifNull: ['$products.approvedQuantity', '$products.quantity'] 
+            }
+          }
+        }
+      }
+    ]);
+    
+    // 4. Get usages during previous month
+    const usages = await StockUsage.aggregate([
+      {
+        $match: {
+          center: new mongoose.Types.ObjectId(centerId),
+          status: "completed",
+          date: { $gte: previousMonthStart, $lte: previousMonthEnd }
+        }
+      },
+      { $unwind: "$items" },
+      {
+        $match: productId ? { 'items.product': new mongoose.Types.ObjectId(productId) } : {}
+      },
+      {
+        $group: {
+          _id: '$items.product',
+          totalQuantity: { $sum: '$items.quantity' }
+        }
+      }
+    ]);
+    
+    // 5. Get opening stock for previous month using the fixed function
+    const previousMonthOpening = await getOpeningStockData(centerId, previousMonthStart, productId);
+    
+    // Build closing stock map starting from previous month's opening
+    const closingStockMap = new Map();
+    
+    previousMonthOpening.forEach(item => {
+      closingStockMap.set(item.product.toString(), item.quantity);
+    });
+    
+    // Add purchases
+    purchases.forEach(p => {
+      const current = closingStockMap.get(p._id.toString()) || 0;
+      closingStockMap.set(p._id.toString(), current + p.totalQuantity);
+    });
+    
+    // Add transfers in
+    transfersIn.forEach(t => {
+      const current = closingStockMap.get(t._id.toString()) || 0;
+      closingStockMap.set(t._id.toString(), current + t.totalQuantity);
+    });
+    
+    // Subtract transfers out
+    transfersOut.forEach(t => {
+      const current = closingStockMap.get(t._id.toString()) || 0;
+      closingStockMap.set(t._id.toString(), current - t.totalQuantity);
+    });
+    
+    // Subtract usages
+    usages.forEach(u => {
+      const current = closingStockMap.get(u._id.toString()) || 0;
+      closingStockMap.set(u._id.toString(), current - u.totalQuantity);
+    });
+    
+    // Convert map to result array
+    const result = [];
+    const ProductModel = mongoose.model('Product');
+    
+    for (const [prodId, quantity] of closingStockMap) {
+      if (quantity <= 0 && !productId) continue;
+      if (productId && prodId !== productId) continue;
+      
+      let productName = 'Unknown Product';
+      try {
+        const productDoc = await ProductModel.findById(prodId);
+        if (productDoc?.productTitle) {
+          productName = productDoc.productTitle;
+        }
+      } catch (err) {
+        console.error(`Error fetching product name for ${prodId}:`, err);
+      }
+      
+      console.log(`📦 Previous month closing stock for ${productName}: ${Math.max(0, quantity)}`);
+      
+      result.push({
+        product: new mongoose.Types.ObjectId(prodId),
+        productName: productName,
+        quantity: Math.max(0, quantity),
+        stockType: "Calculated from Previous Month Transactions",
+        date: previousMonthEnd
+      });
+    }
+    
+    return result;
+    
+  } catch (error) {
+    console.error("Error calculating previous month closing stock:", error);
     return [];
   }
 };
@@ -825,6 +1185,7 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
   console.log(`Current month data items: ${allData.length}`);
   console.log(`Return records found: ${data.returnRecords.length}`);
 
+  // First, process opening stock
   data.openingStock.forEach(item => {
     const productIdFromItem = item.product?.toString();
     
@@ -851,6 +1212,7 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
     }
   });
 
+  // Then process all current month transactions
   allData.forEach(item => {
     const productIdFromItem = item.product?.toString();
     const type = item.type;
@@ -858,27 +1220,28 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
     if (!productIdFromItem) return;
     if (productId && productIdFromItem !== productId) return;
 
-    console.log(`Processing transaction for product: ${productIdFromItem}, Type: ${type}, Qty: ${item.quantity || item.qty || item.productQty || 0}`);
+    const quantity = item.quantity || item.qty || item.productQty || 0;
+    
+    console.log(`Processing transaction for product: ${productIdFromItem}, Type: ${type}, Qty: ${quantity}`);
 
     if (!groupedData[productIdFromItem]) {
       groupedData[productIdFromItem] = createEmptyProductSummary(
         item.productName || 'Unknown Product'
       );
       groupedData[productIdFromItem].productId = productIdFromItem;
-      groupedData[productIdFromItem].opening = 0; 
+      groupedData[productIdFromItem].opening = 0;
+      
+      if (centerDetails && !groupedData[productIdFromItem].center) {
+        groupedData[productIdFromItem].center = {
+          id: centerId,
+          name: centerDetails.centerName,
+          code: centerDetails.centerCode,
+          type: centerDetails.centerType
+        };
+      }
     }
 
-    const quantity = item.quantity || item.qty || item.productQty || 0;
-
-    if (centerDetails && !groupedData[productIdFromItem].center) {
-      groupedData[productIdFromItem].center = {
-        id: centerId,
-        name: centerDetails.centerName,
-        code: centerDetails.centerCode,
-        type: centerDetails.centerType
-      };
-    }
-
+    // Process based on transaction type
     switch (type) {
       case "Purchase":
         groupedData[productIdFromItem].purchase += quantity;
@@ -908,15 +1271,14 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
         groupedData[productIdFromItem].damage += quantity;
         break;
       case "Return":
-          console.log(`Processing return: Product=${item.productName}, Qty=${quantity}, OriginalUsageType=${item.originalUsageType}, OriginalConnectionType=${item.originalConnectionType}`);
-          console.log(`  → Always categorized as Return (general)`);
-          groupedData[productIdFromItem].return += quantity;
-          break;
-      case "Replace Return":
-        // groupedData[productIdFromItem].replaceReturn += quantity;
-        // break;
+        console.log(`Processing Return: Product=${item.productName}, Qty=${quantity}`);
         groupedData[productIdFromItem].return += quantity;
-          break;
+        break;
+      case "Replace Return":
+        console.log(`Processing Replace Return: Product=${item.productName}, Qty=${quantity}`);
+        groupedData[productIdFromItem].replaceReturn += quantity;
+        groupedData[productIdFromItem].return += quantity; // Add to return as well
+        break;
       case "Replace Damage":
         groupedData[productIdFromItem].replaceDamage += quantity;
         break;
@@ -936,9 +1298,13 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
       case "Repair":
         groupedData[productIdFromItem].repair += quantity;
         break;
+      default:
+        console.log(`Unknown transaction type: ${type}`);
+        break;
     }
   });
 
+  // Calculate final closing for all products
   const result = Object.values(groupedData).map(item => {
     if (!item.center && centerDetails) {
       item.center = {
@@ -949,9 +1315,19 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
       };
     }
 
+    // Calculate usage and closing
     if (item.calculateUsageAndClosing) {
       const calculatedClosing = item.calculateUsageAndClosing();
-      console.log(`Calculated for ${item.productName}: Opening=${item.opening}, Purchase=${item.purchase}, Closing=${item.closing}, Return=${item.return}`);
+      console.log(`Final calculation for ${item.productName}:`);
+      console.log(`  Opening: ${item.opening}`);
+      console.log(`  Calculated Closing: ${calculatedClosing}`);
+      console.log(`  Stored Closing: ${item.closing}`);
+      
+      // Use calculated closing if stored closing is 0
+      if (item.closing === 0 && calculatedClosing !== 0) {
+        item.closing = calculatedClosing;
+        console.log(`  → Using calculated closing: ${item.closing}`);
+      }
     }
     
     return item;
@@ -960,8 +1336,6 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
   console.log(`Returning ${result.length} products in summary`);
   return result;
 };
-
-
 const createEmptyProductSummary = (productName) => {
   const summary = {
     productName,
@@ -985,10 +1359,12 @@ const createEmptyProductSummary = (productName) => {
     stolenCenter: 0,
     stolenField: 0,
     closing: 0,
-    center: null
+    center: null,
+    productId: null
   };
-  
+  // FIXED: Correct closing stock calculation formula
   summary.calculateUsageAndClosing = function() {
+    // Calculate total usage from all usage types
     this.usage = 
       this.nc +
       this.convert +
@@ -999,25 +1375,31 @@ const createEmptyProductSummary = (productName) => {
       this.repair +
       this.stolenCenter +
       this.stolenField;
-  
-    // Calculate closing stock using previous month's closing as opening
+    // CORRECT FORMULA FOR CLOSING STOCK:
+    // Closing = Opening + Purchases + Transfer Receive + Returns - Transfer Given - Usage - Replace Damage - Damage
     this.closing = 
       this.opening + 
       this.purchase +
-      this.return+
-      this.transferReceive -
-      // this.replaceReturn -
-      this.usage -
+      this.transferReceive +
+      this.return -
       this.transferGiven - 
-      this.replaceDamage
+      this.usage -
+      this.replaceDamage -
       this.damage;
-  
+    console.log(`[Closing Calc] ${this.productName}:`);
+    console.log(`  Opening: ${this.opening}`);
+    console.log(`  + Purchase: ${this.purchase}`);
+    console.log(`  + Transfer Receive: ${this.transferReceive}`);
+    console.log(`  + Return: ${this.return}`);
+    console.log(`  - Transfer Given: ${this.transferGiven}`);
+    console.log(`  - Usage: ${this.usage}`);
+    console.log(`  - Replace Damage: ${this.replaceDamage}`);
+    console.log(`  - Damage: ${this.damage}`);
+    console.log(`  = Closing: ${this.closing}`);
     return this.closing;
   };
-
   return summary;
 };
-
 const generateSummaryStats = (usageSummary) => {
   const stats = {
     totalProducts: usageSummary.length,
@@ -1034,7 +1416,6 @@ const generateSummaryStats = (usageSummary) => {
       delete quantities.center;
       delete quantities.productId;
       delete quantities.calculateUsageAndClosing;
-      
       return sum + Object.values(quantities)
         .filter(val => typeof val === 'number')
         .reduce((s, v) => s + v, 0);
@@ -1044,7 +1425,6 @@ const generateSummaryStats = (usageSummary) => {
 
   return stats;
 };
-
 const getTotalQuantity = (item) => {
   const quantities = { ...item };
   delete quantities.product;
