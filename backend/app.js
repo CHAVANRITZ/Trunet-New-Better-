@@ -1,0 +1,54 @@
+import express from "express";
+import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+
+import healthRoutes from "./routes/healthRoutes.js";
+import { errorMiddleware } from "./middlewares/errorMiddleware.js";
+
+const app = express();
+
+/*
+ * ------------------------------------------------------------
+ * Global middleware
+ * ------------------------------------------------------------
+ */
+
+// Adds security-related HTTP headers.
+app.use(helmet());
+
+// Allows the frontend to communicate with the backend.
+app.use(cors());
+
+// Parses incoming JSON request bodies.
+app.use(express.json());
+
+// Prevents excessively frequent requests from a single client.
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 6000,
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
+app.use("/api", apiLimiter);
+
+/*
+ * ------------------------------------------------------------
+ * API routes
+ * ------------------------------------------------------------
+ */
+
+app.use("/api/v1/health", healthRoutes);
+
+/*
+ * ------------------------------------------------------------
+ * Error handling
+ * ------------------------------------------------------------
+ *
+ * This must be registered after all routes so that errors
+ * propagated from controllers and services reach this middleware.
+ */
+app.use(errorMiddleware);
+
+export default app;
