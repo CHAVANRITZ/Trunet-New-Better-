@@ -1,6 +1,8 @@
 # ================================
 # Environment variables
 # ================================
+# Local environment configuration may contain secrets such as
+# database credentials, JWT secrets, and API keys. Never commit it.
 .env
 .env.*
 !.env.example
