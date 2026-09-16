@@ -14,7 +14,7 @@ export function validationMiddleware(req, res, next) {
             400,
             errors
                 .array()
-                .map((error) => errors.msg)
+                .map((error) => error.msg)
                 .join(" ")
         );
     }
