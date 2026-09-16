@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-
+import authRoutes from "./routes/authRoutes.js";
 import healthRoutes from "./routes/healthRoutes.js";
 import { errorMiddleware } from "./middlewares/errorMiddleware.js";
 
@@ -40,7 +40,7 @@ app.use("/api", apiLimiter);
  */
 
 app.use("/api/v1/health", healthRoutes);
-
+app.use("/api/v1/auth", authRoutes);
 /*
  * ------------------------------------------------------------
  * Error handling
