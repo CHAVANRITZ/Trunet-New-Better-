@@ -5,6 +5,7 @@ import rateLimit from "express-rate-limit";
 import authRoutes from "./routes/authRoutes.js";
 import healthRoutes from "./routes/healthRoutes.js";
 import productCategoryRoutes from "./routes/productCategoryRoutes.js";
+import productRoutes from "./routes/productRoutes.js";
 import { errorMiddleware } from "./middlewares/errorMiddleware.js";
 
 const app = express();
@@ -42,7 +43,15 @@ app.use("/api", apiLimiter);
 
 app.use("/api/v1/health", healthRoutes);
 app.use("/api/v1/auth", authRoutes);
-app.use("/api/v1/product-categories", productCategoryRoutes);
+app.use(
+    "/api/v1/product-categories",
+    productCategoryRoutes
+);
+
+app.use(
+    "/api/v1/products",
+    productRoutes
+);
 /*
  * ------------------------------------------------------------
  * Error handling
