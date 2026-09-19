@@ -7,6 +7,8 @@ import healthRoutes from "./routes/healthRoutes.js";
 import productCategoryRoutes from "./routes/productCategoryRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
 import { errorMiddleware } from "./middlewares/errorMiddleware.js";
+import roleRoutes from "./routes/roleRoutes.js";
+
 
 const app = express();
 
@@ -52,6 +54,12 @@ app.use(
     "/api/v1/products",
     productRoutes
 );
+
+app.use(
+    "/api/v1/roles",
+    roleRoutes
+);
+
 /*
  * ------------------------------------------------------------
  * Error handling

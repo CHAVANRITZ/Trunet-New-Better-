@@ -1,13 +1,12 @@
 import crypto from "crypto";
 
 import User from "../models/User.js";
-import Role from "../models/Role.js";
 import RefreshToken from "../models/RefreshToken.js";
 import { env } from "../config/env.js";
 import { ApiError } from "../utils/ApiError.js";
-import {
-    comparePassword
-} from "../utils/password.js";
+
+import { comparePassword } from "../utils/password.js";
+
 import {
     durationToMilliseconds,
     generateAccessToken,
@@ -16,7 +15,7 @@ import {
 } from "../utils/token.js";
 
 /**
- * Maximum number of consecutive failed login attempts allowed
+ * Maximum number of consecutive failed login attempts
  * before the account is temporarily locked.
  */
 const MAX_LOGIN_ATTEMPTS = 5;
@@ -29,8 +28,7 @@ const LOCK_DURATION_MS = 15 * 60 * 1000;
 /**
  * Creates a SHA-256 hash of a refresh token.
  *
- * Only the hash is stored in MongoDB. The raw refresh token is
- * returned to the client but is never persisted.
+ * Only the hash is stored in MongoDB.
  *
  * @param {string} token - Raw refresh token.
  * @returns {string} SHA-256 token hash.
@@ -45,10 +43,6 @@ function hashRefreshToken(token) {
 /**
  * Calculates the expiration date for a refresh-token session.
  *
- * The expiration comes from REFRESH_TOKEN_EXPIRES_IN rather than
- * being hardcoded, ensuring the database session and JWT use the
- * same application configuration.
- *
  * @returns {Date} Refresh-token expiration timestamp.
  */
 function getRefreshTokenExpiry() {
@@ -60,8 +54,8 @@ function getRefreshTokenExpiry() {
 }
 
 /**
- * Removes authentication-sensitive fields before returning
- * user information to the client.
+ * Removes authentication-sensitive fields before
+ * returning user information to the client.
  *
  * @param {Object} user - Mongoose user document.
  * @returns {Object} Safe user representation.
@@ -77,7 +71,7 @@ function sanitizeUser(user) {
 }
 
 /**
- * Authenticates a user using username or email and password.
+ * Authenticates a user using username and password.
  *
  * Authentication rules handled here:
  * - User must exist.
@@ -90,49 +84,76 @@ function sanitizeUser(user) {
  * - Access and refresh tokens are issued.
  *
  * @param {Object} credentials - Login credentials.
- * @param {string} credentials.identifier - Username or email.
+ * @param {string} credentials.username - Username.
  * @param {string} credentials.password - Plain-text password.
  * @returns {Promise<Object>} Authentication result.
  */
-export async function login({ identifier, password }) {
-    const normalizedIdentifier = identifier.trim().toLowerCase();
+export async function login({ username, password }) {
+    /*
+     * Validate username.
+     */
+    if (!username || typeof username !== "string") {
+        throw new ApiError(
+            400,
+            "Username is required."
+        );
+    }
 
     /*
-     * Password is excluded from normal User queries, so it must
-     * be explicitly selected for authentication.
+     * Validate password.
+     */
+    if (!password || typeof password !== "string") {
+        throw new ApiError(
+            400,
+            "Password is required."
+        );
+    }
+
+    /*
+     * Normalize username before querying the database.
+     */
+    const normalizedUsername = username
+        .trim()
+        .toLowerCase();
+
+    /*
+     * Password is excluded from normal User queries,
+     * so explicitly select it for authentication.
      */
     const user = await User.findOne({
-        $or: [
-            { username: normalizedIdentifier },
-            { email: normalizedIdentifier }
-        ]
+        username: normalizedUsername
     })
         .select("+password")
         .populate("role");
 
     /*
-     * Do not reveal whether the username/email exists.
-     *
-     * Returning the same error for unknown users and incorrect
-     * passwords prevents user-enumeration attacks.
+     * Do not reveal whether the username exists.
      */
     if (!user) {
-        throw new ApiError(401, "Invalid credentials.");
+        throw new ApiError(
+            401,
+            "Invalid credentials."
+        );
     }
 
     /*
-     * Disabled accounts cannot authenticate even when the
-     * supplied password is correct.
+     * Disabled accounts cannot authenticate.
      */
     if (user.status !== "Enable") {
-        throw new ApiError(403, "User account is disabled.");
+        throw new ApiError(
+            403,
+            "User account is disabled."
+        );
     }
 
     /*
-     * Check whether a previous series of failed attempts has
-     * temporarily locked the account.
+     * Check whether a previous series of failed attempts
+     * has temporarily locked the account.
      */
-    if (user.lockUntil && user.lockUntil > new Date()) {
+    if (
+        user.lockUntil &&
+        user.lockUntil > new Date()
+    ) {
         throw new ApiError(
             423,
             "Account temporarily locked. Please try again later."
@@ -140,26 +161,39 @@ export async function login({ identifier, password }) {
     }
 
     /*
-     * A lock that has expired is cleared before continuing.
+     * Clear an expired account lock before authentication.
      */
-    if (user.lockUntil && user.lockUntil <= new Date()) {
+    if (
+        user.lockUntil &&
+        user.lockUntil <= new Date()
+    ) {
         user.lockUntil = null;
         user.loginAttempts = 0;
     }
 
+    /*
+     * Compare the supplied password with the stored hash.
+     */
     const passwordValid = await comparePassword(
         password,
         user.password
     );
 
+    /*
+     * Handle an incorrect password.
+     */
     if (!passwordValid) {
-        user.loginAttempts += 1;
+        user.loginAttempts =
+            (user.loginAttempts || 0) + 1;
 
         /*
-         * Lock the account after the configured number of
-         * consecutive failed attempts.
+         * Lock the account after the maximum number
+         * of consecutive failed attempts.
          */
-        if (user.loginAttempts >= MAX_LOGIN_ATTEMPTS) {
+        if (
+            user.loginAttempts >=
+            MAX_LOGIN_ATTEMPTS
+        ) {
             user.lockUntil = new Date(
                 Date.now() + LOCK_DURATION_MS
             );
@@ -168,15 +202,18 @@ export async function login({ identifier, password }) {
         await user.save();
 
         /*
-         * Keep the response intentionally generic so an attacker
-         * cannot distinguish valid accounts from invalid ones.
+         * Keep the response generic to avoid revealing
+         * authentication details.
          */
-        throw new ApiError(401, "Invalid credentials.");
+        throw new ApiError(
+            401,
+            "Invalid credentials."
+        );
     }
 
     /*
-     * Successful authentication clears the previous failed-login
-     * state and records when the account last authenticated.
+     * Successful authentication clears previous
+     * failed-login state and records the login time.
      */
     user.loginAttempts = 0;
     user.lockUntil = null;
@@ -185,8 +222,8 @@ export async function login({ identifier, password }) {
     await user.save();
 
     /*
-     * The access token contains only the identity information
-     * required by protected-request middleware.
+     * Generate the access token using the authenticated
+     * user's database identity and role reference.
      */
     const accessToken = generateAccessToken({
         sub: user._id.toString(),
@@ -194,18 +231,14 @@ export async function login({ identifier, password }) {
     });
 
     /*
-     * The refresh token identifies the user but does not contain
-     * unnecessary authorization or sensitive information.
+     * Generate a refresh token for the authentication session.
      */
     const refreshToken = generateRefreshToken({
         sub: user._id.toString()
     });
 
     /*
-     * Store only a hash of the refresh token.
-     *
-     * If the database is compromised, the attacker cannot directly
-     * use the stored value as a refresh credential.
+     * Store only the hash of the refresh token.
      */
     await RefreshToken.create({
         user: user._id,
@@ -221,21 +254,20 @@ export async function login({ identifier, password }) {
 }
 
 /**
- * Refreshes an authenticated session using a valid refresh token.
+ * Refreshes an authenticated session using a valid
+ * refresh token.
  *
- * Refresh-token rotation is used here:
- * - The supplied refresh token must exist in MongoDB.
- * - Revoked or expired sessions are rejected.
- * - The associated user and role must still be active.
- * - The old refresh token is revoked after successful validation.
- * - A new access token and refresh token are issued.
- * - Only the hash of the new refresh token is stored.
+ * Refresh-token rotation is used so that the previous
+ * refresh token cannot be reused after successful rotation.
  *
- * @param {string} token - Raw refresh token supplied by the client.
+ * @param {string} token - Raw refresh token.
  * @returns {Promise<Object>} New access and refresh tokens.
  */
 export async function refreshToken(token) {
-    if (!token || typeof token !== "string") {
+    if (
+        !token ||
+        typeof token !== "string"
+    ) {
         throw new ApiError(
             401,
             "Refresh token is required."
@@ -243,9 +275,7 @@ export async function refreshToken(token) {
     }
 
     /*
-     * Verify the JWT signature and expiration before consulting
-     * the database. This ensures the token was issued by Trunet
-     * and has not naturally expired.
+     * Verify JWT signature and expiration.
      */
     const decodedToken = verifyRefreshToken(token);
 
@@ -257,11 +287,15 @@ export async function refreshToken(token) {
     }
 
     /*
-     * The database stores only the SHA-256 hash of the refresh
-     * token, so hash the supplied token before looking it up.
+     * Hash the supplied refresh token because only
+     * the hash is stored in MongoDB.
      */
     const tokenHash = hashRefreshToken(token);
 
+    /*
+     * Find the corresponding persisted refresh session
+     * and load the current user and database-backed role.
+     */
     const storedToken = await RefreshToken.findOne({
         tokenHash
     }).populate({
@@ -272,8 +306,8 @@ export async function refreshToken(token) {
     });
 
     /*
-     * A valid JWT alone is not enough. The refresh-token session
-     * must also still exist in MongoDB.
+     * A valid JWT must also have a corresponding
+     * active database session.
      */
     if (!storedToken) {
         throw new ApiError(
@@ -283,8 +317,7 @@ export async function refreshToken(token) {
     }
 
     /*
-     * Prevent reuse of a refresh token that has already been
-     * rotated or explicitly revoked.
+     * Prevent reuse of an already revoked token.
      */
     if (storedToken.revokedAt) {
         throw new ApiError(
@@ -294,11 +327,11 @@ export async function refreshToken(token) {
     }
 
     /*
-     * Check the database expiration as an additional safeguard.
-     * MongoDB's TTL cleanup happens asynchronously, so an expired
-     * document may temporarily still exist.
+     * Check database expiration as an additional safeguard.
      */
-    if (storedToken.expiresAt <= new Date()) {
+    if (
+        storedToken.expiresAt <= new Date()
+    ) {
         throw new ApiError(
             401,
             "Refresh token has expired."
@@ -307,6 +340,9 @@ export async function refreshToken(token) {
 
     const user = storedToken.user;
 
+    /*
+     * The associated user must still exist.
+     */
     if (!user) {
         throw new ApiError(
             401,
@@ -315,8 +351,8 @@ export async function refreshToken(token) {
     }
 
     /*
-     * A user's account may have been disabled after the refresh
-     * token was originally issued. Check the current database state.
+     * The current account status is checked before
+     * issuing another access token.
      */
     if (user.status !== "Enable") {
         throw new ApiError(
@@ -325,6 +361,9 @@ export async function refreshToken(token) {
         );
     }
 
+    /*
+     * A user must still have a configured database-backed role.
+     */
     if (!user.role) {
         throw new ApiError(
             403,
@@ -333,21 +372,13 @@ export async function refreshToken(token) {
     }
 
     /*
-     * Disabled roles must immediately lose the ability to obtain
-     * new access tokens.
+     * Ensure the refresh token belongs to the same
+     * user identified by its JWT payload.
      */
-    if (user.role.status !== "Enable") {
-        throw new ApiError(
-            403,
-            "User role is disabled."
-        );
-    }
-
-    /*
-     * Ensure the refresh token belongs to the same user identified
-     * by its JWT payload.
-     */
-    if (user._id.toString() !== decodedToken.sub) {
+    if (
+        user._id.toString() !==
+        decodedToken.sub
+    ) {
         throw new ApiError(
             401,
             "Invalid refresh token."
@@ -355,16 +386,16 @@ export async function refreshToken(token) {
     }
 
     /*
-     * Rotate the refresh token.
-     *
-     * The old token becomes unusable immediately after this point.
+     * Revoke the old refresh token before issuing
+     * its replacement.
      */
     storedToken.revokedAt = new Date();
+
     await storedToken.save();
 
     /*
-     * Generate a new short-lived access token using the user's
-     * current role. This means role changes take effect on refresh.
+     * Generate a new access token using the user's
+     * current database-backed role.
      */
     const accessToken = generateAccessToken({
         sub: user._id.toString(),
@@ -372,8 +403,7 @@ export async function refreshToken(token) {
     });
 
     /*
-     * Generate a completely new refresh token rather than reusing
-     * the previous credential.
+     * Generate a completely new refresh token.
      */
     const newRefreshToken = generateRefreshToken({
         sub: user._id.toString()
@@ -395,20 +425,19 @@ export async function refreshToken(token) {
 }
 
 /**
- * Logs out the current refresh-token session.
+ * Logs out a refresh-token session.
  *
- * Logout does not require the access token because the refresh
- * token itself identifies the authentication session that should
- * be revoked.
+ * The refresh token itself identifies the session
+ * that should be revoked.
  *
- * The raw refresh token is never stored or returned. It is hashed
- * and matched against the persisted session before revocation.
- *
- * @param {string} token - Raw refresh token supplied by the client.
+ * @param {string} token - Raw refresh token.
  * @returns {Promise<void>}
  */
 export async function logout(token) {
-    if (!token || typeof token !== "string") {
+    if (
+        !token ||
+        typeof token !== "string"
+    ) {
         throw new ApiError(
             401,
             "Refresh token is required."
@@ -416,23 +445,24 @@ export async function logout(token) {
     }
 
     /*
-     * Verify that the token was issued by Trunet and has not
-     * naturally expired.
+     * Verify that the refresh token was issued by
+     * the application and has not naturally expired.
      */
     verifyRefreshToken(token);
 
     /*
-     * MongoDB stores only the SHA-256 hash of the refresh token.
+     * Hash the supplied token because MongoDB stores
+     * only the token hash.
      */
     const tokenHash = hashRefreshToken(token);
 
+    /*
+     * Find the persisted authentication session.
+     */
     const storedToken = await RefreshToken.findOne({
         tokenHash
     });
 
-    /*
-     * If the session does not exist, there is nothing to revoke.
-     */
     if (!storedToken) {
         throw new ApiError(
             401,
@@ -441,11 +471,11 @@ export async function logout(token) {
     }
 
     /*
-     * Make logout idempotent. If the token has already been
-     * revoked, it cannot be used for authentication again.
+     * Revoke the session if it has not already been revoked.
      */
     if (!storedToken.revokedAt) {
         storedToken.revokedAt = new Date();
+
         await storedToken.save();
     }
 }

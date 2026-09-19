@@ -1,24 +1,26 @@
-import Permission from "../models/Permission.js";
-
-import { SYSTEM_ROLES } from "../constants/roles.js";
 import { ApiError } from "../utils/ApiError.js";
+import { isSuperAdmin } from "../utils/checkPermissions.js";
 
 /**
- * Creates middleware that requires a specific permission.
+ * Checks whether the authenticated user has at least one
+ * of the requested permission actions.
  *
- * Authentication and authorization are intentionally separate:
+ * Permissions are read directly from the user's database-backed
+ * role. No permission list is maintained in application code.
  *
- * authMiddleware
- *     → identifies the current user
+ * Legacy permission structure:
  *
- * requirePermission()
- *     → determines whether that user may perform an action
+ * role.permissions[] = {
+ *     module,
+ *     permissions: []
+ * }
  *
- * @param {string} permissionAction - Permission action identifier.
- * @returns {Function} Express middleware.
+ * Example:
+ *
+ * authorize("create_user", "update_user")
  */
-export function requirePermission(permissionAction) {
-    return async function permissionMiddleware(req, res, next) {
+export function authorize(...requiredPermissions) {
+    return function authorizationMiddleware(req, res, next) {
         if (!req.user) {
             throw new ApiError(
                 401,
@@ -26,55 +28,125 @@ export function requirePermission(permissionAction) {
             );
         }
 
-        const role = req.user.role;
-
         /*
-         * Super Admin has full administrative access.
-         *
-         * This is the one special role-level rule in the system.
-         * Normal roles must rely on explicit permissions.
+         * Super-admin access is controlled by the database field
+         * role.isSuperAdmin. No role name is hardcoded here.
          */
-        if (role.name === SYSTEM_ROLES.SUPER_ADMIN) {
+        if (isSuperAdmin(req.user)) {
             return next();
         }
 
         /*
-         * Resolve the requested permission from the database.
-         *
-         * Permission definitions remain database records rather
-         * than being hardcoded into individual endpoints.
+         * If no permissions are supplied, there is nothing
+         * to validate.
          */
-        const permission = await Permission.findOne({
-            action: permissionAction,
-            status: "Enable"
-        });
-
-        if (!permission) {
-            throw new ApiError(
-                403,
-                "Required permission is not configured."
-            );
+        if (requiredPermissions.length === 0) {
+            return next();
         }
 
+        const permissionGroups = req.user.role?.permissions || [];
+
         /*
-         * Role.permissions contains Permission ObjectIds.
-         *
-         * Compare their string representations because MongoDB
-         * ObjectIds are objects rather than plain strings.
+         * Access is granted when the user's role contains
+         * at least one of the requested permission actions.
          */
-        const hasPermission = role.permissions.some(
-            (rolePermissionId) =>
-                rolePermissionId.toString() ===
-                permission._id.toString()
+        const hasPermission = requiredPermissions.some(
+            (requiredPermission) =>
+                permissionGroups.some(
+                    (group) =>
+                        group.permissions?.includes(requiredPermission)
+                )
         );
 
         if (!hasPermission) {
             throw new ApiError(
                 403,
-                "You do not have permission to perform this action."
+                "Access denied. Insufficient permissions."
             );
         }
 
         next();
     };
+}
+
+/**
+ * Checks whether the authenticated user has permission for
+ * a specific legacy module and action.
+ *
+ * Legacy permission structure:
+ *
+ * module → permissions[]
+ *
+ * Example:
+ *
+ * authorizeAccess("User", "create_user")
+ *
+ * Module matching is case-insensitive.
+ */
+export function authorizeAccess(moduleName, ...requiredActions) {
+    return function moduleAuthorizationMiddleware(req, res, next) {
+        if (!req.user) {
+            throw new ApiError(
+                401,
+                "Authentication required."
+            );
+        }
+
+        /*
+         * Super-admin access is determined from the database-backed
+         * role configuration.
+         */
+        if (isSuperAdmin(req.user)) {
+            return next();
+        }
+
+        const permissionGroups = req.user.role?.permissions || [];
+
+        /*
+         * Find the permission group belonging to the requested
+         * legacy module.
+         */
+        const modulePermissions = permissionGroups.find(
+            (group) =>
+                group.module?.toLowerCase() === moduleName?.toLowerCase()
+        );
+
+        if (!modulePermissions) {
+            throw new ApiError(
+                403,
+                `Access denied. No permissions for ${moduleName} module.`
+            );
+        }
+
+        /*
+         * The legacy authorization behaviour allows access when
+         * at least one requested action exists in the module.
+         */
+        const hasPermission = requiredActions.some(
+            (action) =>
+                modulePermissions.permissions?.includes(action)
+        );
+
+        if (!hasPermission) {
+            throw new ApiError(
+                403,
+                `Access denied. You need at least one of these permissions: ${requiredActions.join(
+                    ", "
+                )} for the ${moduleName} module.`
+            );
+        }
+
+        next();
+    };
+}
+
+/**
+ * Backward-compatible permission middleware.
+ *
+ * Existing routes may use requirePermission(module, action).
+ * It delegates directly to authorizeAccess() so there is
+ * only one permission-checking implementation.
+ */
+export function requirePermission(moduleName, permissionAction) {
+    return authorizeAccess(moduleName, permissionAction);
 }
