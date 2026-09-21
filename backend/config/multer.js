@@ -21,6 +21,23 @@ if (!fs.existsSync(productUploadDirectory)) {
 }
 
 /**
+ * Directory used for vendor logo uploads.
+ *
+ * Vendor logos are stored separately from product images so that
+ * each upload type has its own predictable storage location.
+ */
+const vendorUploadDirectory = path.join(
+    process.cwd(),
+    "uploads",
+    "vendors"
+);
+
+if (!fs.existsSync(vendorUploadDirectory)) {
+    fs.mkdirSync(vendorUploadDirectory, {
+        recursive: true
+    });
+}
+/**
  * Stores product images directly on disk.
  *
  * Keeping image files outside MongoDB prevents the database from
@@ -44,7 +61,28 @@ const productStorage = multer.diskStorage({
         callback(null, uniqueName);
     }
 });
+/**
+ * Stores vendor logos directly on disk.
+ *
+ * The database stores only the relative application path.
+ */
+const vendorStorage = multer.diskStorage({
+    destination: (_req, _file, callback) => {
+        callback(null, vendorUploadDirectory);
+    },
 
+    filename: (_req, file, callback) => {
+        const extension = path
+            .extname(file.originalname)
+            .toLowerCase();
+
+        const uniqueName = `vendor-${Date.now()}-${Math.round(
+            Math.random() * 1e9
+        )}${extension}`;
+
+        callback(null, uniqueName);
+    }
+});
 /**
  * Accepts only common image formats for product images.
  *
@@ -89,7 +127,47 @@ const imageFileFilter = (_req, file, callback) => {
 
     return callback(error);
 };
+/**
+ * Accepts common image formats for vendor logos.
+ *
+ * The MIME type and file extension are both checked to reject
+ * obviously invalid uploads.
+ */
+const vendorLogoFileFilter = (_req, file, callback) => {
+    const allowedMimeTypes = [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif"
+    ];
 
+    const allowedExtensions = [
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".gif"
+    ];
+
+    const extension = path
+        .extname(file.originalname)
+        .toLowerCase();
+
+    if (
+        allowedMimeTypes.includes(file.mimetype) &&
+        allowedExtensions.includes(extension)
+    ) {
+        return callback(null, true);
+    }
+
+    const error = new Error(
+        "Only JPG, JPEG, PNG, WEBP and GIF images are allowed."
+    );
+
+    error.statusCode = 400;
+
+    return callback(error);
+};
 /**
  * Multer configuration for product image uploads.
  *
@@ -103,7 +181,19 @@ const upload = multer({
         fileSize: 5 * 1024 * 1024
     }
 });
-
+/**
+ * Multer configuration for vendor logo uploads.
+ *
+ * Vendor logos use the same 5 MB image-size limit as product
+ * images but are stored in the vendor-specific directory.
+ */
+export const vendorLogoUpload = multer({
+    storage: vendorStorage,
+    fileFilter: vendorLogoFileFilter,
+    limits: {
+        fileSize: 5 * 1024 * 1024
+    }
+});
 /**
  * Validates uploaded CSV files before they reach the service layer.
  *
