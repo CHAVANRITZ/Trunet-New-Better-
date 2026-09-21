@@ -6,9 +6,10 @@ import authRoutes from "./routes/authRoutes.js";
 import healthRoutes from "./routes/healthRoutes.js";
 import productCategoryRoutes from "./routes/productCategoryRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
+import resellerRoutes from "./routes/resellerRoutes.js";
+import centerRoutes from "./routes/centerRoutes.js";
 import { errorMiddleware } from "./middlewares/errorMiddleware.js";
 import roleRoutes from "./routes/roleRoutes.js";
-
 
 const app = express();
 
@@ -45,6 +46,7 @@ app.use("/api", apiLimiter);
 
 app.use("/api/v1/health", healthRoutes);
 app.use("/api/v1/auth", authRoutes);
+
 app.use(
     "/api/v1/product-categories",
     productCategoryRoutes
@@ -59,6 +61,9 @@ app.use(
     "/api/v1/roles",
     roleRoutes
 );
+
+app.use("/api/v1/resellers", resellerRoutes);
+app.use("/api/v1/centers", centerRoutes);
 
 /*
  * ------------------------------------------------------------
