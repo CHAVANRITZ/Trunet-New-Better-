@@ -8,6 +8,7 @@ import productCategoryRoutes from "./routes/productCategoryRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
 import resellerRoutes from "./routes/resellerRoutes.js";
 import centerRoutes from "./routes/centerRoutes.js";
+import areaRoutes from "./routes/areaRoutes.js";
 import { errorMiddleware } from "./middlewares/errorMiddleware.js";
 import roleRoutes from "./routes/roleRoutes.js";
 
@@ -64,6 +65,7 @@ app.use(
 
 app.use("/api/v1/resellers", resellerRoutes);
 app.use("/api/v1/centers", centerRoutes);
+app.use("/api/v1/areas", areaRoutes);
 
 /*
  * ------------------------------------------------------------

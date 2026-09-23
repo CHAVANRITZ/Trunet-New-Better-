@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 
 import User from "../models/User.js";
+import Role from "../models/Role.js";
 import { env } from "../config/env.js";
 import { isSuperAdmin } from "../utils/checkPermissions.js";
 import { ApiError } from "../utils/ApiError.js";
@@ -59,15 +60,14 @@ export async function authMiddleware(req, res, next) {
         }
 
         /*
-         * Load the current user and the complete database-backed
-         * role. Permissions are intentionally read from the role
-         * document instead of being hardcoded in application code.
+         * Load the current user.
+         *
+         * The role is loaded separately using the raw MongoDB
+         * document so both legacy embedded permissions and
+         * ObjectId-based permissions are preserved exactly
+         * as stored in the database.
          */
-        const user = await User.findById(decodedToken.sub)
-    .populate({
-        path: "role",
-        select: "roleTitle permissions isSuperAdmin createdBy createdAt updatedAt"
-    });
+        const user = await User.findById(decodedToken.sub);
 
         if (!user) {
             throw new ApiError(
@@ -91,15 +91,33 @@ export async function authMiddleware(req, res, next) {
         }
 
         /*
+         * Read the raw role document.
+         *
+         * This is intentional because the current database may
+         * contain permissions as ObjectId references, while the
+         * legacy database stores embedded permission groups.
+         */
+        const role = await Role.collection.findOne({
+            _id: user.role
+        });
+
+        if (!role) {
+            throw new ApiError(
+                403,
+                "User role is not configured."
+            );
+        }
+
+        /*
          * Keep the authenticated user object available to all
          * downstream controllers and authorization middleware.
          */
         req.user = {
-    id: user._id.toString(),
-    role: user.role,
-    status: user.status,
-    fullUser: user
-};
+            id: user._id.toString(),
+            role,
+            status: user.status,
+            fullUser: user
+        };
 
         /*
          * Preserve the center ID when it exists in a token.
