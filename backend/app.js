@@ -11,9 +11,9 @@ import centerRoutes from "./routes/centerRoutes.js";
 import areaRoutes from "./routes/areaRoutes.js";
 import { errorMiddleware } from "./middlewares/errorMiddleware.js";
 import roleRoutes from "./routes/roleRoutes.js";
+import vendorRoutes from "./routes/vendorRoutes.js";
 
 const app = express();
-
 /*
  * ------------------------------------------------------------
  * Global middleware
@@ -56,6 +56,11 @@ app.use(
 app.use(
     "/api/v1/products",
     productRoutes
+);
+
+app.use(
+    "/api/v1/vendors",
+    vendorRoutes
 );
 
 app.use(

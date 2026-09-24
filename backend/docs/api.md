@@ -1810,3 +1810,341 @@ Tested
 Tested
 
 Reseller, Area, Main Warehouse, Search/Filter/Pagination
+# Vendors
+
+## POST `/vendors`
+
+Creates a new vendor.
+
+### Endpoint
+
+```http
+POST http://localhost:5000/api/v1/vendors
+```
+
+**Access:** Authenticated with `Settings -> manage_vendors` permission
+
+### Request
+
+Use `multipart/form-data` when uploading a vendor logo.
+
+| Field           | Required | Type   | Description                                |
+| --------------- | -------- | ------ | ------------------------------------------ |
+| `businessName`  | Yes      | String | Vendor business name                       |
+| `contactNumber` | Yes      | String | Vendor contact number                      |
+| `name`          | Yes      | String | Vendor contact/person name                 |
+| `mobile`        | No       | String | Indian mobile number                       |
+| `email`         | No       | String | Vendor email address; unique when provided |
+| `gstNumber`     | No       | String | GST number                                 |
+| `panNumber`     | No       | String | PAN number                                 |
+| `address1`      | No       | String | Primary address                            |
+| `address2`      | No       | String | Secondary address                          |
+| `city`          | No       | String | City                                       |
+| `state`         | No       | String | State                                      |
+| `logo`          | No       | File   | JPG, JPEG, PNG, WEBP or GIF; maximum 5 MB  |
+
+### Example
+
+```text
+businessName = ABC Electronics
+contactNumber = 02012345678
+name = Amit Sharma
+mobile = 9876543210
+email = vendor@example.com
+gstNumber = 27ABCDE1234F1Z5
+panNumber = ABCDE1234F
+address1 = Main Market
+address2 = Shop No. 12
+city = Pune
+state = Maharashtra
+logo = vendor-logo.png
+```
+
+### Successful Response
+
+**201 Created**
+
+```json
+{
+  "success": true,
+  "message": "Vendor created successfully.",
+  "data": {
+    "_id": "VENDOR_ID",
+    "businessName": "ABC Electronics",
+    "contactNumber": "02012345678",
+    "name": "Amit Sharma",
+    "mobile": "9876543210",
+    "email": "vendor@example.com",
+    "gstNumber": "27ABCDE1234F1Z5",
+    "panNumber": "ABCDE1234F",
+    "address1": "Main Market",
+    "address2": "Shop No. 12",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "logo": "uploads/vendors/vendor-IMAGE_FILE.png",
+    "createdAt": "2026-09-22T04:33:39.142Z",
+    "updatedAt": "2026-09-22T04:33:39.142Z"
+  }
+}
+```
+
+### Errors
+
+**400 Bad Request**
+
+Returned when vendor request validation fails.
+
+**409 Conflict**
+
+Returned when the supplied email address is already registered.
+
+---
+
+## GET `/vendors`
+
+Returns a paginated list of vendors with optional filtering and sorting.
+
+### Endpoint
+
+```http
+GET http://localhost:5000/api/v1/vendors
+```
+
+**Access:** Authenticated with `Settings -> manage_vendors` permission
+
+### Query Parameters
+
+| Parameter   | Required | Default     | Description                                                                       |
+| ----------- | -------- | ----------- | --------------------------------------------------------------------------------- |
+| `search`    | No       | G현           | Searches business name, name, email, contact number, mobile number and GST number |
+| `city`      | No       | G현           | Filters vendors by city                                                           |
+| `state`     | No       | G현           | Filters vendors by state                                                          |
+| `status`    | No       | G현           | Legacy filter supporting `Active` or `Inactive`                                   |
+| `hasGst`    | No       | G현           | `true` returns vendors with GST; `false` returns vendors without GST              |
+| `page`      | No       | `1`         | Page number                                                                       |
+| `limit`     | No       | `100`       | Number of records per page                                                        |
+| `sortBy`    | No       | `createdAt` | Field used for sorting                                                            |
+| `sortOrder` | No       | `desc`      | Sort direction: `asc` or `desc`                                                   |
+
+### Example
+
+```http
+GET http://localhost:5000/api/v1/vendors?search=electronics&city=Pune&hasGst=true&page=1&limit=10&sortBy=businessName&sortOrder=asc
+```
+
+### Successful Response
+
+**200 OK**
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "_id": "VENDOR_ID",
+      "businessName": "ABC Electronics",
+      "contactNumber": "02012345678",
+      "name": "Amit Sharma",
+      "mobile": "9876543210",
+      "email": "vendor@example.com",
+      "gstNumber": "27ABCDE1234F1Z5",
+      "panNumber": "ABCDE1234F",
+      "address1": "Main Market",
+      "address2": "Shop No. 12",
+      "city": "Pune",
+      "state": "Maharashtra",
+      "logo": "uploads/vendors/vendor-IMAGE_FILE.png",
+      "createdAt": "2026-09-22T04:33:39.142Z",
+      "updatedAt": "2026-09-22T04:33:39.142Z"
+    }
+  ],
+  "pagination": {
+    "currentPage": 1,
+    "totalPages": 1,
+    "totalVendors": 1,
+    "hasNextPage": false,
+    "hasPrevPage": false
+  }
+}
+```
+
+---
+
+## GET `/vendors/:id`
+
+Returns a vendor by its MongoDB ID.
+
+### Endpoint
+
+```http
+GET http://localhost:5000/api/v1/vendors/VENDOR_ID
+```
+
+**Access:** Authenticated with `Settings -> manage_vendors` permission
+
+### Successful Response
+
+**200 OK**
+
+```json
+{
+  "success": true,
+  "data": {
+    "_id": "VENDOR_ID",
+    "businessName": "ABC Electronics",
+    "contactNumber": "02012345678",
+    "name": "Amit Sharma",
+    "mobile": "9876543210",
+    "email": "vendor@example.com",
+    "gstNumber": "27ABCDE1234F1Z5",
+    "panNumber": "ABCDE1234F",
+    "address1": "Main Market",
+    "address2": "Shop No. 12",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "logo": "uploads/vendors/vendor-IMAGE_FILE.png",
+    "createdAt": "2026-09-22T04:33:39.142Z",
+    "updatedAt": "2026-09-22T04:33:39.142Z"
+  }
+}
+```
+
+### Errors
+
+**400 Bad Request**
+
+Returned when the supplied ID is invalid.
+
+```json
+{
+  "success": false,
+  "message": "Invalid data format"
+}
+```
+
+**404 Not Found**
+
+Returned when the vendor does not exist.
+
+```json
+{
+  "success": false,
+  "message": "Vendor not found."
+}
+```
+
+---
+
+## PUT `/vendors/:id`
+
+Updates an existing vendor.
+
+### Endpoint
+
+```http
+PUT http://localhost:5000/api/v1/vendors/VENDOR_ID
+```
+
+**Access:** Authenticated with `Settings -> manage_vendors` permission
+
+### Request
+
+Use `multipart/form-data` when uploading a new logo.
+
+All vendor fields are optional during an update.
+
+The accepted fields are the same as `POST /vendors`.
+
+If no new logo is supplied, the existing logo is preserved.
+
+If a new logo is supplied, the previous logo is removed after the database update succeeds.
+
+### Example
+
+```text
+businessName = ABC Electronics Updated
+contactNumber = 02012345679
+name = Amit Sharma
+mobile = 9876543211
+email = vendor@example.com
+city = Pune
+state = Maharashtra
+logo = updated-vendor-logo.png
+```
+
+### Successful Response
+
+**200 OK**
+
+```json
+{
+  "success": true,
+  "message": "Vendor updated successfully.",
+  "data": {
+    "_id": "VENDOR_ID",
+    "businessName": "ABC Electronics Updated",
+    "contactNumber": "02012345679",
+    "name": "Amit Sharma",
+    "mobile": "9876543211",
+    "email": "vendor@example.com",
+    "gstNumber": "27ABCDE1234F1Z5",
+    "panNumber": "ABCDE1234F",
+    "address1": "Main Market",
+    "address2": "Shop No. 12",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "logo": "uploads/vendors/vendor-NEW_IMAGE_FILE.png",
+    "createdAt": "2026-09-22T04:33:39.142Z",
+    "updatedAt": "2026-09-22T05:10:12.426Z"
+  }
+}
+```
+
+### Errors
+
+**400 Bad Request**
+
+Returned when the supplied ID or vendor data is invalid.
+
+**404 Not Found**
+
+Returned when the vendor does not exist.
+
+**409 Conflict**
+
+Returned when the updated email address is already registered.
+
+---
+
+## DELETE `/vendors/:id`
+
+Deletes an existing vendor and its associated logo file.
+
+### Endpoint
+
+```http
+DELETE http://localhost:5000/api/v1/vendors/VENDOR_ID
+```
+
+**Access:** Authenticated with `Settings -> manage_vendors` permission
+
+### Successful Response
+
+**200 OK**
+
+```json
+{
+  "success": true,
+  "message": "Vendor deleted successfully."
+}
+```
+
+### Errors
+
+**400 Bad Request**
+
+Returned when the supplied ID is invalid.
+
+**404 Not Found**
+
+Returned when the vendor does not exist.
