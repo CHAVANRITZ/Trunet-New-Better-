@@ -10,14 +10,13 @@ const centerSchema = new mongoose.Schema(
             },
         },
 
-        // Area is kept for legacy-data compatibility.
-        // It is intentionally not required yet because Area module
-        // has not been implemented.
         area: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Area",
-            required: false,
+            required: function () {
+                return this.centerType === "Center";
         },
+    },
 
         centerType: {
             type: String,
