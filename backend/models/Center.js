@@ -2,21 +2,34 @@ import mongoose from "mongoose";
 
 const centerSchema = new mongoose.Schema(
     {
-        reseller: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "Reseller",
-            required: function () {
-                return this.centerType === "Center";
-            },
-        },
-
-        area: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "Area",
-            required: function () {
-                return this.centerType === "Center";
-        },
+       reseller: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Reseller",
+    required: function () {
+        return this.centerType === "Center";
     },
+},
+
+area: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Area",
+    required: function () {
+        return this.centerType === "Center";
+    },
+},
+
+warehouse: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Warehouse",
+    required: true,
+},
+
+centerType: {
+    type: String,
+    required: [true, "Center type is required"],
+    enum: ["Center", "Outlet"],
+    default: "Center",
+},
 
         centerType: {
             type: String,

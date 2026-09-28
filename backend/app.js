@@ -12,6 +12,7 @@ import areaRoutes from "./routes/areaRoutes.js";
 import { errorMiddleware } from "./middlewares/errorMiddleware.js";
 import roleRoutes from "./routes/roleRoutes.js";
 import vendorRoutes from "./routes/vendorRoutes.js";
+import warehouseRoutes from "./routes/warehouseRoutes.js";
 
 const app = express();
 /*
@@ -71,6 +72,7 @@ app.use(
 app.use("/api/v1/resellers", resellerRoutes);
 app.use("/api/v1/centers", centerRoutes);
 app.use("/api/v1/areas", areaRoutes);
+app.use("/api/v1/warehouses", warehouseRoutes);
 
 /*
  * ------------------------------------------------------------
