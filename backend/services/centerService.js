@@ -63,6 +63,7 @@ export const createCenter = async (data) => {
     const {
         resellerId,
         areaId,
+        warehouse,
         centerType,
         centerName,
         centerCode,
@@ -154,12 +155,16 @@ export const createCenter = async (data) => {
         centerData.reseller = resellerId;
     }
 
-    if (areaId) {
-        centerData.area = areaId;
-    }
+ if (areaId) {
+    centerData.area = areaId;
+}
 
-    const center =
-        await Center.create(centerData);
+if (warehouse) {
+    centerData.warehouse = warehouse;
+}
+
+const center =
+    await Center.create(centerData);
 
     return Center.findById(center._id)
         .populate(

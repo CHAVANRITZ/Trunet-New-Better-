@@ -1,52 +1,28 @@
 import mongoose from "mongoose";
 
-const centerSchema = new mongoose.Schema(
+const warehouseSchema = new mongoose.Schema(
     {
-       reseller: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Reseller",
-    required: function () {
-        return this.centerType === "Center";
-    },
-},
-
-area: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Area",
-    required: function () {
-        return this.centerType === "Center";
-    },
-},
-
-warehouse: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Warehouse",
-    required: true,
-},
-
-centerType: {
-    type: String,
-    required: [true, "Center type is required"],
-    enum: ["Center", "Outlet"],
-    default: "Center",
-},
-
-        centerType: {
-            type: String,
-            required: [true, "Center type is required"],
-            enum: ["Center", "Outlet"],
-            default: "Center",
+        reseller: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Reseller",
+            required: true,
         },
 
-        centerName: {
+        area: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Area",
+            required: false,
+        },
+
+        warehouseName: {
             type: String,
-            required: [true, "Center name is required"],
+            required: [true, "Warehouse name is required"],
             trim: true,
         },
 
-        centerCode: {
+        warehouseCode: {
             type: String,
-            required: [true, "Center code is required"],
+            required: true,
             unique: true,
             sparse: true,
             uppercase: true,
@@ -113,4 +89,4 @@ centerType: {
     }
 );
 
-export default mongoose.model("Center", centerSchema);
+export default mongoose.model("Warehouse", warehouseSchema);
