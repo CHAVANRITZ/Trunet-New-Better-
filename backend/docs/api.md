@@ -2312,3 +2312,11 @@ Warehouse ID used during API testing:
 
 The Center-with-Warehouse create API was tested successfully with this
 Warehouse ID.
+
+### Get Login History
+
+Retrieves login history records.
+
+**Endpoint:**
+```http
+GET /api/v1/auth/login-history
