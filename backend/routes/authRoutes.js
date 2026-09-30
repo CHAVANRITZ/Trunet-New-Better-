@@ -7,6 +7,10 @@ import {
     logoutController
 } from "../controllers/authController.js";
 
+import {
+    getLoginHistory
+} from "../controllers/loginHistoryController.js";
+
 import { authMiddleware } from "../middlewares/authMiddleware.js";
 import { validationMiddleware } from "../middlewares/validationMiddleware.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -57,6 +61,17 @@ router.post(
 );
 
 /**
+ * @route   GET /api/v1/auth/login-history
+ * @desc    Get login history
+ * @access  Private
+ */
+router.get(
+    "/login-history",
+    asyncHandler(authMiddleware),
+    asyncHandler(getLoginHistory)
+);
+
+/**
  * @route   GET /api/v1/auth/me
  * @desc    Return the currently authenticated user's profile
  * @access  Private
@@ -66,4 +81,5 @@ router.get(
     asyncHandler(authMiddleware),
     asyncHandler(getCurrentUser)
 );
+
 export default router;
