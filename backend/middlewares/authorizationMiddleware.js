@@ -52,31 +52,38 @@ const normalizePermissions = async (rolePermissions = []) => {
         status: "Enable",
     }).select("module action");
 
-    const normalizedReferencedPermissions = permissions.reduce(
-        (groups, permission) => {
-            let group = groups.find(
-                (item) =>
-                    item.module.toLowerCase() ===
-                    permission.module.toLowerCase()
-            );
+    const normalizedReferencedPermissions =
+        permissions.reduce(
+            (groups, permission) => {
+                let group = groups.find(
+                    (item) =>
+                        item.module.toLowerCase() ===
+                        permission.module.toLowerCase()
+                );
 
-            if (!group) {
-                group = {
-                    module: permission.module,
-                    permissions: [],
-                };
+                if (!group) {
+                    group = {
+                        module: permission.module,
+                        permissions: [],
+                    };
 
-                groups.push(group);
-            }
+                    groups.push(group);
+                }
 
-            if (!group.permissions.includes(permission.action)) {
-                group.permissions.push(permission.action);
-            }
+                if (
+                    !group.permissions.includes(
+                        permission.action
+                    )
+                ) {
+                    group.permissions.push(
+                        permission.action
+                    );
+                }
 
-            return groups;
-        },
-        []
-    );
+                return groups;
+            },
+            []
+        );
 
     return [
         ...embeddedPermissions,
@@ -89,7 +96,11 @@ const normalizePermissions = async (rolePermissions = []) => {
  * one of the requested permission actions.
  */
 export function authorize(...requiredPermissions) {
-    return async function authorizationMiddleware(req, res, next) {
+    return async function authorizationMiddleware(
+        req,
+        res,
+        next
+    ) {
         try {
             if (!req.user) {
                 throw new ApiError(
@@ -106,22 +117,25 @@ export function authorize(...requiredPermissions) {
                 return next();
             }
 
-            const rolePermissions = await normalizePermissions(
-                req.user.role?.permissions || []
-            );
+            const rolePermissions =
+                await normalizePermissions(
+                    req.user.role?.permissions || []
+                );
 
-            const userPermissions = rolePermissions.flatMap(
-                (group) =>
-                    (group.permissions || []).map(
-                        (permission) =>
-                            `${group.module}:${permission}`
-                    )
-            );
+            const userPermissions =
+                rolePermissions.flatMap(
+                    (group) =>
+                        (group.permissions || []).map(
+                            (permission) =>
+                                `${group.module}:${permission}`
+                        )
+                );
 
-            const hasPermission = requiredPermissions.some(
-                (permission) =>
-                    userPermissions.includes(permission)
-            );
+            const hasPermission =
+                requiredPermissions.some(
+                    (permission) =>
+                        userPermissions.includes(permission)
+                );
 
             if (!hasPermission) {
                 throw new ApiError(
@@ -162,15 +176,17 @@ export function authorizeAccess(
                 return next();
             }
 
-            const rolePermissions = await normalizePermissions(
-                req.user.role?.permissions || []
-            );
+            const rolePermissions =
+                await normalizePermissions(
+                    req.user.role?.permissions || []
+                );
 
-            const modulePermissions = rolePermissions.find(
-                (group) =>
-                    group.module?.toLowerCase() ===
-                    moduleName?.toLowerCase()
-            );
+            const modulePermissions =
+                rolePermissions.find(
+                    (group) =>
+                        group.module?.toLowerCase() ===
+                        moduleName?.toLowerCase()
+                );
 
             if (!modulePermissions) {
                 throw new ApiError(
@@ -179,10 +195,13 @@ export function authorizeAccess(
                 );
             }
 
-            const hasPermission = requiredActions.some(
-                (action) =>
-                    modulePermissions.permissions?.includes(action)
-            );
+            const hasPermission =
+                requiredActions.some(
+                    (action) =>
+                        modulePermissions.permissions?.includes(
+                            action
+                        )
+                );
 
             if (!hasPermission) {
                 throw new ApiError(
@@ -201,9 +220,137 @@ export function authorizeAccess(
 }
 
 /**
+ * Builds a normalized authorization context for a module.
+ *
+ * This middleware does not grant or remove permissions.
+ * It only exposes the permissions already granted to the
+ * authenticated user's database role.
+ *
+ * The context is consumed by services that need to make
+ * business-level access decisions such as own-center versus
+ * all-center access.
+ */
+export function attachAuthorizationContext(moduleName) {
+    return async function authorizationContextMiddleware(
+        req,
+        res,
+        next
+    ) {
+        try {
+            if (!req.user) {
+                throw new ApiError(
+                    401,
+                    "Authentication required."
+                );
+            }
+
+            if (isSuperAdmin(req.user)) {
+                req.authorizationContext = {
+                    isSuperAdmin: true,
+                    module: moduleName,
+                    permissions: [],
+
+                    canManageAll: true,
+                    canManageOwn: true,
+                    canViewAll: true,
+                    canViewOwn: true,
+                    canDeleteAll: true,
+                    canDeleteOwn: true,
+                    canApprove: true,
+                    canIndentAll: true,
+                    canIndentOwn: true,
+                };
+
+                return next();
+            }
+
+            const rolePermissions =
+                await normalizePermissions(
+                    req.user.role?.permissions || []
+                );
+
+            const modulePermissions =
+                rolePermissions.find(
+                    (group) =>
+                        group.module?.toLowerCase() ===
+                        moduleName?.toLowerCase()
+                );
+
+            const permissions =
+                modulePermissions?.permissions || [];
+
+            /*
+             * Convert the database permissions into generic
+             * capability flags consumed by services.
+             *
+             * These flags do not create permissions. They only
+             * represent permissions already assigned to the user.
+             */
+            req.authorizationContext = {
+                isSuperAdmin: false,
+                module: moduleName,
+                permissions,
+
+                canManageAll:
+                    permissions.includes(
+                        "manage_stock_transfer_all_center"
+                    ),
+
+                canManageOwn:
+                    permissions.includes(
+                        "manage_stock_transfer_own_center"
+                    ),
+
+                canViewAll:
+                    permissions.includes(
+                        "stock_transfer_all_center"
+                    ),
+
+                canViewOwn:
+                    permissions.includes(
+                        "stock_transfer_own_center"
+                    ),
+
+                canDeleteAll:
+                    permissions.includes(
+                        "delete_transfer_all_center"
+                    ),
+
+                canDeleteOwn:
+                    permissions.includes(
+                        "delete_transfer_own_center"
+                    ),
+
+                canApprove:
+                    permissions.includes(
+                        "approval_transfer_center"
+                    ),
+
+                canIndentAll:
+                    permissions.includes(
+                        "indent_all_center"
+                    ),
+
+                canIndentOwn:
+                    permissions.includes(
+                        "indent_own_center"
+                    ),
+            };
+
+            next();
+        } catch (error) {
+            next(error);
+        }
+    };
+}
+
+/**
  * Backward-compatible permission middleware.
  */
-export function requirePermission(moduleName, permissionAction) {
+export function requirePermission(
+    moduleName,
+    permissionAction
+) {
     return authorizeAccess(
         moduleName,
         permissionAction

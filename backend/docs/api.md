@@ -53,7 +53,7 @@ Access: Public
 Request Body
 
 {
-  "refreshToken": "YOUR_REFRESH_TOKEN"
+"refreshToken": "YOUR_REFRESH_TOKEN"
 }
 
 Authentication â€” Logout
@@ -67,7 +67,7 @@ Access: Public
 Request Body
 
 {
-  "refreshToken": "YOUR_REFRESH_TOKEN"
+"refreshToken": "YOUR_REFRESH_TOKEN"
 }
 
 Product Categories
@@ -85,8 +85,8 @@ Access: Authenticated
 Request Body
 
 {
-  "productCategory": "Electronics",
-  "remark": "Electronic inventory items"
+"productCategory": "Electronics",
+"remark": "Electronic inventory items"
 }
 
 Successful Response
@@ -94,15 +94,15 @@ Successful Response
 201 Created
 
 {
-  "success": true,
-  "message": "Product category created successfully.",
-  "data": {
-    "_id": "CATEGORY_ID",
-    "productCategory": "Electronics",
-    "remark": "Electronic inventory items",
-    "createdAt": "2026-09-16T11:09:12.999Z",
-    "updatedAt": "2026-09-16T11:09:12.999Z"
-  }
+"success": true,
+"message": "Product category created successfully.",
+"data": {
+"\_id": "CATEGORY_ID",
+"productCategory": "Electronics",
+"remark": "Electronic inventory items",
+"createdAt": "2026-09-16T11:09:12.999Z",
+"updatedAt": "2026-09-16T11:09:12.999Z"
+}
 }
 
 Errors
@@ -184,24 +184,24 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Product categories retrieved successfully.",
-  "data": {
-    "categories": [
-      {
-        "_id": "CATEGORY_ID",
-        "productCategory": "Electronics",
-        "remark": "Electronic inventory items",
-        "createdAt": "2026-09-16T11:09:12.999Z",
-        "updatedAt": "2026-09-16T11:09:12.999Z"
-      }
-    ],
-    "pagination": {
-      "currentPage": 1,
-      "totalPages": 1,
-      "totalCategories": 1
-    }
-  }
+"success": true,
+"message": "Product categories retrieved successfully.",
+"data": {
+"categories": [
+{
+"_id": "CATEGORY_ID",
+"productCategory": "Electronics",
+"remark": "Electronic inventory items",
+"createdAt": "2026-09-16T11:09:12.999Z",
+"updatedAt": "2026-09-16T11:09:12.999Z"
+}
+],
+"pagination": {
+"currentPage": 1,
+"totalPages": 1,
+"totalCategories": 1
+}
+}
 }
 
 GET /product-categories/:id
@@ -219,15 +219,15 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Product category retrieved successfully.",
-  "data": {
-    "_id": "CATEGORY_ID",
-    "productCategory": "Electronics",
-    "remark": "Electronic inventory items",
-    "createdAt": "2026-09-16T11:09:12.999Z",
-    "updatedAt": "2026-09-16T11:09:12.999Z"
-  }
+"success": true,
+"message": "Product category retrieved successfully.",
+"data": {
+"\_id": "CATEGORY_ID",
+"productCategory": "Electronics",
+"remark": "Electronic inventory items",
+"createdAt": "2026-09-16T11:09:12.999Z",
+"updatedAt": "2026-09-16T11:09:12.999Z"
+}
 }
 
 Errors
@@ -253,8 +253,8 @@ Access: Authenticated
 Request Body
 
 {
-  "productCategory": "Updated Electronics",
-  "remark": "Updated category description"
+"productCategory": "Updated Electronics",
+"remark": "Updated category description"
 }
 
 Successful Response
@@ -262,15 +262,15 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Product category updated successfully.",
-  "data": {
-    "_id": "CATEGORY_ID",
-    "productCategory": "Updated Electronics",
-    "remark": "Updated category description",
-    "createdAt": "2026-09-16T11:09:12.999Z",
-    "updatedAt": "2026-09-16T11:56:54.426Z"
-  }
+"success": true,
+"message": "Product category updated successfully.",
+"data": {
+"\_id": "CATEGORY_ID",
+"productCategory": "Updated Electronics",
+"remark": "Updated category description",
+"createdAt": "2026-09-16T11:09:12.999Z",
+"updatedAt": "2026-09-16T11:56:54.426Z"
+}
 }
 
 Errors
@@ -302,15 +302,15 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Product category deleted successfully.",
-  "data": {
-    "_id": "CATEGORY_ID",
-    "productCategory": "Electronics",
-    "remark": "Electronic inventory items",
-    "createdAt": "2026-09-16T11:09:12.999Z",
-    "updatedAt": "2026-09-16T11:56:54.426Z"
-  }
+"success": true,
+"message": "Product category deleted successfully.",
+"data": {
+"\_id": "CATEGORY_ID",
+"productCategory": "Electronics",
+"remark": "Electronic inventory items",
+"createdAt": "2026-09-16T11:09:12.999Z",
+"updatedAt": "2026-09-16T11:56:54.426Z"
+}
 }
 
 Errors
@@ -481,31 +481,31 @@ Successful Response
 201 Created
 
 {
-  "success": true,
-  "message": "Product created successfully.",
-  "data": {
-    "_id": "PRODUCT_ID",
-    "productCategory": {
-      "_id": "CATEGORY_ID",
-      "productCategory": "Electronics",
-      "remark": "Electronic inventory items"
-    },
-    "productTitle": "WiFi Router",
-    "productCode": "ROUTER001",
-    "productPrice": 2500,
-    "salePrice": 2100,
-    "hsnCode": "85176290",
-    "productImage": "uploads/products/product-IMAGE_FILE.png",
-    "productWeight": "0.8kg",
-    "productBarcode": "123456789880123",
-    "status": "Enable",
-    "description": "Wireless networking router",
-    "trackSerialNumber": "Yes",
-    "repairable": "Yes",
-    "replaceable": "Yes",
-    "createdAt": "2026-09-18T04:33:39.142Z",
-    "updatedAt": "2026-09-18T04:33:39.142Z"
-  }
+"success": true,
+"message": "Product created successfully.",
+"data": {
+"\_id": "PRODUCT_ID",
+"productCategory": {
+"\_id": "CATEGORY_ID",
+"productCategory": "Electronics",
+"remark": "Electronic inventory items"
+},
+"productTitle": "WiFi Router",
+"productCode": "ROUTER001",
+"productPrice": 2500,
+"salePrice": 2100,
+"hsnCode": "85176290",
+"productImage": "uploads/products/product-IMAGE_FILE.png",
+"productWeight": "0.8kg",
+"productBarcode": "123456789880123",
+"status": "Enable",
+"description": "Wireless networking router",
+"trackSerialNumber": "Yes",
+"repairable": "Yes",
+"replaceable": "Yes",
+"createdAt": "2026-09-18T04:33:39.142Z",
+"updatedAt": "2026-09-18T04:33:39.142Z"
+}
 }
 
 Errors
@@ -647,42 +647,42 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Products retrieved successfully.",
-  "data": {
-    "products": [
-      {
-        "_id": "PRODUCT_ID",
-        "productCategory": {
-          "_id": "CATEGORY_ID",
-          "productCategory": "Electronics",
-          "remark": "Electronic inventory items"
-        },
-        "productTitle": "WiFi Router",
-        "productCode": "ROUTER001",
-        "productPrice": 2500,
-        "salePrice": 2100,
-        "hsnCode": "85176290",
-        "productImage": "uploads/products/product-IMAGE_FILE.png",
-        "productWeight": "0.8kg",
-        "productBarcode": "123456789880123",
-        "status": "Enable",
-        "description": "Wireless networking router",
-        "trackSerialNumber": "Yes",
-        "repairable": "Yes",
-        "replaceable": "Yes",
-        "createdAt": "2026-09-18T04:33:39.142Z",
-        "updatedAt": "2026-09-18T04:33:39.142Z"
-      }
-    ],
-    "pagination": {
-      "currentPage": 1,
-      "totalPages": 1,
-      "totalProducts": 1,
-      "hasNextPage": false,
-      "hasPrevPage": false
-    }
-  }
+"success": true,
+"message": "Products retrieved successfully.",
+"data": {
+"products": [
+{
+"_id": "PRODUCT_ID",
+"productCategory": {
+"_id": "CATEGORY_ID",
+"productCategory": "Electronics",
+"remark": "Electronic inventory items"
+},
+"productTitle": "WiFi Router",
+"productCode": "ROUTER001",
+"productPrice": 2500,
+"salePrice": 2100,
+"hsnCode": "85176290",
+"productImage": "uploads/products/product-IMAGE_FILE.png",
+"productWeight": "0.8kg",
+"productBarcode": "123456789880123",
+"status": "Enable",
+"description": "Wireless networking router",
+"trackSerialNumber": "Yes",
+"repairable": "Yes",
+"replaceable": "Yes",
+"createdAt": "2026-09-18T04:33:39.142Z",
+"updatedAt": "2026-09-18T04:33:39.142Z"
+}
+],
+"pagination": {
+"currentPage": 1,
+"totalPages": 1,
+"totalProducts": 1,
+"hasNextPage": false,
+"hasPrevPage": false
+}
+}
 }
 
 GET /products/all
@@ -730,33 +730,33 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Products retrieved successfully.",
-  "data": [
-    {
-      "_id": "PRODUCT_ID",
-      "productCategory": {
-        "_id": "CATEGORY_ID",
-        "productCategory": "Electronics",
-        "remark": "Electronic inventory items"
-      },
-      "productTitle": "WiFi Router",
-      "productCode": "ROUTER001",
-      "productPrice": 2500,
-      "salePrice": 2100,
-      "hsnCode": "85176290",
-      "productImage": "",
-      "productWeight": "0.8kg",
-      "productBarcode": "123456789880123",
-      "status": "Enable",
-      "description": "Wireless networking router",
-      "trackSerialNumber": "Yes",
-      "repairable": "Yes",
-      "replaceable": "Yes",
-      "createdAt": "2026-09-18T04:33:39.142Z",
-      "updatedAt": "2026-09-18T04:33:39.142Z"
-    }
-  ]
+"success": true,
+"message": "Products retrieved successfully.",
+"data": [
+{
+"_id": "PRODUCT_ID",
+"productCategory": {
+"_id": "CATEGORY_ID",
+"productCategory": "Electronics",
+"remark": "Electronic inventory items"
+},
+"productTitle": "WiFi Router",
+"productCode": "ROUTER001",
+"productPrice": 2500,
+"salePrice": 2100,
+"hsnCode": "85176290",
+"productImage": "",
+"productWeight": "0.8kg",
+"productBarcode": "123456789880123",
+"status": "Enable",
+"description": "Wireless networking router",
+"trackSerialNumber": "Yes",
+"repairable": "Yes",
+"replaceable": "Yes",
+"createdAt": "2026-09-18T04:33:39.142Z",
+"updatedAt": "2026-09-18T04:33:39.142Z"
+}
+]
 }
 
 GET /products/:id
@@ -774,31 +774,31 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Product retrieved successfully.",
-  "data": {
-    "_id": "PRODUCT_ID",
-    "productCategory": {
-      "_id": "CATEGORY_ID",
-      "productCategory": "Electronics",
-      "remark": "Electronic inventory items"
-    },
-    "productTitle": "WiFi Router",
-    "productCode": "ROUTER001",
-    "productPrice": 2500,
-    "salePrice": 2100,
-    "hsnCode": "85176290",
-    "productImage": "",
-    "productWeight": "0.8kg",
-    "productBarcode": "123456789880123",
-    "status": "Enable",
-    "description": "Wireless networking router",
-    "trackSerialNumber": "Yes",
-    "repairable": "Yes",
-    "replaceable": "Yes",
-    "createdAt": "2026-09-18T04:33:39.142Z",
-    "updatedAt": "2026-09-18T04:33:39.142Z"
-  }
+"success": true,
+"message": "Product retrieved successfully.",
+"data": {
+"\_id": "PRODUCT_ID",
+"productCategory": {
+"\_id": "CATEGORY_ID",
+"productCategory": "Electronics",
+"remark": "Electronic inventory items"
+},
+"productTitle": "WiFi Router",
+"productCode": "ROUTER001",
+"productPrice": 2500,
+"salePrice": 2100,
+"hsnCode": "85176290",
+"productImage": "",
+"productWeight": "0.8kg",
+"productBarcode": "123456789880123",
+"status": "Enable",
+"description": "Wireless networking router",
+"trackSerialNumber": "Yes",
+"repairable": "Yes",
+"replaceable": "Yes",
+"createdAt": "2026-09-18T04:33:39.142Z",
+"updatedAt": "2026-09-18T04:33:39.142Z"
+}
 }
 
 Errors
@@ -841,14 +841,14 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Product updated successfully.",
-  "data": {
-    "_id": "PRODUCT_ID",
-    "productTitle": "Updated WiFi Router",
-    "salePrice": 2100,
-    "description": "Updated wireless networking router"
-  }
+"success": true,
+"message": "Product updated successfully.",
+"data": {
+"\_id": "PRODUCT_ID",
+"productTitle": "Updated WiFi Router",
+"salePrice": 2100,
+"description": "Updated wireless networking router"
+}
 }
 
 Errors
@@ -880,8 +880,8 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Product deleted successfully."
+"success": true,
+"message": "Product deleted successfully."
 }
 
 Errors
@@ -994,26 +994,26 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Bulk import completed. Successful: 2, Failed: 1.",
-  "data": {
-    "total": 3,
-    "successful": 2,
-    "failed": 1,
-    "errors": [
-      {
-        "row": 3,
-        "data": {
-          "productCategory": "Electronics",
-          "productTitle": "Duplicate Router",
-          "productCode": "ROUTER001"
-        },
-        "errors": [
-          "Product code already exists."
-        ]
-      }
-    ]
-  }
+"success": true,
+"message": "Bulk import completed. Successful: 2, Failed: 1.",
+"data": {
+"total": 3,
+"successful": 2,
+"failed": 1,
+"errors": [
+{
+"row": 3,
+"data": {
+"productCategory": "Electronics",
+"productTitle": "Duplicate Router",
+"productCode": "ROUTER001"
+},
+"errors": [
+"Product code already exists."
+]
+}
+]
+}
 }
 
 Errors
@@ -1051,19 +1051,19 @@ Access: Authenticated
 Request Body
 
 {
-  "resellerId": "RESELLER_ID",
-  "areaId": "AREA_ID",
-  "centerType": "Outlet",
-  "centerName": "Test Center",
-  "centerCode": "TC001",
-  "email": "testcenter@gmail.com",
-  "mobile": "9876543210",
-  "status": "Enable",
-  "addressLine1": "Test Address 1",
-  "addressLine2": "Test Address 2",
-  "city": "Pune",
-  "state": "Maharashtra",
-  "stockVerified": "Yes"
+"resellerId": "RESELLER_ID",
+"areaId": "AREA_ID",
+"centerType": "Outlet",
+"centerName": "Test Center",
+"centerCode": "TC001",
+"email": "testcenter@gmail.com",
+"mobile": "9876543210",
+"status": "Enable",
+"addressLine1": "Test Address 1",
+"addressLine2": "Test Address 2",
+"city": "Pune",
+"state": "Maharashtra",
+"stockVerified": "Yes"
 }
 
 Successful Response
@@ -1071,26 +1071,26 @@ Successful Response
 201 Created
 
 {
-  "success": true,
-  "message": "Center created successfully",
-  "data": {
-    "_id": "CENTER_ID",
-    "reseller": "RESELLER_ID",
-    "area": "AREA_ID",
-    "centerType": "Outlet",
-    "centerName": "Test Center",
-    "centerCode": "TC001",
-    "email": "testcenter@gmail.com",
-    "mobile": "9876543210",
-    "status": "Enable",
-    "addressLine1": "Test Address 1",
-    "addressLine2": "Test Address 2",
-    "city": "Pune",
-    "state": "Maharashtra",
-    "stockVerified": "Yes",
-    "createdAt": "TIMESTAMP",
-    "updatedAt": "TIMESTAMP"
-  }
+"success": true,
+"message": "Center created successfully",
+"data": {
+"\_id": "CENTER_ID",
+"reseller": "RESELLER_ID",
+"area": "AREA_ID",
+"centerType": "Outlet",
+"centerName": "Test Center",
+"centerCode": "TC001",
+"email": "testcenter@gmail.com",
+"mobile": "9876543210",
+"status": "Enable",
+"addressLine1": "Test Address 1",
+"addressLine2": "Test Address 2",
+"city": "Pune",
+"state": "Maharashtra",
+"stockVerified": "Yes",
+"createdAt": "TIMESTAMP",
+"updatedAt": "TIMESTAMP"
+}
 }
 
 Errors
@@ -1208,16 +1208,16 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Centers retrieved successfully",
-  "data": [],
-  "pagination": {
-    "currentPage": 1,
-    "totalPages": 0,
-    "totalItems": 0,
-    "itemsPerPage": 100,
-    "hasNextPage": false
-  }
+"success": true,
+"message": "Centers retrieved successfully",
+"data": [],
+"pagination": {
+"currentPage": 1,
+"totalPages": 0,
+"totalItems": 0,
+"itemsPerPage": 100,
+"hasNextPage": false
+}
 }
 
 GET /centers/:id
@@ -1235,26 +1235,26 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Center retrieved successfully",
-  "data": {
-    "_id": "CENTER_ID",
-    "reseller": "RESELLER_ID",
-    "area": "AREA_ID",
-    "centerType": "Outlet",
-    "centerName": "Test Center",
-    "centerCode": "TC001",
-    "email": "testcenter@gmail.com",
-    "mobile": "9876543210",
-    "status": "Enable",
-    "addressLine1": "Test Address 1",
-    "addressLine2": "Test Address 2",
-    "city": "Pune",
-    "state": "Maharashtra",
-    "stockVerified": "Yes",
-    "createdAt": "TIMESTAMP",
-    "updatedAt": "TIMESTAMP"
-  }
+"success": true,
+"message": "Center retrieved successfully",
+"data": {
+"\_id": "CENTER_ID",
+"reseller": "RESELLER_ID",
+"area": "AREA_ID",
+"centerType": "Outlet",
+"centerName": "Test Center",
+"centerCode": "TC001",
+"email": "testcenter@gmail.com",
+"mobile": "9876543210",
+"status": "Enable",
+"addressLine1": "Test Address 1",
+"addressLine2": "Test Address 2",
+"city": "Pune",
+"state": "Maharashtra",
+"stockVerified": "Yes",
+"createdAt": "TIMESTAMP",
+"updatedAt": "TIMESTAMP"
+}
 }
 
 Errors
@@ -1280,19 +1280,19 @@ Access: Authenticated
 Request Body
 
 {
-  "resellerId": "RESELLER_ID",
-  "areaId": "AREA_ID",
-  "centerType": "Outlet",
-  "centerName": "Updated Test Center",
-  "centerCode": "TC001UPDATED",
-  "email": "updated@example.com",
-  "mobile": "9123456789",
-  "status": "Disable",
-  "addressLine1": "Updated Address 1",
-  "addressLine2": "Updated Address 2",
-  "city": "Mumbai",
-  "state": "Maharashtra",
-  "stockVerified": "No"
+"resellerId": "RESELLER_ID",
+"areaId": "AREA_ID",
+"centerType": "Outlet",
+"centerName": "Updated Test Center",
+"centerCode": "TC001UPDATED",
+"email": "updated@example.com",
+"mobile": "9123456789",
+"status": "Disable",
+"addressLine1": "Updated Address 1",
+"addressLine2": "Updated Address 2",
+"city": "Mumbai",
+"state": "Maharashtra",
+"stockVerified": "No"
 }
 
 Successful Response
@@ -1300,26 +1300,26 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Center updated successfully",
-  "data": {
-    "_id": "CENTER_ID",
-    "reseller": "RESELLER_ID",
-    "area": "AREA_ID",
-    "centerType": "Outlet",
-    "centerName": "Updated Test Center",
-    "centerCode": "TC001UPDATED",
-    "email": "updated@example.com",
-    "mobile": "9123456789",
-    "status": "Disable",
-    "addressLine1": "Updated Address 1",
-    "addressLine2": "Updated Address 2",
-    "city": "Mumbai",
-    "state": "Maharashtra",
-    "stockVerified": "No",
-    "createdAt": "TIMESTAMP",
-    "updatedAt": "TIMESTAMP"
-  }
+"success": true,
+"message": "Center updated successfully",
+"data": {
+"\_id": "CENTER_ID",
+"reseller": "RESELLER_ID",
+"area": "AREA_ID",
+"centerType": "Outlet",
+"centerName": "Updated Test Center",
+"centerCode": "TC001UPDATED",
+"email": "updated@example.com",
+"mobile": "9123456789",
+"status": "Disable",
+"addressLine1": "Updated Address 1",
+"addressLine2": "Updated Address 2",
+"city": "Mumbai",
+"state": "Maharashtra",
+"stockVerified": "No",
+"createdAt": "TIMESTAMP",
+"updatedAt": "TIMESTAMP"
+}
 }
 
 Errors
@@ -1347,8 +1347,8 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Center deleted successfully"
+"success": true,
+"message": "Center deleted successfully"
 }
 
 Errors
@@ -1376,9 +1376,9 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Centers retrieved successfully",
-  "data": []
+"success": true,
+"message": "Centers retrieved successfully",
+"data": []
 }
 
 GET /centers/resellers/center
@@ -1396,9 +1396,9 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Centers retrieved successfully",
-  "data": []
+"success": true,
+"message": "Centers retrieved successfully",
+"data": []
 }
 
 GET /centers/area/:areaId
@@ -1416,9 +1416,9 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Centers retrieved successfully",
-  "data": []
+"success": true,
+"message": "Centers retrieved successfully",
+"data": []
 }
 
 GET /centers/main-warehouse
@@ -1436,9 +1436,9 @@ Successful Response
 200 OK
 
 {
-  "success": true,
-  "message": "Main warehouse centers retrieved successfully",
-  "data": []
+"success": true,
+"message": "Main warehouse centers retrieved successfully",
+"data": []
 }
 
 Center API Test Coverage
@@ -1511,7 +1511,7 @@ Tested
 
 Center fields checked
 
-_id
+\_id
 reseller
 area
 centerType
@@ -1583,8 +1583,8 @@ POST /areas
 Request Body
 
 {
-  "resellerId": "<resellerId>",
-  "areaName": "Test Area"
+"resellerId": "<resellerId>",
+"areaName": "Test Area"
 }
 
 API Test
@@ -1625,17 +1625,34 @@ Status: Tested successfully.
 
 Center APIs
 
+Base URL: http://localhost:5000/api/v1
+
 1. Create Center
 
 POST /centers
+
+Endpoint
+
+POST http://localhost:5000/api/v1/centers
 
 API Test
 
 Status: Tested successfully.
 
+Center can be created:
+
+- Without a Warehouse ID
+- With a Warehouse ID
+
+Multiple Centers can reference the same Warehouse.
+
 2. Get All Centers
 
 GET /centers
+
+Endpoint
+
+GET http://localhost:5000/api/v1/centers
 
 Tested Query Parameters
 
@@ -1665,6 +1682,10 @@ Status: Tested successfully.
 
 GET /centers/:id
 
+Endpoint
+
+GET http://localhost:5000/api/v1/centers/CENTER_ID
+
 API Test
 
 Status: Tested successfully.
@@ -1672,6 +1693,10 @@ Status: Tested successfully.
 4. Update Center
 
 PUT /centers/:id
+
+Endpoint
+
+PUT http://localhost:5000/api/v1/centers/CENTER_ID
 
 API Test
 
@@ -1681,6 +1706,10 @@ Status: Tested successfully.
 
 DELETE /centers/:id
 
+Endpoint
+
+DELETE http://localhost:5000/api/v1/centers/CENTER_ID
+
 API Test
 
 Status: Tested successfully.
@@ -1688,6 +1717,10 @@ Status: Tested successfully.
 6. Get Centers By Reseller
 
 GET /centers/reseller/:resellerId
+
+Endpoint
+
+GET http://localhost:5000/api/v1/centers/reseller/RESELLER_ID
 
 API Test
 
@@ -1697,6 +1730,10 @@ Status: Tested successfully.
 
 GET /centers/resellers/center
 
+Endpoint
+
+GET http://localhost:5000/api/v1/centers/resellers/center
+
 API Test
 
 Status: Tested successfully.
@@ -1705,13 +1742,9 @@ Status: Tested successfully.
 
 GET /centers/area/:areaId
 
-API Test
+Endpoint
 
-Status: Tested successfully.
-
-9. Get Main Warehouse Centers
-
-GET /centers/main-warehouse
+GET http://localhost:5000/api/v1/centers/area/AREA_ID
 
 API Test
 
@@ -1719,11 +1752,13 @@ Status: Tested successfully.
 
 Center Fields Verified During Testing
 
-_id
+\_id
 
 reseller
 
 area
+
+warehouse
 
 centerType
 
@@ -1752,6 +1787,10 @@ createdAt
 updatedAt
 
 Center create/update requests use resellerId and areaId, which map to the stored reseller and area relationships.
+
+The warehouse field is optional. A Center can be created without a Warehouse ID or with a Warehouse ID.
+
+Multiple Centers can reference the same Warehouse.
 
 API Test Coverage
 
@@ -1809,7 +1848,8 @@ Tested
 
 Tested
 
-Reseller, Area, Main Warehouse, Search/Filter/Pagination
+Reseller, Area, Warehouse, Search/Filter/Pagination
+
 # Vendors
 
 ## POST `/vendors`
@@ -1916,11 +1956,11 @@ GET http://localhost:5000/api/v1/vendors
 
 | Parameter   | Required | Default     | Description                                                                       |
 | ----------- | -------- | ----------- | --------------------------------------------------------------------------------- |
-| `search`    | No       | GÇö           | Searches business name, name, email, contact number, mobile number and GST number |
-| `city`      | No       | GÇö           | Filters vendors by city                                                           |
-| `state`     | No       | GÇö           | Filters vendors by state                                                          |
-| `status`    | No       | GÇö           | Legacy filter supporting `Active` or `Inactive`                                   |
-| `hasGst`    | No       | GÇö           | `true` returns vendors with GST; `false` returns vendors without GST              |
+| `search`    | No       | Gï¿½ï¿½         | Searches business name, name, email, contact number, mobile number and GST number |
+| `city`      | No       | Gï¿½ï¿½         | Filters vendors by city                                                           |
+| `state`     | No       | Gï¿½ï¿½         | Filters vendors by state                                                          |
+| `status`    | No       | Gï¿½ï¿½         | Legacy filter supporting `Active` or `Inactive`                                   |
+| `hasGst`    | No       | Gï¿½ï¿½         | `true` returns vendors with GST; `false` returns vendors without GST              |
 | `page`      | No       | `1`         | Page number                                                                       |
 | `limit`     | No       | `100`       | Number of records per page                                                        |
 | `sortBy`    | No       | `createdAt` | Field used for sorting                                                            |
@@ -2148,3 +2188,127 @@ Returned when the supplied ID is invalid.
 **404 Not Found**
 
 Returned when the vendor does not exist.
+
+Warehouse APIs
+
+Base URL: http://localhost:5000/api/v1
+
+Warehouse management uses the existing Center permission module.
+
+Permission Module
+
+Center
+
+Create / Update / Delete: manage_all_center
+
+Read: view_all_center
+
+Create Warehouse
+
+POST /warehouses
+
+Request Body
+
+{ "resellerId": "RESELLER_ID",
+"areaId": "AREA_ID",
+"warehouseName": "TestWarehouse",
+"warehouseCode": "WH-001",
+"email": "warehouse@test.com",
+"mobile": "9876543210",
+"status": "Enable",
+"addressLine1": "TestAddress",
+"addressLine2": "",
+"city": "Nashik",
+"state": "Maharashtra",
+"stockVerified": "" }
+
+API Test
+
+Status: Tested successfully.
+
+Get All Warehouses
+
+GET /warehouses
+
+API Test
+
+Status: Tested successfully.
+
+Get Warehouse By ID
+
+GET /warehouses/Id:
+
+API Test
+
+Status: Tested successfully.
+
+Update Warehouse
+
+PUT /warehouses/Id:
+
+API Test
+
+Status: Tested successfully.
+
+Delete Warehouse
+
+DELETE /warehouses/Id:
+
+API Test
+
+Status: Tested successfully.
+
+Warehouse Fields Tested
+
+reseller
+
+area
+
+warehouseName
+
+warehouseCode
+
+email
+
+mobile
+
+status
+
+addressLine1
+
+addressLine2
+
+city
+
+state
+
+stockVerified
+
+createdAt
+
+updatedAt
+
+Center-Warehouse Relationship
+
+The Center API supports an optional warehouse field.
+
+A Center can be created without a Warehouse ID.
+
+A Center can also be created with a Warehouse ID.
+
+Multiple Centers can reference the same Warehouse.
+
+Example:
+
+Warehouse
+â”œâ”€â”€ Center 1
+â”œâ”€â”€ Center 2
+â”œâ”€â”€ Center 3
+â””â”€â”€ Center 4
+
+Warehouse ID used during API testing:
+
+6aba30402aa35bb478e4d340
+
+The Center-with-Warehouse create API was tested successfully with this
+Warehouse ID.
