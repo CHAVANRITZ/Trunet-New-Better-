@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+
 import authRoutes from "./routes/authRoutes.js";
 import healthRoutes from "./routes/healthRoutes.js";
 import productCategoryRoutes from "./routes/productCategoryRoutes.js";
@@ -9,10 +10,12 @@ import productRoutes from "./routes/productRoutes.js";
 import resellerRoutes from "./routes/resellerRoutes.js";
 import centerRoutes from "./routes/centerRoutes.js";
 import areaRoutes from "./routes/areaRoutes.js";
-import { errorMiddleware } from "./middlewares/errorMiddleware.js";
 import roleRoutes from "./routes/roleRoutes.js";
 import vendorRoutes from "./routes/vendorRoutes.js";
 import warehouseRoutes from "./routes/warehouseRoutes.js";
+import stockTransferRoutes from "./routes/stockTransferRoutes.js";
+
+import { errorMiddleware } from "./middlewares/errorMiddleware.js";
 
 const app = express();
 /*
@@ -73,6 +76,10 @@ app.use("/api/v1/resellers", resellerRoutes);
 app.use("/api/v1/centers", centerRoutes);
 app.use("/api/v1/areas", areaRoutes);
 app.use("/api/v1/warehouses", warehouseRoutes);
+app.use(
+    "/api/v1/stock-transfers",
+    stockTransferRoutes
+);
 
 /*
  * ------------------------------------------------------------
