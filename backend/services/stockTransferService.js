@@ -1,5 +1,4 @@
 import mongoose from "mongoose";
-
 import StockTransfer from "../models/StockTransfer.js";
 import Center from "../models/Center.js";
 import User from "../models/User.js";
@@ -1556,324 +1555,373 @@ export const confirmStockTransfer = async ({
         );
     }
 
-    const stockTransfer =
-        await StockTransfer.findById(id);
+    const session =
+        await mongoose.startSession();
 
-    if (!stockTransfer) {
-        throw new StockTransferServiceError(
-            "Stock transfer not found.",
-            {
-                statusCode: 404,
-                code: "TRANSFER_NOT_FOUND",
-            }
+    session.startTransaction();
+
+    try {
+        const stockTransfer =
+            await StockTransfer.findById(id)
+                .session(session);
+
+        if (!stockTransfer) {
+            throw new StockTransferServiceError(
+                "Stock transfer not found.",
+                {
+                    statusCode: 404,
+                    code: "TRANSFER_NOT_FOUND",
+                }
+            );
+        }
+
+        assertCenterAccess(
+            stockTransfer,
+            await resolveRequesterCenter(user),
+            context,
+            "Access denied. You can only confirm transfers involving your own center."
         );
-    }
 
-    assertCenterAccess(
-        stockTransfer,
-        await resolveRequesterCenter(user),
-        context,
-        "Access denied. You can only confirm transfers involving your own center."
-    );
-
-    await validateConfirmationApprovals(
-        stockTransfer,
-        productApprovals
-    );
-
-    /*
-     * The legacy model supports two confirmation paths:
-     *
-     * 1. Explicit productApprovals are supplied.
-     * 2. No productApprovals are supplied, in which case the legacy
-     *    confirmTransfer() method approves the requested quantity
-     *    for every product.
-     *
-     * The stock reservation must follow the same resulting
-     * approved quantities in both cases.
-     */
-    const confirmed =
-        await stockTransfer.confirmTransfer(
-            actingUserId,
+        await validateConfirmationApprovals(
+            stockTransfer,
             productApprovals
         );
 
-    /*
-     * Build the quantities that need to be moved into in-transit stock.
-     *
-     * When productApprovals are provided, use those values.
-     *
-     * When productApprovals are omitted, confirmTransfer() has already
-     * populated approvedQuantity on each transfer product, so use the
-     * resulting transfer data.
-     */
-    const approvalsToReserve =
-        Array.isArray(productApprovals) &&
-        productApprovals.length > 0
-            ? productApprovals
-            : stockTransfer.products.map(
-                  (productItem) => ({
-                      productId:
-                          productItem.product,
-                      approvedQuantity:
-                          productItem.approvedQuantity ||
-                          productItem.quantity,
-                      approvedSerials:
-                          productItem.approvedSerials ||
-                          [],
-                  })
-              );
-
-    /**
-     * Reserve approved source stock.
-     *
-     * Non-serialized products:
-     *   availableQuantity -= approvedQuantity
-     *   inTransitQuantity += approvedQuantity
-     *
-     * Serialized products:
-     *   available -> in_transit
-     *   transfer history is recorded.
-     */
-    for (const approval of approvalsToReserve) {
-        const approvedQuantity =
-            approval.approvedQuantity || 0;
-
-        if (approvedQuantity <= 0) {
-            continue;
-        }
-
-        const product =
-            await Product.findById(
-                approval.productId
+        /*
+         * Confirm the transfer and persist the approved
+         * quantities/serial numbers inside the same transaction
+         * used for source-stock reservation.
+         */
+        const confirmed =
+            await stockTransfer.confirmTransfer(
+                actingUserId,
+                productApprovals,
+                session
             );
-
-        const tracksSerialNumbers =
-            product?.trackSerialNumber === "Yes";
-
-        const centerStock =
-            await CenterStock.findOne({
-                center: stockTransfer.fromCenter,
-                product: approval.productId,
-            });
-
-        if (!centerStock) {
-            throw new StockTransferServiceError(
-                `No stock found for product ${
-                    product?.productTitle ||
-                    approval.productId
-                } in source center.`,
-                {
-                    statusCode: 400,
-                    code: "SOURCE_STOCK_NOT_FOUND",
-                }
-            );
-        }
-
-        if (
-            centerStock.availableQuantity <
-            approvedQuantity
-        ) {
-            throw new StockTransferServiceError(
-                `Insufficient stock for product ${
-                    product?.productTitle ||
-                    approval.productId
-                }. Available: ${centerStock.availableQuantity}, Approved: ${approvedQuantity}`,
-                {
-                    statusCode: 400,
-                    code: "INSUFFICIENT_SOURCE_STOCK",
-                }
-            );
-        }
 
         /*
-         * Serialized products require the exact number of approved
-         * serial numbers and every serial must currently be available
-         * in the source center.
+         * Build the exact quantities that were approved.
+         *
+         * Explicit approvals use the values supplied by the
+         * confirmation request.
+         *
+         * If no explicit approvals are supplied, use the
+         * approved values already stored on the transfer.
          */
-        if (tracksSerialNumbers) {
-            if (
-                !Array.isArray(
-                    approval.approvedSerials
-                ) ||
-                approval.approvedSerials.length !==
-                    approvedQuantity
-            ) {
+        const approvalsToReserve =
+            Array.isArray(productApprovals) &&
+            productApprovals.length > 0
+                ? productApprovals
+                : stockTransfer.products.map(
+                      (productItem) => ({
+                          productId:
+                              productItem.product,
+
+                          approvedQuantity:
+                              productItem.approvedQuantity ||
+                              productItem.quantity,
+
+                          approvedSerials:
+                              productItem.approvedSerials ||
+                              [],
+                      })
+                  );
+
+        /*
+         * Reserve the approved quantity from the source center.
+         *
+         * Non-serialized:
+         *   availableQuantity -= approvedQuantity
+         *   inTransitQuantity += approvedQuantity
+         *
+         * Serialized:
+         *   available serials -> in_transit
+         *   inTransitQuantity += approvedQuantity
+         */
+        for (const approval of approvalsToReserve) {
+            const approvedQuantity =
+                approval.approvedQuantity || 0;
+
+            if (approvedQuantity <= 0) {
+                continue;
+            }
+
+            const product =
+                await Product.findById(
+                    approval.productId
+                ).session(session);
+
+            const tracksSerialNumbers =
+                product?.trackSerialNumber === "Yes";
+
+            const centerStock =
+                await CenterStock.findOne({
+                    center:
+                        stockTransfer.fromCenter,
+                    product:
+                        approval.productId,
+                }).session(session);
+
+            if (!centerStock) {
                 throw new StockTransferServiceError(
-                    `Number of serial numbers must match approved quantity for product ${product.productTitle}.`,
+                    `No stock found for product ${
+                        product?.productTitle ||
+                        approval.productId
+                    } in source center.`,
                     {
                         statusCode: 400,
                         code:
-                            "SERIAL_QUANTITY_MISMATCH",
+                            "SOURCE_STOCK_NOT_FOUND",
                     }
                 );
             }
 
-            for (const serialNumber of
-                approval.approvedSerials) {
-                const serial =
-                    centerStock.serialNumbers.find(
-                        (item) =>
-                            item.serialNumber ===
-                            serialNumber
-                    );
+            if (
+                centerStock.availableQuantity <
+                approvedQuantity
+            ) {
+                throw new StockTransferServiceError(
+                    `Insufficient stock for product ${
+                        product?.productTitle ||
+                        approval.productId
+                    }. Available: ${
+                        centerStock.availableQuantity
+                    }, Approved: ${approvedQuantity}`,
+                    {
+                        statusCode: 400,
+                        code:
+                            "INSUFFICIENT_SOURCE_STOCK",
+                    }
+                );
+            }
 
+            /*
+             * Serialized products require exactly one
+             * available serial for every approved quantity.
+             */
+            if (tracksSerialNumbers) {
                 if (
-                    !serial ||
-                    serial.status !== "available"
+                    !Array.isArray(
+                        approval.approvedSerials
+                    ) ||
+                    approval.approvedSerials.length !==
+                        approvedQuantity
                 ) {
                     throw new StockTransferServiceError(
-                        `Serial number ${serialNumber} not available for product ${product.productTitle}.`,
+                        `Number of serial numbers must match approved quantity for product ${product.productTitle}.`,
                         {
                             statusCode: 400,
                             code:
-                                "SERIAL_NOT_AVAILABLE",
+                                "SERIAL_QUANTITY_MISMATCH",
                         }
                     );
                 }
 
-                serial.status = "in_transit";
+                const approvedSerialSet =
+                    new Set(
+                        approval.approvedSerials
+                    );
 
-                serial.transferHistory.push({
-                    fromCenter:
-                        stockTransfer.fromCenter,
-                    toCenter:
-                        stockTransfer.toCenter,
-                    transferDate:
-                        new Date(),
-                    transferType:
-                        "outbound_transfer",
-                });
+                if (
+                    approvedSerialSet.size !==
+                    approval.approvedSerials.length
+                ) {
+                    throw new StockTransferServiceError(
+                        `Duplicate serial numbers found for product ${product.productTitle}.`,
+                        {
+                            statusCode: 400,
+                            code:
+                                "DUPLICATE_SERIAL_NUMBERS",
+                        }
+                    );
+                }
+
+                for (const serialNumber of
+                    approval.approvedSerials) {
+                    const serial =
+                        centerStock.serialNumbers.find(
+                            (item) =>
+                                item.serialNumber ===
+                                    serialNumber &&
+                                item.status ===
+                                    "available"
+                        );
+
+                    if (!serial) {
+                        throw new StockTransferServiceError(
+                            `Serial number ${serialNumber} not available for product ${product.productTitle}.`,
+                            {
+                                statusCode: 400,
+                                code:
+                                    "SERIAL_NOT_AVAILABLE",
+                            }
+                        );
+                    }
+
+                    serial.status =
+                        "in_transit";
+
+                    serial.transferHistory.push({
+                        fromCenter:
+                            stockTransfer.fromCenter,
+
+                        toCenter:
+                            stockTransfer.toCenter,
+
+                        transferDate:
+                            new Date(),
+
+                        transferType:
+                            "outbound_transfer",
+                    });
+                }
             }
+
+            centerStock.availableQuantity -=
+                approvedQuantity;
+
+            centerStock.inTransitQuantity +=
+                approvedQuantity;
+
+            await centerStock.save({
+                session,
+            });
         }
 
         /*
-         * Reserve the approved quantity in the source center.
+         * Commit transfer confirmation and source-stock
+         * reservation together.
          */
-        centerStock.availableQuantity -=
-            approvedQuantity;
+        await session.commitTransaction();
 
-        centerStock.inTransitQuantity +=
-            approvedQuantity;
-
-        await centerStock.save();
-    }
-
-    /*
-     * Re-fetch the transfer so the response contains the same populated
-     * representation returned by the other stock-transfer endpoints.
-     */
-    const populatedTransfer =
-        await populateStockTransfer(
-            StockTransfer.findById(
-                confirmed._id
-            )
-        );
-
-    const data =
-        await populatedTransfer;
-
-    let message =
-        "Stock transfer confirmed successfully";
-
-    let hasQuantityAdjustments = false;
-    let hasSerialAssignments = false;
-
-    /*
-     * Keep the existing response behavior for explicit product
-     * approvals. We do not add stockUpdates for the implicit
-     * confirmation path because that would change the existing API
-     * response contract unnecessarily.
-     */
-    if (
-        Array.isArray(productApprovals) &&
-        productApprovals.length > 0
-    ) {
-        const quantityAdjustments =
-            productApprovals.filter(
-                (item) =>
-                    item.approvedQuantity !==
-                        undefined &&
-                    item.approvedQuantity > 0
-            ).length;
-
-        const serialAssignments =
-            productApprovals.filter(
-                (item) =>
-                    Array.isArray(
-                        item.approvedSerials
-                    ) &&
-                    item.approvedSerials.length > 0
-            ).length;
-
-        if (quantityAdjustments > 0) {
-            hasQuantityAdjustments = true;
-
-            message +=
-                ` with ${quantityAdjustments} product quantity adjustment(s)`;
-        }
-
-        if (serialAssignments > 0) {
-            hasSerialAssignments = true;
-
-            message +=
-                ` and ${serialAssignments} serial number assignment(s) marked as in transit`;
-        }
-    }
-
-    const response = {
-        message,
-        data,
-    };
-
-    if (
-        hasQuantityAdjustments ||
-        hasSerialAssignments
-    ) {
-        response.stockUpdates =
-            productApprovals
-                .filter(
-                    (item) =>
-                        item.approvedQuantity > 0
+        /*
+         * Populate only after the transaction has successfully
+         * committed so the response represents committed data.
+         */
+        const populatedTransfer =
+            await populateStockTransfer(
+                StockTransfer.findById(
+                    confirmed._id
                 )
-                .map((item) => {
-                    const productItem =
-                        data.products.find(
-                            (product) =>
-                                sameId(
-                                    product.product?._id,
-                                    item.productId
-                                )
-                        );
+            );
 
-                    return {
-                        productId:
-                            item.productId,
+        const data =
+            await populatedTransfer;
 
-                        productName:
-                            productItem?.product
-                                ?.productTitle ||
-                            "Unknown Product",
+        let message =
+            "Stock transfer confirmed successfully";
 
-                        approvedQuantity:
-                            item.approvedQuantity,
+        let hasQuantityAdjustments =
+            false;
 
-                        assignedSerials:
+        let hasSerialAssignments =
+            false;
+
+        /*
+         * Preserve the existing response behavior for
+         * explicit product approvals.
+         */
+        if (
+            Array.isArray(productApprovals) &&
+            productApprovals.length > 0
+        ) {
+            const quantityAdjustments =
+                productApprovals.filter(
+                    (item) =>
+                        item.approvedQuantity !==
+                            undefined &&
+                        item.approvedQuantity > 0
+                ).length;
+
+            const serialAssignments =
+                productApprovals.filter(
+                    (item) =>
+                        Array.isArray(
                             item.approvedSerials
-                                ?.length || 0,
+                        ) &&
+                        item.approvedSerials.length >
+                            0
+                ).length;
 
-                        stockStatus:
-                            "in_transit",
+            if (quantityAdjustments > 0) {
+                hasQuantityAdjustments =
+                    true;
 
-                        updatedFields: [
-                            "availableQuantity",
-                            "inTransitQuantity",
-                        ],
-                    };
-                });
+                message +=
+                    ` with ${quantityAdjustments} product quantity adjustment(s)`;
+            }
+
+            if (serialAssignments > 0) {
+                hasSerialAssignments =
+                    true;
+
+                message +=
+                    ` and ${serialAssignments} serial number assignment(s) marked as in transit`;
+            }
+        }
+
+        const response = {
+            message,
+            data,
+        };
+
+        if (
+            hasQuantityAdjustments ||
+            hasSerialAssignments
+        ) {
+            response.stockUpdates =
+                productApprovals
+                    .filter(
+                        (item) =>
+                            item.approvedQuantity > 0
+                    )
+                    .map((item) => {
+                        const productItem =
+                            data.products.find(
+                                (product) =>
+                                    sameId(
+                                        product.product
+                                            ?._id,
+                                        item.productId
+                                    )
+                            );
+
+                        return {
+                            productId:
+                                item.productId,
+
+                            productName:
+                                productItem
+                                    ?.product
+                                    ?.productTitle ||
+                                "Unknown Product",
+
+                            approvedQuantity:
+                                item.approvedQuantity,
+
+                            assignedSerials:
+                                item
+                                    .approvedSerials
+                                    ?.length || 0,
+
+                            stockStatus:
+                                "in_transit",
+
+                            updatedFields: [
+                                "availableQuantity",
+                                "inTransitQuantity",
+                            ],
+                        };
+                    });
+        }
+
+        return response;
+    } catch (error) {
+        await session.abortTransaction();
+        throw error;
+    } finally {
+        await session.endSession();
     }
-
-    return response;
 };
 
 /**
@@ -1946,8 +1994,7 @@ export const completeStockTransfer =
             Array.isArray(productReceipts) &&
             productReceipts.length > 0
         ) {
-            for (const receipt of
-                productReceipts) {
+            for (const receipt of productReceipts) {
                 const productItem =
                     stockTransfer.products.find(
                         (item) =>
@@ -1973,12 +2020,15 @@ export const completeStockTransfer =
                     productItem.approvedQuantity ||
                     0;
 
+                const receivedQuantity =
+                    receipt.receivedQuantity ?? 0;
+
                 if (
-                    receipt.receivedQuantity >
+                    receivedQuantity >
                     approvedQuantity
                 ) {
                     throw new StockTransferServiceError(
-                        `Received quantity (${receipt.receivedQuantity}) cannot exceed approved quantity (${approvedQuantity}) for product.`,
+                        `Received quantity (${receivedQuantity}) cannot exceed approved quantity (${approvedQuantity}) for product.`,
                         {
                             statusCode: 400,
                             code:
@@ -1988,7 +2038,14 @@ export const completeStockTransfer =
                 }
 
                 productItem.receivedQuantity =
-                    receipt.receivedQuantity;
+                    receivedQuantity;
+
+                productItem.receivedSerials =
+                    Array.isArray(
+                        receipt.receivedSerials
+                    )
+                        ? receipt.receivedSerials
+                        : [];
 
                 productItem.receivedRemark =
                     receipt.receivedRemark || "";
@@ -1999,6 +2056,8 @@ export const completeStockTransfer =
                     productItem.receivedQuantity =
                         productItem.approvedQuantity ||
                         0;
+
+                    productItem.receivedSerials = [];
                 }
             );
         }

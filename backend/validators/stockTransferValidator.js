@@ -391,7 +391,9 @@ export const validateUpdateShippingInfo = [
 ];
 
 export const validateCompletion = [
-  param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
+  param("id")
+    .custom(isValidObjectId)
+    .withMessage("Invalid stock transfer ID"),
 
   body("productReceipts")
     .optional()
@@ -408,18 +410,35 @@ export const validateCompletion = [
   body("productReceipts.*.receivedQuantity")
     .if(body("productReceipts").exists())
     .isInt({ min: 0 })
-    .withMessage("Received quantity must be a non-negative integer"),
+    .withMessage(
+      "Received quantity must be a non-negative integer"
+    ),
+
+  body("productReceipts.*.receivedSerials")
+    .optional()
+    .isArray()
+    .withMessage("Received serials must be an array"),
+
+  body("productReceipts.*.receivedSerials.*")
+    .if(body("productReceipts.*.receivedSerials").exists())
+    .isString()
+    .trim()
+    .notEmpty()
+    .withMessage(
+      "Each received serial number must be a non-empty string"
+    ),
 
   body("productReceipts.*.receivedRemark")
     .optional()
     .isString()
     .withMessage("Received remark must be a string")
     .isLength({ max: 200 })
-    .withMessage("Received remark cannot exceed 200 characters"),
+    .withMessage(
+      "Received remark cannot exceed 200 characters"
+    ),
 
   handleValidationErrors,
 ];
-
 export const validateConfirmation = [
   param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
 
