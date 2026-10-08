@@ -5839,3 +5839,54 @@ Shipped
 Completed
 
 \`\`\`
+---
+
+# Control Room APIs
+
+The Control Room module is mounted under `/api/v1/control-rooms`.
+
+## Endpoints
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| POST | `/api/v1/control-rooms` | Create a Control Room |
+| GET | `/api/v1/control-rooms` | List Control Rooms |
+| GET | `/api/v1/control-rooms/:id` | Get a Control Room by ID |
+| PUT | `/api/v1/control-rooms/:id` | Update a Control Room |
+| DELETE | `/api/v1/control-rooms/:id` | Delete a Control Room |
+
+## Permissions
+
+Control Room endpoints use the Settings module permissions:
+
+- Create / Update / Delete:
+  - `manage_control_room_own_center`
+  - `manage_control_room_all_center`
+- List / Get by ID:
+  - `view_control_room_own_center`
+  - `view_control_room_all_center`
+
+Access is restricted according to the user's assigned center and permission scope.
+
+## POST `/api/v1/control-rooms`
+
+Creates a new Control Room.
+
+## GET `/api/v1/control-rooms`
+
+Returns Control Rooms accessible to the authenticated user.
+
+Supports filtering, searching, pagination, and sorting.
+
+## GET `/api/v1/control-rooms/:id`
+
+Returns a Control Room by MongoDB ID.
+
+## PUT `/api/v1/control-rooms/:id`
+
+Updates an existing Control Room.
+
+## DELETE `/api/v1/control-rooms/:id`
+
+Deletes an existing Control Room.
+---
