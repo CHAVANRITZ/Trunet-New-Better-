@@ -14,7 +14,8 @@ import roleRoutes from "./routes/roleRoutes.js";
 import vendorRoutes from "./routes/vendorRoutes.js";
 import warehouseRoutes from "./routes/warehouseRoutes.js";
 import stockTransferRoutes from "./routes/stockTransferRoutes.js";
-
+import stockPurchaseRoutes from "./routes/stockPurchaseRoutes.js";
+import stockRequestRoutes from "./routes/stockRequestRoutes.js";
 import { errorMiddleware } from "./middlewares/errorMiddleware.js";
 
 const app = express();
@@ -80,7 +81,14 @@ app.use(
     "/api/v1/stock-transfers",
     stockTransferRoutes
 );
-
+app.use(
+    "/api/v1/stockpurchase",
+    stockPurchaseRoutes
+);
+app.use(
+    "/api/v1/stockrequest",
+    stockRequestRoutes
+);
 /*
  * ------------------------------------------------------------
  * Error handling
