@@ -10,6 +10,11 @@ import productRoutes from "./routes/productRoutes.js";
 import resellerRoutes from "./routes/resellerRoutes.js";
 import centerRoutes from "./routes/centerRoutes.js";
 import areaRoutes from "./routes/areaRoutes.js";
+
+import customerRoutes from "./routes/customerRoutes.js";
+import buildingRoutes from "./routes/buildingRoutes.js";
+import controlRoomRoutes from "./routes/controlRoomRoutes.js";
+
 import roleRoutes from "./routes/roleRoutes.js";
 import vendorRoutes from "./routes/vendorRoutes.js";
 import warehouseRoutes from "./routes/warehouseRoutes.js";
@@ -76,6 +81,11 @@ app.use(
 app.use("/api/v1/resellers", resellerRoutes);
 app.use("/api/v1/centers", centerRoutes);
 app.use("/api/v1/areas", areaRoutes);
+
+app.use("/api/v1/customers", customerRoutes);
+app.use("/api/v1/buildings", buildingRoutes);
+app.use("/api/v1/control-rooms", controlRoomRoutes);
+
 app.use("/api/v1/warehouses", warehouseRoutes);
 app.use(
     "/api/v1/stock-transfers",
