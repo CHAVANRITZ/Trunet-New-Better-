@@ -1,18 +1,119 @@
-
+import mongoose from "mongoose";
 
 import RaisePO from "../models/RaisePO.js";
 import User from "../models/User.js";
+import Permission from "../models/Permission.js";
+import { ApiError } from "../utils/ApiError.js";
+import { isSuperAdmin } from "../utils/checkPermissions.js";
+
+/* -------------------------------------------------------------------------- */
+/*                                   Helpers                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Authenticated user's ID.
+ * authMiddleware sets: { id, role, status, fullUser }.
+ */
+function getUserId(user) {
+    return user?.fullUser?._id ?? user?.id ?? user?._id;
+}
+
+function escapeRegex(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function assertValidId(id, label = "ID") {
+    if (!mongoose.isValidObjectId(id)) {
+        throw new ApiError(400, `Invalid ${label}`);
+    }
+}
+
+/**
+ * Normalizes role permissions.
+ * Supports embedded groups ({ module, permissions: [] })
+ * and ObjectId references to the Permission collection.
+ */
+async function normalizeRolePermissions(rolePermissions = []) {
+    if (!Array.isArray(rolePermissions)) {
+        return [];
+    }
+
+    const embedded = rolePermissions.filter(
+        (permission) =>
+            permission &&
+            typeof permission === "object" &&
+            !permission._bsontype &&
+            permission.module
+    );
+
+    const permissionIds = rolePermissions.filter(
+        (permission) =>
+            permission &&
+            (typeof permission === "string" ||
+                permission._bsontype === "ObjectID" ||
+                permission._bsontype === "ObjectId")
+    );
+
+    if (permissionIds.length === 0) {
+        return embedded;
+    }
+
+    const referenced = await Permission.find({
+        _id: { $in: permissionIds },
+        status: "Enable",
+    })
+        .select("module action")
+        .lean();
+
+    const groups = [];
+
+    for (const permission of referenced) {
+        let group = groups.find(
+            (item) =>
+                item.module.toLowerCase() ===
+                String(permission.module).toLowerCase()
+        );
+
+        if (!group) {
+            group = { module: permission.module, permissions: [] };
+            groups.push(group);
+        }
+
+        if (!group.permissions.includes(permission.action)) {
+            group.permissions.push(permission.action);
+        }
+    }
+
+    return [...embedded, ...groups];
+}
 
 /**
  * Checks Raise PO related Purchase permissions.
- *
- * Preserved from the legacy Raise PO controller.
  */
-function checkStockPurchasePermissions(user, requiredPermissions = []) {
-    const userPermissions = user?.role?.permissions || [];
+async function checkStockPurchasePermissions(
+    user,
+    requiredPermissions = []
+) {
+    const userCenter = user?.fullUser?.center ?? user?.center;
 
-    const purchaseModule = userPermissions.find(
-        (permission) => permission.module === "Purchase"
+    if (isSuperAdmin(user)) {
+        return {
+            hasAccess: true,
+            permissions: {
+                add_purchase_stock: true,
+                view_own_purchase_stock: true,
+                view_all_purchase_stock: true,
+            },
+            userCenter,
+        };
+    }
+
+    const groups = await normalizeRolePermissions(
+        user?.role?.permissions || []
+    );
+
+    const purchaseModule = groups.find(
+        (group) => group.module?.toLowerCase() === "purchase"
     );
 
     if (!purchaseModule) {
@@ -22,125 +123,110 @@ function checkStockPurchasePermissions(user, requiredPermissions = []) {
         };
     }
 
+    const granted = purchaseModule.permissions || [];
+
     const permissions = {
-        add_purchase_stock:
-            purchaseModule.permissions.includes("add_purchase_stock"),
-
-        view_own_purchase_stock:
-            purchaseModule.permissions.includes(
-                "view_own_purchase_stock"
-            ),
-
-        view_all_purchase_stock:
-            purchaseModule.permissions.includes(
-                "view_all_purchase_stock"
-            ),
+        add_purchase_stock: granted.includes("add_purchase_stock"),
+        view_own_purchase_stock: granted.includes(
+            "view_own_purchase_stock"
+        ),
+        view_all_purchase_stock: granted.includes(
+            "view_all_purchase_stock"
+        ),
     };
 
-    const hasRequiredPermission = requiredPermissions.some(
-        (permission) => permissions[permission]
-    );
-
     return {
-        hasAccess: hasRequiredPermission,
+        hasAccess: requiredPermissions.some(
+            (permission) => permissions[permission]
+        ),
         permissions,
-        userCenter: user.center,
+        userCenter,
     };
 }
 
 /**
  * Checks whether the authenticated user is an admin.
- *
- * Preserved from the legacy controller.
  */
 function isAdmin(user) {
     return (
+        isSuperAdmin(user) ||
         user?.role?.roleTitle?.toLowerCase() === "admin" ||
         user?.role?.isAdmin === true
     );
 }
 
 /**
- * Gets the authenticated user's outlet.
- *
- * Preserved from the legacy controller.
+ * Gets the user's outlet (center) ID.
  */
 async function getUserOutletId(userId) {
     if (!userId) {
-        throw new Error("User ID is required");
+        throw new ApiError(401, "User ID is required");
     }
 
-    const user = await User.findById(userId).populate(
-        "center",
-        "centerName centerCode centerType"
-    );
+    const user = await User.findById(userId).select("center").lean();
 
     if (!user) {
-        throw new Error("User not found");
+        throw new ApiError(404, "User not found");
     }
 
     if (!user.center) {
-        throw new Error("User center information not found");
+        throw new ApiError(400, "User center information not found");
     }
 
-    return user.center._id;
+    return user.center;
 }
 
 /**
- * Validates that the authenticated user belongs to a center.
- *
- * Preserved from the legacy controller.
+ * Validates that the user belongs to a center.
  */
 async function validateUserOutletAccess(userId) {
     if (!userId) {
-        throw new Error("User authentication required");
+        throw new ApiError(401, "User authentication required");
     }
 
-    const user = await User.findById(userId).populate(
-        "center",
-        "centerName centerCode centerType"
-    );
+    const user = await User.findById(userId).select("center").lean();
 
     if (!user) {
-        throw new Error("User not found");
+        throw new ApiError(404, "User not found");
     }
 
     if (!user.center) {
-        throw new Error("User is not associated with any center");
+        throw new ApiError(
+            400,
+            "User is not associated with any center"
+        );
     }
 
-    return user.center._id;
+    return user.center;
 }
 
+/* -------------------------------------------------------------------------- */
+/*                              Voucher numbering                             */
+/* -------------------------------------------------------------------------- */
+
 /**
- * Auto-generates unique voucher number like STELE/01/26-27
+ * Generates a unique voucher number like STELE/01/26-27.
  *
- * Preserved from the legacy Raise PO controller.
+ * Uses an atomic counter (separate collection, no model changes)
+ * so concurrent requests never receive the same sequence.
  */
 const generateVoucherNo = async () => {
     const currentDate = new Date();
     const currentYear = currentDate.getFullYear();
     const currentMonth = currentDate.getMonth() + 1;
 
-    let financialYear = "";
-
-    if (currentMonth >= 4) {
-        financialYear = `${currentYear
-            .toString()
-            .slice(-2)}-${(currentYear + 1)
-            .toString()
-            .slice(-2)}`;
-    } else {
-        financialYear = `${(currentYear - 1)
-            .toString()
-            .slice(-2)}-${currentYear
-            .toString()
-            .slice(-2)}`;
-    }
+    const financialYear =
+        currentMonth >= 4
+            ? `${String(currentYear).slice(-2)}-${String(
+                  currentYear + 1
+              ).slice(-2)}`
+            : `${String(currentYear - 1).slice(-2)}-${String(
+                  currentYear
+              ).slice(-2)}`;
 
     const existingVouchers = await RaisePO.find({
         voucherNo: {
-            $regex: `^STELE\\/\\d{2}\\/${financialYear}$`,
+            $regex: `^STELE\\/\\d{2,}\\/${financialYear}$`,
         },
     })
         .select("voucherNo")
@@ -149,10 +235,10 @@ const generateVoucherNo = async () => {
     let maxSequence = 0;
 
     for (const v of existingVouchers) {
-        const match = v.voucherNo.match(/^STELE\/(\d{2})\//);
+        const match = v.voucherNo.match(/^STELE\/(\d{2,})\//);
 
         if (match) {
-            const seq = parseInt(match[1]);
+            const seq = parseInt(match[1], 10);
 
             if (seq > maxSequence) {
                 maxSequence = seq;
@@ -160,47 +246,72 @@ const generateVoucherNo = async () => {
         }
     }
 
-    let nextSequence = maxSequence + 1;
-    let voucherNo = "";
-    let isUnique = false;
+    const counters = mongoose.connection.collection(
+        "raisepo_voucher_counters"
+    );
+    const counterId = `STELE_${financialYear}`;
+
+    // Keep counter at least as high as the highest existing voucher.
+    for (let i = 0; i < 3; i++) {
+        try {
+            await counters.updateOne(
+                { _id: counterId },
+                { $max: { seq: maxSequence } },
+                { upsert: true }
+            );
+            break;
+        } catch (error) {
+            // Concurrent upsert race: retry.
+            if (error?.code !== 11000 || i === 2) {
+                throw error;
+            }
+        }
+    }
 
     for (let attempt = 0; attempt < 100; attempt++) {
-        const padded = nextSequence
-            .toString()
-            .padStart(2, "0");
+        const result = await counters.findOneAndUpdate(
+            { _id: counterId },
+            { $inc: { seq: 1 } },
+            { returnDocument: "after" }
+        );
 
-        const candidate = `STELE/${padded}/${financialYear}`;
+        const counterDoc = result?.value ?? result;
+        const sequence = counterDoc?.seq;
 
-        const exists = await RaisePO.findOne({
-            voucherNo: candidate,
-        }).lean();
-
-        if (!exists) {
-            voucherNo = candidate;
-            isUnique = true;
-            break;
+        if (!Number.isInteger(sequence)) {
+            throw new ApiError(
+                500,
+                "Unable to generate voucher number."
+            );
         }
 
-        nextSequence++;
+        const candidate = `STELE/${String(sequence).padStart(
+            2,
+            "0"
+        )}/${financialYear}`;
+
+        const exists = await RaisePO.exists({ voucherNo: candidate });
+
+        if (!exists) {
+            return candidate;
+        }
     }
 
-    if (!isUnique) {
-        throw new Error(
-            "Unable to generate a unique voucher number. Please contact support."
-        );
-    }
-
-    return voucherNo;
+    throw new ApiError(
+        500,
+        "Unable to generate a unique voucher number. Please contact support."
+    );
 };
 
-/**
- * Populate configuration preserved from legacy Raise PO behavior.
- */
+/* -------------------------------------------------------------------------- */
+/*                                  Populate                                  */
+/* -------------------------------------------------------------------------- */
+
 const raisePOPopulateOptions = [
     {
         path: "vendor",
         select:
-            "_id businessName contactPerson phone email gstNumber state",
+            "_id businessName name contactPerson phone mobile email gstNumber state",
     },
     {
         path: "outlet",
@@ -209,44 +320,151 @@ const raisePOPopulateOptions = [
     {
         path: "products.product",
         select:
-            "_id productTitle productCode productImage productCategory trackSerialNumber",
+            "_id productTitle productCode productPrice productImage productCategory trackSerialNumber",
     },
     {
         path: "createdBy",
-        select: "_id fullName email",
+        select: "_id fullName name email",
     },
     {
         path: "approvedBy",
-        select: "_id fullName email",
+        select: "_id fullName name email",
     },
 ];
 
-/**
- * Creates a Raise PO.
- *
- * Voucher number generation and business behavior
- * are preserved from the legacy controller.
- */
-export async function createRaisePO(user, data) {
-    const { hasAccess } = checkStockPurchasePermissions(
-        user,
-        ["add_purchase_stock"]
+/* -------------------------------------------------------------------------- */
+/*                                Search helpers                              */
+/* -------------------------------------------------------------------------- */
+
+function getRefModel(schemaPath) {
+    try {
+        const ref = schemaPath?.options?.ref;
+
+        return typeof ref === "string" ? mongoose.model(ref) : null;
+    } catch {
+        return null;
+    }
+}
+
+async function findRefIds(Model, fields, regex) {
+    if (!Model) {
+        return [];
+    }
+
+    const validFields = fields.filter((field) =>
+        Model.schema.path(field)
     );
 
+    if (validFields.length === 0) {
+        return [];
+    }
+
+    const docs = await Model.find({
+        $or: validFields.map((field) => ({ [field]: regex })),
+    })
+        .select("_id")
+        .limit(1000)
+        .lean();
+
+    return docs.map((doc) => doc._id);
+}
+
+/**
+ * Builds the $or search conditions.
+ * Populated fields cannot be queried directly, so matching
+ * vendor / outlet / product IDs are resolved first.
+ */
+async function buildSearchConditions(search) {
+    const regex = {
+        $regex: escapeRegex(search),
+        $options: "i",
+    };
+
+    const conditions = [{ voucherNo: regex }];
+
+    const productsSchema = RaisePO.schema.path("products")?.schema;
+
+    const VendorModel = getRefModel(RaisePO.schema.path("vendor"));
+    const OutletModel = getRefModel(RaisePO.schema.path("outlet"));
+    const ProductModel = getRefModel(
+        productsSchema?.path("product")
+    );
+
+    const [vendorIds, outletIds, productIds] = await Promise.all([
+        findRefIds(
+            VendorModel,
+            [
+                "businessName",
+                "name",
+                "email",
+                "mobile",
+                "phone",
+                "contactPerson",
+                "gstNumber",
+            ],
+            regex
+        ),
+        findRefIds(OutletModel, ["centerName", "centerCode"], regex),
+        findRefIds(
+            ProductModel,
+            ["productTitle", "productCode"],
+            regex
+        ),
+    ]);
+
+    if (vendorIds.length) {
+        conditions.push({ vendor: { $in: vendorIds } });
+    }
+
+    if (outletIds.length) {
+        conditions.push({ outlet: { $in: outletIds } });
+    }
+
+    if (productIds.length) {
+        conditions.push({ "products.product": { $in: productIds } });
+    }
+
+    const hasSerialNumbers = productsSchema
+        ? Object.keys(productsSchema.paths).some((key) =>
+              key.startsWith("serialNumbers")
+          )
+        : false;
+
+    if (hasSerialNumbers) {
+        conditions.push({
+            "products.serialNumbers.serialNumber": regex,
+        });
+    }
+
+    return conditions;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                   Services                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Creates a Raise PO.
+ */
+export async function createRaisePO(user, data) {
+    const { hasAccess } = await checkStockPurchasePermissions(user, [
+        "add_purchase_stock",
+    ]);
+
     if (!hasAccess) {
-        throw new Error(
+        throw new ApiError(
+            403,
             "Access denied. add_purchase_stock permission required."
         );
     }
 
-    const userId = user.fullUser._id;
+    const userId = getUserId(user);
 
-    const {
-        date,
-        vendor,
-        outlet,
-        products,
-    } = data;
+    const { date, vendor, outlet, products } = data || {};
+
+    if (!Array.isArray(products) || products.length === 0) {
+        throw new ApiError(400, "At least one product is required");
+    }
 
     let outletId = outlet;
 
@@ -275,39 +493,24 @@ export async function createRaisePO(user, data) {
 
     const savedPO = await raisePO.save();
 
-    return RaisePO.findById(savedPO._id)
-        .populate(
-            "vendor",
-            "businessName name email mobile gstNumber"
-        )
-        .populate(
-            "outlet",
-            "_id centerName centerCode centerType"
-        )
-        .populate(
-            "products.product",
-            "productTitle productCode productPrice"
-        )
-        .populate("createdBy", "name email");
+    return RaisePO.findById(savedPO._id).populate(
+        raisePOPopulateOptions
+    );
 }
 
 /**
  * Retrieves Raise POs.
- *
- * Preserves legacy filtering, pagination and
- * own/all outlet permission behavior.
  */
 export async function getAllRaisePO(user, queryParams = {}) {
-    const {
-        hasAccess,
-        permissions,
-    } = checkStockPurchasePermissions(user, [
-        "view_own_purchase_stock",
-        "view_all_purchase_stock",
-    ]);
+    const { hasAccess, permissions } =
+        await checkStockPurchasePermissions(user, [
+            "view_own_purchase_stock",
+            "view_all_purchase_stock",
+        ]);
 
     if (!hasAccess) {
-        throw new Error(
+        throw new ApiError(
+            403,
             "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required."
         );
     }
@@ -325,21 +528,14 @@ export async function getAllRaisePO(user, queryParams = {}) {
 
     const filter = {};
 
-    if (
-        permissions.view_all_purchase_stock &&
-        outlet
-    ) {
-        filter.outlet = outlet;
-    } else if (
-        permissions.view_own_purchase_stock &&
-        !permissions.view_all_purchase_stock
-    ) {
-        const userOutletId =
-            await validateUserOutletAccess(user._id);
-
-        filter.outlet = userOutletId;
-    } else if (outlet) {
-        filter.outlet = outlet;
+    if (permissions.view_all_purchase_stock) {
+        if (outlet) {
+            filter.outlet = outlet;
+        }
+    } else {
+        filter.outlet = await validateUserOutletAccess(
+            getUserId(user)
+        );
     }
 
     if (startDate || endDate) {
@@ -358,69 +554,10 @@ export async function getAllRaisePO(user, queryParams = {}) {
         }
     }
 
-    if (search) {
-        filter.$or = [
-            {
-                voucherNo: {
-                    $regex: search,
-                    $options: "i",
-                },
-            },
-            {
-                "vendor.businessName": {
-                    $regex: search,
-                    $options: "i",
-                },
-            },
-            {
-                "vendor.name": {
-                    $regex: search,
-                    $options: "i",
-                },
-            },
-            {
-                "vendor.email": {
-                    $regex: search,
-                    $options: "i",
-                },
-            },
-            {
-                "vendor.mobile": {
-                    $regex: search,
-                    $options: "i",
-                },
-            },
-            {
-                "outlet.centerName": {
-                    $regex: search,
-                    $options: "i",
-                },
-            },
-            {
-                "outlet.centerCode": {
-                    $regex: search,
-                    $options: "i",
-                },
-            },
-            {
-                "products.product.productTitle": {
-                    $regex: search,
-                    $options: "i",
-                },
-            },
-            {
-                "products.product.productCode": {
-                    $regex: search,
-                    $options: "i",
-                },
-            },
-            {
-                "products.serialNumbers.serialNumber": {
-                    $regex: search,
-                    $options: "i",
-                },
-            },
-        ];
+    if (search && String(search).trim()) {
+        filter.$or = await buildSearchConditions(
+            String(search).trim()
+        );
     }
 
     if (type) {
@@ -431,15 +568,16 @@ export async function getAllRaisePO(user, queryParams = {}) {
         filter.vendor = vendor;
     }
 
-    const currentPage = Number(page);
-    const pageLimit = Number(limit);
+    const currentPage = Math.max(parseInt(page, 10) || 1, 1);
+    const pageLimit = Math.max(parseInt(limit, 10) || 100, 1);
 
     const total = await RaisePO.countDocuments(filter);
 
     const purchases = await RaisePO.find(filter)
         .populate(raisePOPopulateOptions)
-        .limit(pageLimit)
+        .sort({ date: -1, _id: -1 })
         .skip((currentPage - 1) * pageLimit)
+        .limit(pageLimit)
         .lean();
 
     return {
@@ -450,10 +588,7 @@ export async function getAllRaisePO(user, queryParams = {}) {
                 purchases.length === 0
                     ? 0
                     : Math.ceil(total / pageLimit),
-            totalItems:
-                purchases.length === 0
-                    ? 0
-                    : total,
+            totalItems: purchases.length === 0 ? 0 : total,
             itemsPerPage: pageLimit,
         },
     };
@@ -461,26 +596,30 @@ export async function getAllRaisePO(user, queryParams = {}) {
 
 /**
  * Changes an approved/rejected PO back to pending.
- *
- * Preserved from legacy behavior.
+ * Admin only (same authority that approves/rejects).
  */
 export async function changeRejectedToPending(user, id) {
-    const raisePO = await RaisePO.findById(id)
-        .populate("vendor")
-        .populate("outlet")
-        .populate("products.product")
-        .populate("createdBy")
-        .populate("approvedBy");
+    if (!isAdmin(user)) {
+        throw new ApiError(
+            403,
+            "Access denied. Only admin can change PO status to pending."
+        );
+    }
+
+    assertValidId(id, "Purchase Order ID");
+
+    const raisePO = await RaisePO.findById(id);
 
     if (!raisePO) {
-        throw new Error("Purchase Order not found");
+        throw new ApiError(404, "Purchase Order not found");
     }
 
     if (
         raisePO.status !== "rejected" &&
         raisePO.status !== "approved"
     ) {
-        throw new Error(
+        throw new ApiError(
+            400,
             `Cannot change status from '${raisePO.status}' to pending. Only rejected or approved POs can be changed to pending.`
         );
     }
@@ -493,68 +632,60 @@ export async function changeRejectedToPending(user, id) {
     await raisePO.save();
 
     return RaisePO.findById(id)
-        .populate("vendor")
-        .populate("outlet")
-        .populate("products.product")
-        .populate("createdBy")
-        .populate("approvedBy")
+        .populate(raisePOPopulateOptions)
         .lean();
+}
+
+/**
+ * Shared approve / reject transition (atomic, pending -> status).
+ */
+async function setPOStatus(user, id, status) {
+    assertValidId(id, "Purchase Order ID");
+
+    const updated = await RaisePO.findOneAndUpdate(
+        { _id: id, status: "pending" },
+        {
+            $set: {
+                status,
+                approvedBy: getUserId(user),
+                approvedAt: new Date(),
+            },
+        },
+        { new: true }
+    );
+
+    if (!updated) {
+        const po = await RaisePO.findById(id).select("status").lean();
+
+        if (!po) {
+            throw new ApiError(404, "Purchase order not found");
+        }
+
+        throw new ApiError(400, `PO is already ${po.status}`);
+    }
+
+    return updated;
 }
 
 /**
  * Approves a Raise PO.
  *
- * Stock update is intentionally not implemented here yet because
- * OutletStock has not been migrated to the new backend.
+ * Stock update: OutletStock is not migrated yet, so it is
+ * intentionally not connected here.
  */
 export async function approveRaisePO(user, id) {
     if (!isAdmin(user)) {
-        throw new Error(
+        throw new ApiError(
+            403,
             "Access denied. Only admin can approve POs."
         );
     }
 
-    const po = await RaisePO.findById(id);
+    const approvedPO = await setPOStatus(user, id, "approved");
 
-    if (!po) {
-        throw new Error("Purchase order not found");
-    }
-
-    if (po.status !== "pending") {
-        throw new Error(`PO is already ${po.status}`);
-    }
-
-    po.status = "approved";
-    po.approvedBy = user._id;
-    po.approvedAt = new Date();
-
-    const approvedPO = await po.save();
-
-    /*
-     * Legacy behavior:
-     *
-     * OutletStock.updateStock(
-     *     po.outlet,
-     *     productItem.product,
-     *     productItem.purchasedQuantity,
-     *     approvedPO._id
-     * );
-     *
-     * This will be connected after OutletStock is migrated.
-     */
-
-    return RaisePO.findById(approvedPO._id)
-        .populate("vendor", "businessName name email mobile gstNumber")
-        .populate(
-            "outlet",
-            "_id centerName centerCode centerType"
-        )
-        .populate(
-            "products.product",
-            "productTitle productCode productPrice"
-        )
-        .populate("createdBy", "name email")
-        .populate("approvedBy", "name email");
+    return RaisePO.findById(approvedPO._id).populate(
+        raisePOPopulateOptions
+    );
 }
 
 /**
@@ -562,615 +693,55 @@ export async function approveRaisePO(user, id) {
  */
 export async function rejectRaisePO(user, id) {
     if (!isAdmin(user)) {
-        throw new Error(
+        throw new ApiError(
+            403,
             "Access denied. Only admin can reject POs."
         );
     }
 
-    const po = await RaisePO.findById(id);
-
-    if (!po) {
-        throw new Error("Purchase order not found");
-    }
-
-    if (po.status !== "pending") {
-        throw new Error(`PO is already ${po.status}`);
-    }
-
-    po.status = "rejected";
-    po.approvedBy = user._id;
-    po.approvedAt = new Date();
-
-    return po.save();
+    return setPOStatus(user, id, "rejected");
 }
 
 /**
  * Deletes a Raise PO.
+ * Admin can delete any outlet's PO; others only their own outlet's.
  *
- * Stock adjustment is intentionally not implemented yet because
- * OutletStock has not been migrated to the new backend.
+ * Stock adjustment: OutletStock is not migrated yet, so it is
+ * intentionally not connected here.
  */
 export async function deletePO(user, id) {
-    const outletId =
-        await validateUserOutletAccess(user._id);
+    assertValidId(id, "Purchase Order ID");
 
-    const purchase = await RaisePO.findOne({
-        _id: id,
-        outlet: outletId,
-    });
+    const query = { _id: id };
+
+    if (!isAdmin(user)) {
+        query.outlet = await validateUserOutletAccess(
+            getUserId(user)
+        );
+    }
+
+    const purchase = await RaisePO.findOne(query);
 
     if (!purchase) {
-        throw new Error(
+        throw new ApiError(
+            404,
             "Stock purchase not found or access denied"
         );
     }
 
     const hasTransfers = purchase.products.some(
         (product) =>
-            product.availableQuantity <
-            product.purchasedQuantity
+            product.availableQuantity < product.purchasedQuantity
     );
 
     if (hasTransfers) {
-        throw new Error(
+        throw new ApiError(
+            400,
             "Cannot delete stock purchase that has transferred stock"
         );
     }
 
-    /*
-     * Legacy behavior:
-     *
-     * OutletStock is updated here to decrease:
-     * - totalQuantity
-     * - availableQuantity
-     *
-     * and purchase serial numbers are pulled.
-     *
-     * This will be connected after OutletStock migration.
-     */
-
-    await RaisePO.findOneAndDelete({
-        _id: id,
-        outlet: outletId,
-    });
+    await RaisePO.deleteOne({ _id: purchase._id });
 
     return true;
 }
-// import RaisePO from "../models/RaisePO.js";
-// import User from "../models/User.js";
-
-// /**
-//  * Checks Raise PO related Purchase permissions.
-//  *
-//  * Preserved from the legacy Raise PO controller.
-//  */
-// function checkStockPurchasePermissions(user, requiredPermissions = []) {
-//     const userPermissions = user?.role?.permissions || [];
-
-//     const purchaseModule = userPermissions.find(
-//         (permission) => permission.module === "Purchase"
-//     );
-
-//     if (!purchaseModule) {
-//         return {
-//             hasAccess: false,
-//             permissions: {},
-//         };
-//     }
-
-//     const permissions = {
-//         add_purchase_stock:
-//             purchaseModule.permissions.includes("add_purchase_stock"),
-
-//         view_own_purchase_stock:
-//             purchaseModule.permissions.includes(
-//                 "view_own_purchase_stock"
-//             ),
-
-//         view_all_purchase_stock:
-//             purchaseModule.permissions.includes(
-//                 "view_all_purchase_stock"
-//             ),
-//     };
-
-//     const hasRequiredPermission = requiredPermissions.some(
-//         (permission) => permissions[permission]
-//     );
-
-//     return {
-//         hasAccess: hasRequiredPermission,
-//         permissions,
-//         userCenter: user.center,
-//     };
-// }
-
-// /**
-//  * Checks whether the authenticated user is an admin.
-//  *
-//  * Preserved from the legacy controller.
-//  */
-// function isAdmin(user) {
-//     return (
-//         user?.role?.roleTitle?.toLowerCase() === "admin" ||
-//         user?.role?.isAdmin === true
-//     );
-// }
-
-// /**
-//  * Gets the authenticated user's outlet.
-//  *
-//  * Preserved from the legacy controller.
-//  */
-// async function getUserOutletId(userId) {
-//     if (!userId) {
-//         throw new Error("User ID is required");
-//     }
-
-//     const user = await User.findById(userId).populate(
-//         "center",
-//         "centerName centerCode centerType"
-//     );
-
-//     if (!user) {
-//         throw new Error("User not found");
-//     }
-
-//     if (!user.center) {
-//         throw new Error("User center information not found");
-//     }
-
-//     return user.center._id;
-// }
-
-// /**
-//  * Validates that the authenticated user belongs to a center.
-//  *
-//  * Preserved from the legacy controller.
-//  */
-// async function validateUserOutletAccess(userId) {
-//     if (!userId) {
-//         throw new Error("User authentication required");
-//     }
-
-//     const user = await User.findById(userId).populate(
-//         "center",
-//         "centerName centerCode centerType"
-//     );
-
-//     if (!user) {
-//         throw new Error("User not found");
-//     }
-
-//     if (!user.center) {
-//         throw new Error("User is not associated with any center");
-//     }
-
-//     return user.center._id;
-// }
-
-// /**
-//  * Populate configuration preserved from legacy Raise PO behavior.
-//  */
-// const raisePOPopulateOptions = [
-//     {
-//         path: "vendor",
-//         select:
-//             "_id businessName contactPerson phone email gstNumber state",
-//     },
-//     {
-//         path: "outlet",
-//         select: "_id centerName centerCode centerType",
-//     },
-//     {
-//         path: "products.product",
-//         select:
-//             "_id productTitle productCode productImage productCategory trackSerialNumber",
-//     },
-//     {
-//         path: "createdBy",
-//         select: "_id fullName email",
-//     },
-//     {
-//         path: "approvedBy",
-//         select: "_id fullName email",
-//     },
-// ];
-
-// /**
-//  * Creates a Raise PO.
-//  *
-//  * Voucher number is generated by the RaisePO model.
-//  */
-// export async function createRaisePO(user, data) {
-//     const { hasAccess } = checkStockPurchasePermissions(
-//         user,
-//         ["add_purchase_stock"]
-//     );
-
-//     if (!hasAccess) {
-//         throw new Error(
-//             "Access denied. add_purchase_stock permission required."
-//         );
-//     }
-
-//     const {
-//         date,
-//         vendor,
-//         outlet,
-//         products,
-//     } = data;
-
-//     let outletId = outlet;
-
-//     if (!outletId) {
-//         outletId = await getUserOutletId(user._id);
-//     }
-
-//     const processedProducts = products.map((product) => ({
-//         product: product.product,
-//         price: product.price,
-//         purchasedQuantity: product.purchasedQuantity,
-//         availableQuantity: product.purchasedQuantity,
-//     }));
-
-//     const raisePO = new RaisePO({
-//         date: date || new Date(),
-//         vendor,
-//         outlet: outletId,
-//         products: processedProducts,
-//         createdBy: user._id,
-//         status: "pending",
-//     });
-
-//     const savedPO = await raisePO.save();
-
-//     return RaisePO.findById(savedPO._id).populate(
-//         raisePOPopulateOptions
-//     );
-// }
-
-// /**
-//  * Retrieves Raise POs.
-//  *
-//  * Preserves legacy filtering, pagination and
-//  * own/all outlet permission behavior.
-//  */
-// export async function getAllRaisePO(user, queryParams = {}) {
-//     const {
-//         hasAccess,
-//         permissions,
-//     } = checkStockPurchasePermissions(user, [
-//         "view_own_purchase_stock",
-//         "view_all_purchase_stock",
-//     ]);
-
-//     if (!hasAccess) {
-//         throw new Error(
-//             "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required."
-//         );
-//     }
-
-//     const {
-//         page = 1,
-//         limit = 100,
-//         search,
-//         outlet,
-//         startDate,
-//         endDate,
-//         type,
-//         vendor,
-//     } = queryParams;
-
-//     const filter = {};
-
-//     if (
-//         permissions.view_all_purchase_stock &&
-//         outlet
-//     ) {
-//         filter.outlet = outlet;
-//     } else if (
-//         permissions.view_own_purchase_stock &&
-//         !permissions.view_all_purchase_stock
-//     ) {
-//         const userOutletId =
-//             await validateUserOutletAccess(user._id);
-
-//         filter.outlet = userOutletId;
-//     } else if (outlet) {
-//         filter.outlet = outlet;
-//     }
-
-//     if (startDate || endDate) {
-//         filter.date = {};
-
-//         if (startDate) {
-//             filter.date.$gte = new Date(startDate);
-//         }
-
-//         if (endDate) {
-//             const end = new Date(endDate);
-
-//             end.setHours(23, 59, 59, 999);
-
-//             filter.date.$lte = end;
-//         }
-//     }
-
-//     if (search) {
-//         filter.$or = [
-//             {
-//                 voucherNo: {
-//                     $regex: search,
-//                     $options: "i",
-//                 },
-//             },
-//             {
-//                 "vendor.businessName": {
-//                     $regex: search,
-//                     $options: "i",
-//                 },
-//             },
-//             {
-//                 "vendor.name": {
-//                     $regex: search,
-//                     $options: "i",
-//                 },
-//             },
-//             {
-//                 "vendor.email": {
-//                     $regex: search,
-//                     $options: "i",
-//                 },
-//             },
-//             {
-//                 "vendor.mobile": {
-//                     $regex: search,
-//                     $options: "i",
-//                 },
-//             },
-//             {
-//                 "outlet.centerName": {
-//                     $regex: search,
-//                     $options: "i",
-//                 },
-//             },
-//             {
-//                 "outlet.centerCode": {
-//                     $regex: search,
-//                     $options: "i",
-//                 },
-//             },
-//             {
-//                 "products.product.productTitle": {
-//                     $regex: search,
-//                     $options: "i",
-//                 },
-//             },
-//             {
-//                 "products.product.productCode": {
-//                     $regex: search,
-//                     $options: "i",
-//                 },
-//             },
-//             {
-//                 "products.serialNumbers.serialNumber": {
-//                     $regex: search,
-//                     $options: "i",
-//                 },
-//             },
-//         ];
-//     }
-
-//     if (type) {
-//         filter.type = type;
-//     }
-
-//     if (vendor) {
-//         filter.vendor = vendor;
-//     }
-
-//     const currentPage = Number(page);
-//     const pageLimit = Number(limit);
-
-//     const total = await RaisePO.countDocuments(filter);
-
-//     const purchases = await RaisePO.find(filter)
-//         .populate(raisePOPopulateOptions)
-//         .limit(pageLimit)
-//         .skip((currentPage - 1) * pageLimit)
-//         .lean();
-
-//     return {
-//         data: purchases,
-//         pagination: {
-//             currentPage,
-//             totalPages:
-//                 purchases.length === 0
-//                     ? 0
-//                     : Math.ceil(total / pageLimit),
-//             totalItems:
-//                 purchases.length === 0
-//                     ? 0
-//                     : total,
-//             itemsPerPage: pageLimit,
-//         },
-//     };
-// }
-
-// /**
-//  * Changes an approved/rejected PO back to pending.
-//  *
-//  * Preserved from legacy behavior.
-//  */
-// export async function changeRejectedToPending(user, id) {
-//     const raisePO = await RaisePO.findById(id)
-//         .populate("vendor")
-//         .populate("outlet")
-//         .populate("products.product")
-//         .populate("createdBy")
-//         .populate("approvedBy");
-
-//     if (!raisePO) {
-//         throw new Error("Purchase Order not found");
-//     }
-
-//     if (
-//         raisePO.status !== "rejected" &&
-//         raisePO.status !== "approved"
-//     ) {
-//         throw new Error(
-//             `Cannot change status from '${raisePO.status}' to pending. Only rejected or approved POs can be changed to pending.`
-//         );
-//     }
-
-//     raisePO.status = "pending";
-//     raisePO.approvedBy = undefined;
-//     raisePO.approvedAt = undefined;
-//     raisePO.updatedAt = new Date();
-
-//     await raisePO.save();
-
-//     return RaisePO.findById(id)
-//         .populate("vendor")
-//         .populate("outlet")
-//         .populate("products.product")
-//         .populate("createdBy")
-//         .populate("approvedBy")
-//         .lean();
-// }
-
-// /**
-//  * Approves a Raise PO.
-//  *
-//  * Stock update is intentionally not implemented here yet because
-//  * OutletStock has not been migrated to the new backend.
-//  */
-// export async function approveRaisePO(user, id) {
-//     if (!isAdmin(user)) {
-//         throw new Error(
-//             "Access denied. Only admin can approve POs."
-//         );
-//     }
-
-//     const po = await RaisePO.findById(id);
-
-//     if (!po) {
-//         throw new Error("Purchase order not found");
-//     }
-
-//     if (po.status !== "pending") {
-//         throw new Error(`PO is already ${po.status}`);
-//     }
-
-//     po.status = "approved";
-//     po.approvedBy = user._id;
-//     po.approvedAt = new Date();
-
-//     const approvedPO = await po.save();
-
-//     /*
-//      * Legacy behavior:
-//      *
-//      * OutletStock.updateStock(
-//      *     po.outlet,
-//      *     productItem.product,
-//      *     productItem.purchasedQuantity,
-//      *     approvedPO._id
-//      * );
-//      *
-//      * This will be connected after OutletStock is migrated.
-//      */
-
-//     return RaisePO.findById(approvedPO._id)
-//         .populate("vendor", "businessName name email mobile gstNumber")
-//         .populate(
-//             "outlet",
-//             "_id centerName centerCode centerType"
-//         )
-//         .populate(
-//             "products.product",
-//             "productTitle productCode productPrice"
-//         )
-//         .populate("createdBy", "name email")
-//         .populate("approvedBy", "name email");
-// }
-
-// /**
-//  * Rejects a Raise PO.
-//  */
-// export async function rejectRaisePO(user, id) {
-//     if (!isAdmin(user)) {
-//         throw new Error(
-//             "Access denied. Only admin can reject POs."
-//         );
-//     }
-
-//     const po = await RaisePO.findById(id);
-
-//     if (!po) {
-//         throw new Error("Purchase order not found");
-//     }
-
-//     if (po.status !== "pending") {
-//         throw new Error(`PO is already ${po.status}`);
-//     }
-
-//     po.status = "rejected";
-//     po.approvedBy = user._id;
-//     po.approvedAt = new Date();
-
-//     return po.save();
-// }
-
-// /**
-//  * Deletes a Raise PO.
-//  *
-//  * Stock adjustment is intentionally not implemented yet because
-//  * OutletStock has not been migrated to the new backend.
-//  */
-// export async function deletePO(user, id) {
-//     const outletId =
-//         await validateUserOutletAccess(user._id);
-
-//     const purchase = await RaisePO.findOne({
-//         _id: id,
-//         outlet: outletId,
-//     });
-
-//     if (!purchase) {
-//         throw new Error(
-//             "Stock purchase not found or access denied"
-//         );
-//     }
-
-//     const hasTransfers = purchase.products.some(
-//         (product) =>
-//             product.availableQuantity <
-//             product.purchasedQuantity
-//     );
-
-//     if (hasTransfers) {
-//         throw new Error(
-//             "Cannot delete stock purchase that has transferred stock"
-//         );
-//     }
-
-//     /*
-//      * Legacy behavior:
-//      *
-//      * OutletStock is updated here to decrease:
-//      * - totalQuantity
-//      * - availableQuantity
-//      *
-//      * and purchase serial numbers are pulled.
-//      *
-//      * This will be connected after OutletStock migration.
-//      */
-
-//     await RaisePO.findOneAndDelete({
-//         _id: id,
-//         outlet: outletId,
-//     });
-
-//     return true;
-// }

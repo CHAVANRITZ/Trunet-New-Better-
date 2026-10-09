@@ -5839,6 +5839,201 @@ Shipped
 Completed
 
 \`\`\`
+
+
+CUSTOMER APIs
+
+> **Base URL:** `/api/v1/customers`
+
+### 🟢 Create Customer
+**POST** `/api/v1/customers`
+
+**Authorization:** 🔐 Required
+
+**Permission:**
+- `manage_customer_all_center`
+- `manage_customer_own_center`
+
+---
+
+### 🔵 Get Customers
+**GET** `/api/v1/customers`
+
+**Authorization:** 🔐 Required
+
+**Permission:**
+- `view_customer_all_center`
+- `view_customer_own_center`
+
+**Query Parameters:**
+- `page`
+- `limit`
+- `search`
+- `center`
+- `status`
+
+---
+
+### 🟣 Get Customer by ID
+**GET** `/api/v1/customers/:id`
+
+**Authorization:** 🔐 Required
+
+---
+
+### 🟡 Update Customer
+**PUT** `/api/v1/customers/:id`
+
+**Authorization:** 🔐 Required
+
+**Permission:**
+- `manage_customer_all_center`
+- `manage_customer_own_center`
+
+---
+
+### 🔴 Delete Customer
+**DELETE** `/api/v1/customers/:id`
+
+**Authorization:** 🔐 Required
+
+**Permission:**
+- `manage_customer_all_center`
+- `manage_customer_own_center`
+
+---
+
+### 🟠 Import Customers
+**POST** `/api/v1/customers/import`
+
+**Authorization:** 🔐 Required
+
+**Content-Type:**
+`multipart/form-data`
+
+**File:**
+`file` → CSV file
+
+---
+
+# BUILDING APIs
+
+**Base URL:** `http://localhost:5000/api/v1/buildings`
+
+All Building routes use `protect` and the `Settings` permission module.
+
+## Permission Matrix
+
+| Operation | Permission |
+|---|---|
+| Create / Update / Delete | `manage_building_all_center` or `manage_building_own_center` |
+| List / Get by ID | `view_building_all_center` or `view_building_own_center` |
+
+## Endpoint Summary
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| POST | `/buildings` | Create a building |
+| GET | `/buildings` | List buildings with filtering and pagination |
+| GET | `/buildings/:id` | Get a building by ID |
+| PUT | `/buildings/:id` | Update a building |
+| DELETE | `/buildings/:id` | Delete a building |
+
+## POST `/buildings`
+
+Creates a building.
+
+**Access:** Authenticated; requires `manage_building_all_center` or `manage_building_own_center`.
+
+### Request body
+
+| Field | Required | Description |
+|---|---|---|
+| `center` | Yes | Center MongoDB ID |
+| `buildingName` | Yes | Building name |
+| `displayName` | No | Display name |
+| `address1` | Yes | Primary address |
+| `address2` | No | Secondary address |
+| `landmark` | No | Landmark |
+| `pincode` | No | Six-digit pincode matching the model's pattern |
+
+### Example
+
+```json
+{
+  "center": "CENTER_ID",
+  "buildingName": "Example Building",
+  "displayName": "Example",
+  "address1": "Main Road",
+  "address2": "Near Market",
+  "landmark": "Bus stop",
+  "pincode": "422001"
+}
+```
+
+Responses:
+- `201 Created`: `{ "success": true, "data": BUILDING }`
+- `400 Bad Request`: model/validation error
+- `404 Not Found`: referenced Center not found
+- `403 Forbidden`: permission or own-center scope denied
+
+## GET `/buildings`
+
+Returns a paginated list of buildings.
+
+**Access:** Authenticated; requires `view_building_all_center` or `view_building_own_center`.
+
+| Query parameter | Description |
+|---|---|
+| `search` | Searches building name, display name, address lines, landmark, and pincode |
+| `center` | Center ID filter |
+| `reseller` | Filters through the related Center's reseller |
+| `area` | Filters through the related Center's area |
+| `centerType` | Filters through the related Center's type |
+| `status` | Filters through the related Center's status |
+| `city` | Filters through the related Center's city |
+| `state` | Filters through the related Center's state |
+| `page` | Page number; defaults to `1` |
+| `limit` | Page size; defaults to `100` |
+| `sortBy` | Sort field; defaults to `createdAt` |
+| `sortOrder` | `asc` or `desc`; defaults to `desc` |
+
+Response shape includes `success`, `data`, and `pagination` with `currentPage`, `totalPages`, and `totalBuildings`.
+
+## GET `/buildings/:id`
+
+Returns a building by MongoDB ID.
+
+**Access:** Authenticated; requires `view_building_all_center` or `view_building_own_center`.
+
+Responses:
+- `200 OK`: `{ "success": true, "data": BUILDING }`
+- `404 Not Found`: building not found
+- `403 Forbidden`: own-center user attempts to view a building belonging to another center
+
+## PUT `/buildings/:id`
+
+Updates a building.
+
+**Access:** Authenticated; requires `manage_building_all_center` or `manage_building_own_center`.
+
+Uses the request body as the update payload with model validators enabled. Accepted fields follow the Building model: `center`, `buildingName`, `displayName`, `address1`, `address2`, `landmark`, and `pincode`.
+
+Responses include `200 OK` on success, `400 Bad Request` for model validation errors, `403 Forbidden` for permission/scope denial, and `404 Not Found` when the building does not exist.
+
+## DELETE `/buildings/:id`
+
+Deletes a building.
+
+**Access:** Authenticated; requires `manage_building_all_center` or `manage_building_own_center`.
+
+Responses:
+- `200 OK`: `{ "success": true, "message": "Building deleted successfully" }`
+- `403 Forbidden`: permission/scope denied
+- `404 Not Found`: building not found
+
+
+
 ---
 
 # Control Room APIs
@@ -5890,3 +6085,243 @@ Updates an existing Control Room.
 
 Deletes an existing Control Room.
 ---
+
+Raise Purchase Order (Raise PO) APIs
+Raise PO manages purchase orders, including creation, listing, approval, rejection, resetting a PO to pending, and deletion.
+Base URL: http://localhost:5000/api/v1
+Resource: /raise-pos
+All Raise PO routes require authentication. Existing route names and field names are preserved.
+Permission and Role Notes
+This documentation's manual endpoint test results are based on the Admin login. Other roles are listed in the final testing note and are not presented as fully tested.
+Operation	Permission / restriction
+Create PO	Purchase -> add_purchase_stock
+View own-center POs	Purchase -> view_own_purchase_stock
+View all POs	Purchase -> view_all_purchase_stock
+Approve PO	Admin / Superadmin only
+Reject PO	Admin / Superadmin only
+Change approved/rejected PO to pending	Current implementation restricts this to Admin / Superadmin
+Delete PO	Center-access and stock conditions are enforced by the service
+
+
+Endpoint Summary
+Method	Endpoint	Purpose
+POST	/raise-pos	Create a purchase order
+GET	/raise-pos	List purchase orders
+DELETE	/raise-pos/:id	Delete a purchase order
+PUT	/raise-pos/:id/approve	Approve a pending purchase order
+PUT	/raise-pos/:id/reject	Reject a pending purchase order
+PATCH	/raise-pos/:id/change-to-pending	Change an approved/rejected PO back to pending
+
+
+POST /raise-pos
+Creates a purchase order. New POs start with pending status and a generated voucher number.
+Endpoint
+POST http://localhost:5000/api/v1/raise-pos
+Access: Authenticated user with Purchase -> add_purchase_stock.
+Request Body
+{
+  "date": "2026-10-10",
+  "vendor": "VENDOR_ID",
+  "outlet": "CENTER_ID",
+  "products": [
+    {
+      "product": "PRODUCT_ID",
+      "price": 200,
+      "purchasedQuantity": 2
+    }
+  ]
+}
+Field	Required	Type	Description
+date	No	Date	Purchase order date
+vendor	Yes	ObjectId	Vendor ID
+outlet	Context-dependent	ObjectId	Outlet/Center ID; service may derive it from the authenticated user's center
+products	Yes	Array	Products included in the PO
+products[].product	Yes	ObjectId	Product ID
+products[].price	Yes	Number	Purchase price
+products[].purchasedQuantity	Yes	Number	Purchased quantity
+products[].availableQuantity	Generated	Number	Initialized from purchasedQuantity
+
+
+The voucher number is generated by the backend.
+Successful Response
+201 Created
+{
+  "success": true,
+  "message": "Purchase Order created successfully and pending approval",
+  "data": {
+    "_id": "RAISE_PO_ID",
+    "date": "2026-10-10T00:00:00.000Z",
+    "voucherNo": "STELE/NN/26-27",
+    "vendor": "VENDOR_ID",
+    "outlet": "CENTER_ID",
+    "products": [
+      {
+        "product": "PRODUCT_ID",
+        "price": 200,
+        "purchasedQuantity": 2,
+        "availableQuantity": 2
+      }
+    ],
+    "status": "pending",
+    "createdBy": "USER_ID"
+  }
+}
+The response may include populated vendor, outlet, product, and user objects.
+Common Errors
+HTTP status	Meaning
+400 Bad Request	Invalid request data or ID
+401 Unauthorized	Missing/invalid authentication
+403 Forbidden	Required purchase permission is missing
+409 Conflict	Duplicate/conflicting value where handled
+
+
+GET /raise-pos
+Returns purchase orders accessible to the authenticated user.
+Endpoint
+GET http://localhost:5000/api/v1/raise-pos
+Access: Purchase -> view_own_purchase_stock or Purchase -> view_all_purchase_stock.
+Query Parameters
+Parameter	Required	Description
+page	No	Page number; defaults to 1
+limit	No	Page size; defaults to 100
+search	No	Searches supported PO fields, including voucher number and referenced vendor/outlet/product fields where available
+type	No	Filters by PO type if supported by the stored schema
+vendor	No	Filters by vendor ID
+outlet	No	Filters by outlet/Center ID
+startDate	No	Start of date range
+endDate	No	End of date range
+
+
+Example:
+GET http://localhost:5000/api/v1/raise-pos?page=1&limit=10&search=STELE&vendor=VENDOR_ID
+Successful Response
+200 OK
+{
+  "success": true,
+  "message": "Data retrieved successfully",
+  "data": [],
+  "pagination": {
+    "currentPage": 1,
+    "totalPages": 0,
+    "totalItems": 0,
+    "itemsPerPage": 100
+  }
+}
+When records exist, data contains matching POs. Responses may include populated vendor, outlet, product, createdBy, and approvedBy details. A no-record response uses No raise po found.
+Users with own-center view permission are restricted to their associated center; all-center view permission permits broader results subject to supplied filters and service rules.
+PUT /raise-pos/:id/approve
+Approves a pending purchase order.
+Endpoint
+PUT http://localhost:5000/api/v1/raise-pos/RAISE_PO_ID/approve
+Access: Admin / Superadmin only.
+Request body: None required.
+Successful Response
+200 OK
+{
+  "success": true,
+  "message": "Purchase Order approved successfully",
+  "data": {
+    "_id": "RAISE_PO_ID",
+    "status": "approved"
+  }
+}
+The returned PO may contain additional populated fields.
+Expected Errors
+HTTP status	Meaning
+400 Bad Request	PO is not in pending status
+403 Forbidden	Caller is not Admin / Superadmin
+404 Not Found	PO does not exist
+401 Unauthorized	Missing/invalid authentication
+
+
+Stock note: Approval does not guarantee a stock-ledger update. The current service contains a note that stock integration is not implemented; verify that workflow separately.
+PUT /raise-pos/:id/reject
+Rejects a pending purchase order.
+Endpoint
+PUT http://localhost:5000/api/v1/raise-pos/RAISE_PO_ID/reject
+Access: Admin / Superadmin only.
+Request body: None required.
+Successful Response
+200 OK
+{
+  "success": true,
+  "message": "Purchase Order rejected successfully",
+  "data": {
+    "_id": "RAISE_PO_ID",
+    "status": "rejected"
+  }
+}
+Expected Errors
+HTTP status	Meaning
+400 Bad Request	PO is not pending, including an already-approved PO
+403 Forbidden	Caller is not Admin / Superadmin
+404 Not Found	PO does not exist
+401 Unauthorized	Missing/invalid authentication
+
+
+During manual testing, attempting to reject an already-approved PO returned 400 Bad Request with PO is already approved, which is the expected status-conflict behavior.
+PATCH /raise-pos/:id/change-to-pending
+Changes an approved or rejected PO back to pending.
+Endpoint
+PATCH http://localhost:5000/api/v1/raise-pos/RAISE_PO_ID/change-to-pending
+Access: Current implementation restricts this operation to Admin / Superadmin.
+Request body: None required.
+Successful Response
+200 OK
+{
+  "success": true,
+  "message": "Purchase Order status changed to pending successfully",
+  "data": {
+    "_id": "RAISE_PO_ID",
+    "status": "pending"
+  }
+}
+The service clears prior approval metadata when changing the status back to pending.
+Expected Errors
+HTTP status	Meaning
+400 Bad Request	PO cannot be changed to pending from its current status
+403 Forbidden	Caller is not permitted to perform this operation
+404 Not Found	PO does not exist
+401 Unauthorized	Missing/invalid authentication
+
+
+DELETE /raise-pos/:id
+Deletes a PO subject to center-access and stock checks.
+Endpoint
+DELETE http://localhost:5000/api/v1/raise-pos/RAISE_PO_ID
+Access: Authenticated; center scope and stock conditions are enforced by the service.
+Successful Response
+200 OK
+{
+  "success": true,
+  "message": "PO deleted successfully"
+}
+Expected Errors
+HTTP status	Meaning
+400 Bad Request	Invalid PO ID or deletion is blocked by a stock condition
+403 Forbidden	User is not allowed to access the PO
+404 Not Found	PO does not exist or is inaccessible under the service's access checks
+401 Unauthorized	Missing/invalid authentication
+
+
+Raise PO API Test Coverage
+Admin Login — Manual Thunder Client Testing
+The following test results were observed while testing with the Admin login.
+Test	Observed result	Status
+Create PO	PO created with pending status and generated voucher number	Tested
+Get all POs	Request succeeded	Tested
+Approve pending PO	200 OK	Tested
+Reject pending PO	200 OK	Tested
+Reject an already-approved PO	400 Bad Request, PO is already approved	Tested
+Change rejected PO back to pending	200 OK	Tested
+Response fields and populated data	Checked in the returned responses	Checked during manual testing
+
+
+Other Roles — To Be Verified Separately
+Only Admin-login testing is recorded above. Other roles have not been fully verified across every Raise PO endpoint.
+The Area Manager create-PO attempt returned 403 Forbidden with Access denied. add_purchase_stock permission required. This is consistent with the supplied role-permission table, where Area Manager does not have add_purchase_stock.
+The Area Manager list request returned 200 OK with an empty data array. This confirms the request response only; center-scope and data visibility must be verified using records associated with that user's center.
+Important Implementation Notes
+- Keep the existing route prefix /api/v1/raise-pos and all field names unchanged.
+- 200 OK with an empty list does not alone verify data visibility or center scoping.
+- Stock integration for PO approval/deletion should not be documented as supported until verified in the current implementation
