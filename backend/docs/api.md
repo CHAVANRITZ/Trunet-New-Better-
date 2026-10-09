@@ -2,185 +2,99 @@ Trunet API Documentation
 
 > Updated: Stock Purchase and Stock Request APIs added from the current new-backend route implementations.
 
-
-
 Base URL
-
-
 
 http\://localhost:5000/api/v1
 
-
-
 GET /health
-
-
 
 Checks whether the Trunet backend API is running.
 
-
-
 GET http\://localhost:5000/api/v1/health
-
-
 
 Authentication
 
-
-
 POST /auth/login
-
-
 
 Authenticates a Trunet user using their username or email and password.
 
-
-
 Endpoint
-
-
 
 POST http\://localhost:5000/api/v1/auth/login
 
-
-
 GET /auth/rbac-test
-
-
 
 Verifies that authentication and permission-based authorization are
 
 working correctly.
 
-
-
 Endpoint
-
-
 
 GET http\://localhost:5000/api/v1/auth/rbac-test
 
-
-
 POST /auth/refresh
 
-
-
 Refreshes an authenticated session using a valid refresh token.
-
-
 
 The endpoint uses refresh-token rotation. After a successful refresh,
 
 the supplied refresh token is revoked and a new refresh token is issued.
 
-
-
 Endpoint
-
-
 
 POST http\://localhost:5000/api/v1/auth/refresh
 
-
-
 Authentication — Refresh Token
-
-
 
 POST /api/v1/auth/refresh
 
-
-
 Issues a new access token and rotates the supplied refresh token.
-
-
 
 The previous refresh token is revoked after a successful refresh and
 
 cannot be reused.
 
-
-
 Access: Public
-
-
 
 Request Body
 
-
-
 { "refreshToken": "YOUR_REFRESH_TOKEN" }
-
-
 
 Authentication — Logout
 
-
-
 POST /api/v1/auth/logout
-
-
 
 Revokes the refresh-token session associated with the supplied refresh
 
 token.
 
-
-
 Access: Public
 
-
-
 Request Body
-
-
 
 { "refreshToken": "YOUR_REFRESH_TOKEN" }
 
-
-
 Product Categories
-
-
 
 POST /product-categories
 
-
-
 Creates a new product category.
-
-
 
 Endpoint
 
-
-
 POST http\://localhost:5000/api/v1/product-categories
-
-
 
 Access: Authenticated
 
-
-
 Request Body
-
-
 
 { "productCategory": "Electronics", "remark": "Electronic inventory
 
 items" }
 
-
-
 Successful Response
 
-
-
 201 Created
-
-
 
 { "success": true, "message": "Product category created successfully.",
 
@@ -190,165 +104,85 @@ Successful Response
 
 "2026-09-16T11:09:12.999Z", "updatedAt": "2026-09-16T11:09:12.999Z" } }
 
-
-
 Errors
-
-
 
 400 Bad Request
 
-
-
 Returned when the request fails validation.
-
-
 
 409 Conflict
 
-
-
 Returned when the product category already exists.
-
-
 
 GET /product-categories
 
-
-
 Returns a paginated list of product categories.
-
-
 
 Endpoint
 
-
-
 GET http\://localhost:5000/api/v1/product-categories
-
-
 
 Access: Authenticated
 
-
-
 Query Parameters
-
-
 
 Parameter
 
-
-
 Required
-
-
 
 Default
 
-
-
 Description
-
-
 
 search
 
-
-
 No
-
-
 
 —
 
-
-
 Searches product category and remark
-
-
 
 page
 
-
-
 No
-
-
 
 1
 
-
-
 Page number
-
-
 
 limit
 
-
-
 No
-
-
 
 100
 
-
-
 Number of records per page
-
-
 
 sortBy
 
-
-
 No
-
-
 
 createdAt
 
-
-
 Field used for sorting
-
-
 
 sortOrder
 
-
-
 No
-
-
 
 desc
 
-
-
 Sort direction: asc or desc
 
-
-
 Example
-
-
 
 GET
 
 http\://localhost:5000/api/v1/product-categories?search=electronics&page=1&limit=10&sortBy=createdAt&sortOrder=desc
 
-
-
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Product categories retrieved
 
@@ -362,35 +196,19 @@ items", "createdAt": "2026-09-16T11:09:12.999Z", "updatedAt":
 
 "totalPages": 1, "totalCategories": 1 } } }
 
-
-
 GET /product-categories/:id
-
-
 
 Returns a product category by its MongoDB ID.
 
-
-
 Endpoint
-
-
 
 GET http\://localhost:5000/api/v1/product-categories/CATEGORY_ID
 
-
-
 Access: Authenticated
-
-
 
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Product category retrieved
 
@@ -400,65 +218,35 @@ successfully.", "data": { "\\\_id": "CATEGORY_ID", "productCategory":
 
 "2026-09-16T11:09:12.999Z", "updatedAt": "2026-09-16T11:09:12.999Z" } }
 
-
-
 Errors
-
-
 
 400 Bad Request
 
-
-
 Returned when the supplied ID is invalid.
-
-
 
 404 Not Found
 
-
-
 Returned when the product category does not exist.
-
-
 
 PUT /product-categories/:id
 
-
-
 Updates an existing product category.
-
-
 
 Endpoint
 
-
-
 PUT http\://localhost:5000/api/v1/product-categories/CATEGORY_ID
-
-
 
 Access: Authenticated
 
-
-
 Request Body
-
-
 
 { "productCategory": "Updated Electronics", "remark": "Updated category
 
 description" }
 
-
-
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Product category updated successfully.",
 
@@ -468,63 +256,33 @@ Electronics", "remark": "Updated category description", "createdAt":
 
 "2026-09-16T11:09:12.999Z", "updatedAt": "2026-09-16T11:56:54.426Z" } }
 
-
-
 Errors
-
-
 
 400 Bad Request
 
-
-
 Returned when the ID or request fields fail validation.
-
-
 
 404 Not Found
 
-
-
 Returned when the product category does not exist.
-
-
 
 409 Conflict
 
-
-
 Returned when the updated product category already exists.
-
-
 
 DELETE /product-categories/:id
 
-
-
 Deletes an existing product category.
-
-
 
 Endpoint
 
-
-
 DELETE http\://localhost:5000/api/v1/product-categories/CATEGORY_ID
-
-
 
 Access: Authenticated
 
-
-
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Product category deleted successfully.",
 
@@ -534,303 +292,153 @@ Successful Response
 
 "2026-09-16T11:09:12.999Z", "updatedAt": "2026-09-16T11:56:54.426Z" } }
 
-
-
 Errors
-
-
 
 400 Bad Request
 
-
-
 Returned when the supplied ID is invalid.
-
-
 
 404 Not Found
 
-
-
 Returned when the product category does not exist.
-
-
 
 Products
 
-
-
 POST /products
-
-
 
 Creates a new product.
 
-
-
 Endpoint
-
-
 
 POST http\://localhost:5000/api/v1/products
 
-
-
 Access: Authenticated
-
-
 
 Request
 
-
-
 Use multipart/form-data because the product image is optional.
-
-
 
 Field
 
-
-
 Required
-
-
 
 Type
 
-
-
 Description
-
-
 
 productCategory
 
-
-
 Yes
-
-
 
 MongoDB ObjectId
 
-
-
 Product category ID
-
-
 
 productTitle
 
-
-
 Yes
 
-
-
 String
-
-
 
 Unique product title
 
-
-
 productCode
-
-
 
 No
 
-
-
 String
-
-
 
 Unique product code
 
-
-
 productPrice
-
-
 
 Yes
 
-
-
 Number
-
-
 
 Product purchase/base price
 
-
-
 salePrice
 
-
-
 Yes
-
-
 
 Number
 
-
-
 Product sale price
-
-
 
 hsnCode
 
-
-
 Yes
 
-
-
 String
-
-
 
 HSN code
 
-
-
 productImage
 
-
-
 No
-
-
 
 File
 
-
-
 JPG, JPEG, PNG, WEBP or GIF; maximum 5 MB
-
-
 
 productWeight
 
-
-
 No
 
-
-
 String
-
-
 
 Product weight
 
-
-
 productBarcode
-
-
 
 No
 
-
-
 String
-
-
 
 Product barcode
 
-
-
 status
-
-
 
 No
 
-
-
 String
-
-
 
 Enable or Disable
 
-
-
 description
-
-
 
 No
 
-
-
 String
-
-
 
 Product description
 
-
-
 trackSerialNumber
-
-
 
 No
 
-
-
 String
 
-
-
 Yes or No
-
-
 
 repairable
 
-
-
 No
-
-
 
 String
 
-
-
 Yes or No
-
-
 
 replaceable
 
-
-
 No
-
-
 
 String
 
-
-
 Yes or No
 
-
-
 Example
-
-
 
 productCategory = CATEGORY_ID productTitle = WiFi Router productCode =
 
@@ -842,15 +450,9 @@ description = Wireless networking router trackSerialNumber = Yes
 
 repairable = Yes replaceable = Yes productImage = router.png
 
-
-
 Successful Response
 
-
-
 201 Created
-
-
 
 { "success": true, "message": "Product created successfully.", "data": {
 
@@ -874,291 +476,151 @@ Successful Response
 
 "2026-09-18T04:33:39.142Z" } }
 
-
-
 Errors
 
-
-
 400 Bad Request
-
-
 
 Returned when request validation fails or the product category ID is
 
 invalid.
 
-
-
 404 Not Found
-
-
 
 Returned when the referenced product category does not exist.
 
-
-
 409 Conflict
-
-
 
 Returned when the product title or product code is already in use.
 
-
-
 GET /products
-
-
 
 Returns a paginated list of products with optional filtering and
 
 sorting.
 
-
-
 Endpoint
-
-
 
 GET http\://localhost:5000/api/v1/products
 
-
-
 Access: Authenticated
-
-
 
 Query Parameters
 
-
-
 Parameter
-
-
 
 Required
 
-
-
 Default
-
-
 
 Description
 
-
-
 search
-
-
 
 No
 
-
-
 —
-
-
 
 Searches product title, code, description and barcode
 
-
-
 category
-
-
 
 No
 
-
-
 —
-
-
 
 Product category ID, name or category code
 
-
-
 status
-
-
 
 No
 
-
-
 —
-
-
 
 Enable, Disable, or comma-separated values
 
-
-
 minPrice
-
-
 
 No
 
-
-
 —
-
-
 
 Minimum product price
 
-
-
 maxPrice
-
-
 
 No
 
-
-
 —
-
-
 
 Maximum product price
 
-
-
 trackSerialNumber
-
-
 
 No
 
-
-
 —
 
-
-
 Yes or No
-
-
 
 repairable
 
-
-
 No
-
-
 
 —
 
-
-
 Yes or No
-
-
 
 replaceable
 
-
-
 No
 
-
-
 —
-
-
 
 Yes or No
 
-
-
 page
 
-
-
 No
-
-
 
 1
 
-
-
 Page number
-
-
 
 limit
 
-
-
 No
-
-
 
 —
 
-
-
 Records per page; maximum 100
-
-
 
 sortBy
 
-
-
 No
 
-
-
 createdAt
-
-
 
 createdAt, updatedAt, productTitle, productCode, productPrice, salePrice
 
 or status
 
-
-
 sortOrder
-
-
 
 No
 
-
-
 desc
-
-
 
 asc or desc
 
-
-
 Example
-
-
 
 GET
 
 http\://localhost:5000/api/v1/products?search=router&status=Enable&page=1&limit=10&sortBy=salePrice&sortOrder=asc
 
-
-
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Products retrieved successfully.",
 
@@ -1186,99 +648,53 @@ Successful Response
 
 false, "hasPrevPage": false } } }
 
-
-
 GET /products/all
-
-
 
 Returns all products without pagination.
 
-
-
 Endpoint
-
-
 
 GET http\://localhost:5000/api/v1/products/all
 
-
-
 Access: Authenticated
-
-
 
 Query Parameters
 
-
-
 Parameter
-
-
 
 Required
 
-
-
 Default
-
-
 
 Description
 
-
-
 sortBy
-
-
 
 No
 
-
-
 createdAt
-
-
 
 createdAt, updatedAt, productTitle, productCode, productPrice, salePrice
 
 or status
 
-
-
 sortOrder
-
-
 
 No
 
-
-
 desc
-
-
 
 asc or desc
 
-
-
 Example
-
-
 
 GET
 
 http\://localhost:5000/api/v1/products/all?sortBy=productTitle&sortOrder=asc
 
-
-
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Products retrieved successfully.",
 
@@ -1300,35 +716,19 @@ inventory items" }, "productTitle": "WiFi Router", "productCode":
 
 "updatedAt": "2026-09-18T04:33:39.142Z" } \\] }
 
-
-
 GET /products/:id
-
-
 
 Returns a product by its MongoDB ID.
 
-
-
 Endpoint
-
-
 
 GET http\://localhost:5000/api/v1/products/PRODUCT_ID
 
-
-
 Access: Authenticated
-
-
 
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Product retrieved successfully.", "data":
 
@@ -1350,85 +750,47 @@ networking router", "trackSerialNumber": "Yes", "repairable": "Yes",
 
 "updatedAt": "2026-09-18T04:33:39.142Z" } }
 
-
-
 Errors
-
-
 
 400 Bad Request
 
-
-
 Returned when the supplied ID is invalid.
-
-
 
 404 Not Found
 
-
-
 Returned when the product does not exist.
-
-
 
 PUT /products/:id
 
-
-
 Updates an existing product.
-
-
 
 Endpoint
 
-
-
 PUT http\://localhost:5000/api/v1/products/PRODUCT_ID
-
-
 
 Access: Authenticated
 
-
-
 Request
-
-
 
 Use multipart/form-data. All product fields are optional during an
 
 update.
 
-
-
 The accepted fields are the same as POST /products.
-
-
 
 If a new productImage is supplied, the previous product image is removed
 
 after the database update succeeds.
 
-
-
 Example
-
-
 
 productTitle = Updated WiFi Router salePrice = 2100 description =
 
 Updated wireless networking router productImage = new-router.png
 
-
-
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Product updated successfully.", "data": {
 
@@ -1438,203 +800,105 @@ Successful Response
 
 }
 
-
-
 Errors
-
-
 
 400 Bad Request
 
-
-
 Returned when the ID or supplied fields fail validation.
-
-
 
 404 Not Found
 
-
-
 Returned when the product or referenced product category does not exist.
 
-
-
 409 Conflict
-
-
 
 Returned when the updated product title or product code is already in
 
 use.
 
-
-
 DELETE /products/:id
-
-
 
 Deletes an existing product.
 
-
-
 Endpoint
-
-
 
 DELETE http\://localhost:5000/api/v1/products/PRODUCT_ID
 
-
-
 Access: Authenticated
-
-
 
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Product deleted successfully." }
 
-
-
 Errors
-
-
 
 400 Bad Request
 
-
-
 Returned when the supplied ID is invalid.
-
-
 
 404 Not Found
 
-
-
 Returned when the product does not exist.
-
-
 
 GET /products/download-template
 
-
-
 Downloads the standard CSV template used for bulk product imports.
-
-
 
 Endpoint
 
-
-
 GET http\://localhost:5000/api/v1/products/download-template
-
-
 
 Access: Authenticated
 
-
-
 Response
 
-
-
 200 OK
-
-
 
 Content-Type: text/csv Content-Disposition: attachment;
 
 filename=product_bulk_upload_template.csv
 
-
-
 CSV Columns
-
-
 
 productCategory,productTitle,productCode,productPrice,salePrice,hsnCode,productWeight,productBarcode,status,description,trackSerialNumber,repairable,replaceable
 
-
-
 POST /products/bulk-import
-
-
 
 Imports multiple products from a CSV file.
 
-
-
 Endpoint
-
-
 
 POST http\://localhost:5000/api/v1/products/bulk-import
 
-
-
 Access: Authenticated
-
-
 
 Request
 
-
-
 Use multipart/form-data.
-
-
 
 Field
 
-
-
 Required
-
-
 
 Type
 
-
-
 Description
-
-
 
 csvFile
 
-
-
 Yes
-
-
 
 File
 
-
-
 CSV file containing product records
-
-
 
 The CSV file is kept in memory during processing.
 
-
-
 Maximum upload size: 10 MB.
 
-
-
 CSV Columns
-
-
 
 productCategory productTitle productCode productPrice salePrice hsnCode
 
@@ -1642,67 +906,37 @@ productWeight productBarcode status description trackSerialNumber
 
 repairable replaceable
 
-
-
 Bulk Import Rules
-
-
 
 Each CSV row is validated independently.
 
-
-
 Invalid rows do not prevent other valid rows from being imported.
-
-
 
 Product titles are unique.
 
-
-
 Product codes are unique when provided.
-
-
 
 Duplicate product titles and product codes are reported against their
 
 CSV row.
 
-
-
 Duplicate values within the same CSV are rejected before insertion.
-
-
 
 Product categories are resolved during import and can be created when
 
 required.
 
-
-
 status accepts Enable or Disable.
-
-
 
 trackSerialNumber, repairable, and replaceable accept Yes or No.
 
-
-
 Example
-
-
 
 csvFile = products.csv
 
-
-
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Bulk import completed. Successful: 2,
 
@@ -1714,75 +948,39 @@ Failed: 1.", "data": { "total": 3, "successful": 2, "failed": 1,
 
 "errors": \\[ "Product code already exists." \\] } \\] } }
 
-
-
 Errors
-
-
 
 400 Bad Request
 
-
-
 Returned when:
-
-
 
 the CSV file is missing;
 
-
-
 the CSV file is empty or cannot be parsed;
-
-
 
 the uploaded file is not a supported CSV upload;
 
-
-
 the CSV contains invalid product data.
-
-
 
 The response includes row-specific validation errors where applicable.
 
-
-
 401 Unauthorized
-
-
 
 Returned when authentication credentials are missing or invalid.
 
-
-
 Centers
-
-
 
 POST /centers
 
-
-
 Creates a new Center.
-
-
 
 Endpoint
 
-
-
 POST http\://localhost:5000/api/v1/centers
-
-
 
 Access: Authenticated
 
-
-
 Request Body
-
-
 
 { "resellerId": "RESELLER_ID", "areaId": "AREA_ID", "centerType":
 
@@ -1794,15 +992,9 @@ Request Body
 
 "city": "Pune", "state": "Maharashtra", "stockVerified": "Yes" }
 
-
-
 Successful Response
 
-
-
 201 Created
-
-
 
 { "success": true, "message": "Center created successfully", "data": {
 
@@ -1820,235 +1012,119 @@ Successful Response
 
 "TIMESTAMP" } }
 
-
-
 Errors
-
-
 
 400 Bad Request
 
-
-
 Returned when Center data fails validation.
-
-
 
 404 Not Found
 
-
-
 Returned when the referenced reseller or area does not exist.
-
-
 
 409 Conflict
 
-
-
 Returned when a Center with the same unique Center code already exists.
-
-
 
 GET /centers
 
-
-
 Returns a paginated list of Centers.
-
-
 
 Endpoint
 
-
-
 GET http\://localhost:5000/api/v1/centers
-
-
 
 Access: Authenticated
 
-
-
 Query Parameters
-
-
 
 Parameter
 
-
-
 Required
-
-
 
 Default
 
-
-
 Description
-
-
 
 search
 
-
-
 No
 
-
-
 —
-
-
 
 Searches Center records
 
-
-
 centerType
-
-
 
 No
 
-
-
 —
-
-
 
 Filters by Center type
 
-
-
 status
-
-
 
 No
 
-
-
 —
-
-
 
 Filters by Center status
 
-
-
 reseller
-
-
 
 No
 
-
-
 —
-
-
 
 Filters by reseller ID
 
-
-
 area
-
-
 
 No
 
-
-
 —
-
-
 
 Filters by area ID
 
-
-
 page
 
-
-
 No
-
-
 
 1
 
-
-
 Page number
-
-
 
 limit
 
-
-
 No
-
-
 
 100
 
-
-
 Number of records per page
-
-
 
 sortBy
 
-
-
 No
 
-
-
 —
-
-
 
 Field used for sorting
 
-
-
 sortOrder
-
-
 
 No
 
-
-
 —
-
-
 
 asc or desc
 
-
-
 Example
-
-
 
 GET http\://localhost:5000/api/v1/centers?page=1&limit=10
 
-
-
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Centers retrieved successfully", "data":
 
@@ -2056,35 +1132,19 @@ Successful Response
 
 0, "itemsPerPage": 100, "hasNextPage": false } }
 
-
-
 GET /centers/:id
-
-
 
 Returns a Center by its MongoDB ID.
 
-
-
 Endpoint
-
-
 
 GET http\://localhost:5000/api/v1/centers/CENTER_ID
 
-
-
 Access: Authenticated
-
-
 
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Center retrieved successfully", "data": {
 
@@ -2102,51 +1162,27 @@ Successful Response
 
 "TIMESTAMP" } }
 
-
-
 Errors
-
-
 
 400 Bad Request
 
-
-
 Returned when the supplied ID is invalid.
-
-
 
 404 Not Found
 
-
-
 Returned when the Center does not exist.
-
-
 
 PUT /centers/:id
 
-
-
 Updates an existing Center.
-
-
 
 Endpoint
 
-
-
 PUT http\://localhost:5000/api/v1/centers/CENTER_ID
-
-
 
 Access: Authenticated
 
-
-
 Request Body
-
-
 
 { "resellerId": "RESELLER_ID", "areaId": "AREA_ID", "centerType":
 
@@ -2160,15 +1196,9 @@ Request Body
 
 "Maharashtra", "stockVerified": "No" }
 
-
-
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Center updated successfully", "data": {
 
@@ -2186,1021 +1216,521 @@ Address 1", "addressLine2": "Updated Address 2", "city": "Mumbai",
 
 "updatedAt": "TIMESTAMP" } }
 
-
-
 Errors
 
-
-
 400 Bad Request
-
-
 
 Returned when the ID or supplied fields fail validation.
 
-
-
 404 Not Found
-
-
 
 Returned when the Center, reseller, or area does not exist.
 
-
-
 DELETE /centers/:id
-
-
 
 Deletes an existing Center.
 
-
-
 Endpoint
-
-
 
 DELETE http\://localhost:5000/api/v1/centers/CENTER_ID
 
-
-
 Access: Authenticated
-
-
 
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Center deleted successfully" }
 
-
-
 Errors
-
-
 
 400 Bad Request
 
-
-
 Returned when the supplied ID is invalid.
-
-
 
 404 Not Found
 
-
-
 Returned when the Center does not exist.
-
-
 
 GET /centers/reseller/:resellerId
 
-
-
 Returns Centers associated with a specific reseller.
 
-
-
 Endpoint
-
-
 
 GET http\://localhost:5000/api/v1/centers/reseller/RESELLER_ID
 
-
-
 Access: Authenticated
-
-
 
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Centers retrieved successfully", "data":
 
 \\[\\] }
-
-
 
 GET /centers/resellers/center
 
-
-
 Returns Centers for the reseller associated with the authenticated user.
 
-
-
 Endpoint
-
-
 
 GET http\://localhost:5000/api/v1/centers/resellers/center
 
-
-
 Access: Authenticated
-
-
 
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Centers retrieved successfully", "data":
 
 \\[\\] }
-
-
 
 GET /centers/area/:areaId
 
-
-
 Returns Centers associated with a specific area.
-
-
 
 Endpoint
 
-
-
 GET http\://localhost:5000/api/v1/centers/area/AREA_ID
-
-
 
 Access: Authenticated
 
-
-
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Centers retrieved successfully", "data":
 
 \\[\\] }
 
-
-
 GET /centers/main-warehouse
-
-
 
 Returns main-warehouse Center data.
 
-
-
 Endpoint
-
-
 
 GET http\://localhost:5000/api/v1/centers/main-warehouse
 
-
-
 Access: Authenticated
-
-
 
 Successful Response
 
-
-
 200 OK
-
-
 
 { "success": true, "message": "Main warehouse centers retrieved
 
 successfully", "data": \\[\\] }
 
-
-
 Center API Test Coverage
-
-
 
 The following Center operations were tested against the new backend:
 
-
-
 Test
-
-
 
 Status
 
-
-
 Create Center
 
-
-
 Tested
-
-
 
 Get all Centers
 
-
-
 Tested
-
-
 
 Get Center by ID
 
-
-
 Tested
-
-
 
 Search
 
-
-
 Tested
-
-
 
 Center type filter
 
-
-
 Tested
-
-
 
 Status filter
 
-
-
 Tested
-
-
 
 Reseller filter
 
-
-
 Tested
-
-
 
 Area filter
 
-
-
 Tested
-
-
 
 Pagination
 
-
-
 Tested
-
-
 
 Reseller-specific Centers
 
-
-
 Tested
-
-
 
 Authenticated reseller Centers
 
-
-
 Tested
-
-
 
 Area-specific Centers
 
-
-
 Tested
-
-
 
 Main warehouse endpoint
 
-
-
 Tested
-
-
 
 Update Center
 
-
-
 Tested
-
-
 
 Delete Center
 
-
-
 Tested
 
-
-
 Center fields checked
-
-
 
 \\\_id reseller area centerType centerName centerCode email mobile status
 
 addressLine1 addressLine2 city state stockVerified createdAt updatedAt
 
-
-
 CSV/export is intentionally not documented here because it is not part
 
 of the current new-backend/frontend Center implementation.
 
-
-
 Reseller APIs
 
-
-
 Base URL: http\://localhost:5000/api/v1
-
-
 
 1\.  Create Reseller
 
-
-
 POST /resellers
-
-
 
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 2\.  Get All Resellers
 
-
-
 GET /resellers
-
-
 
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 3\.  Get Reseller By ID
 
-
-
 GET /resellers/:id
-
-
 
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 4\.  Update Reseller
 
-
-
 PUT /resellers/:id
-
-
 
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 5\.  Delete Reseller
 
-
-
 DELETE /resellers/:id
-
-
 
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 Area APIs
 
-
-
 1\.  Create Area
-
-
 
 POST /areas
 
-
-
 Request Body
-
-
 
 { "resellerId": "\<resellerId>", "areaName": "Test Area" }
 
-
-
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 2\.  Get All Areas
 
-
-
 GET /areas
-
-
 
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 3\.  Get Area By ID
 
-
-
 GET /areas/:id
-
-
 
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 4\.  Update Area
 
-
-
 PUT /areas/:id
-
-
 
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 5\.  Delete Area
 
-
-
 DELETE /areas/:id
-
-
 
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 Center APIs
 
-
-
 Base URL: http\://localhost:5000/api/v1
-
-
 
 1\.  Create Center
 
-
-
 POST /centers
-
-
 
 Endpoint
 
-
-
 POST http\://localhost:5000/api/v1/centers
-
-
 
 API Test
 
-
-
 Status: Tested successfully.
 
-
-
 Center can be created:
-
-
 
 \- Without a Warehouse ID
 
 \- With a Warehouse ID
 
-
-
 Multiple Centers can reference the same Warehouse.
-
-
 
 2\.  Get All Centers
 
-
-
 GET /centers
 
-
-
 Endpoint
-
-
 
 GET http\://localhost:5000/api/v1/centers
 
-
-
 Tested Query Parameters
-
-
 
 search
 
-
-
 centerType
-
-
 
 status
 
-
-
 reseller
 
-
-
 area
-
-
 
 page
 
-
-
 limit
-
-
 
 sortBy
 
-
-
 sortOrder
-
-
 
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 3\.  Get Center By ID
 
-
-
 GET /centers/:id
 
-
-
 Endpoint
-
-
 
 GET http\://localhost:5000/api/v1/centers/CENTER_ID
 
-
-
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 4\.  Update Center
 
-
-
 PUT /centers/:id
 
-
-
 Endpoint
-
-
 
 PUT http\://localhost:5000/api/v1/centers/CENTER_ID
 
-
-
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 5\.  Delete Center
 
-
-
 DELETE /centers/:id
 
-
-
 Endpoint
-
-
 
 DELETE http\://localhost:5000/api/v1/centers/CENTER_ID
 
-
-
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 6\.  Get Centers By Reseller
 
-
-
 GET /centers/reseller/:resellerId
 
-
-
 Endpoint
-
-
 
 GET http\://localhost:5000/api/v1/centers/reseller/RESELLER_ID
 
-
-
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 7\.  Get Centers By Resellers
 
-
-
 GET /centers/resellers/center
 
-
-
 Endpoint
-
-
 
 GET http\://localhost:5000/api/v1/centers/resellers/center
 
-
-
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 8\.  Get Centers By Area
 
-
-
 GET /centers/area/:areaId
-
-
 
 Endpoint
 
-
-
 GET http\://localhost:5000/api/v1/centers/area/AREA_ID
-
-
 
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 Center Fields Verified During Testing
 
-
-
 \\\_id
-
-
 
 reseller
 
-
-
 area
-
-
 
 warehouse
 
-
-
 centerType
-
-
 
 centerName
 
-
-
 centerCode
-
-
 
 email
 
-
-
 mobile
-
-
 
 status
 
-
-
 addressLine1
-
-
 
 addressLine2
 
-
-
 city
-
-
 
 state
 
-
-
 stockVerified
-
-
 
 createdAt
 
-
-
 updatedAt
-
-
 
 Center create/update requests use resellerId and areaId, which map to
 
 the stored reseller and area relationships.
 
-
-
 The warehouse field is optional. A Center can be created without a
 
 Warehouse ID or with a Warehouse ID.
 
-
-
 Multiple Centers can reference the same Warehouse.
-
-
 
 API Test Coverage
 
-
-
 Module
-
-
 
 Create
 
-
-
 List
-
-
 
 Get By ID
 
-
-
 Update
-
-
 
 Delete
 
-
-
 Additional APIs
-
-
 
 Reseller
 
-
+Tested
 
 Tested
 
-
+Tested
 
 Tested
 
-
-
 Tested
-
-
-
-Tested
-
-
-
-Tested
-
-
 
 —
 
-
-
 Area
 
-
+Tested
 
 Tested
 
-
+Tested
 
 Tested
 
-
-
 Tested
-
-
-
-Tested
-
-
-
-Tested
-
-
 
 Reseller relation
 
-
-
 Center
 
-
+Tested
 
 Tested
 
-
+Tested
 
 Tested
 
-
-
 Tested
-
-
-
-Tested
-
-
-
-Tested
-
-
 
 Reseller, Area, Warehouse, Search/Filter/Pagination
 
-
-
 **# Vendors**
-
-
 
 **## POST&#x20;**\`/vendors\`
 
-
-
 Creates a new vendor.
 
-
-
 **### Endpoint**
-
-
 
 \`\`\`http
 
@@ -3208,19 +1738,11 @@ POST http\://localhost:5000/api/v1/vendors
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with \`Settings -> manage_vendors\` permission
-
-
 
 **### Request**
 
-
-
 Use \`multipart/form-data\` when uploading a vendor logo.
-
-
 
 \| Field           | Required | Type   | Description                                |
 
@@ -3250,11 +1772,7 @@ Use \`multipart/form-data\` when uploading a vendor logo.
 
 \| \`logo\`          | No       | File   | JPG, JPEG, PNG, WEBP or GIF; maximum 5 MB  |
 
-
-
 **### Example**
-
-
 
 \`\`\`text
 
@@ -3284,15 +1802,9 @@ logo = vendor-logo.png
 
 \`\`\`
 
-
-
 **### Successful Response**
 
-
-
 **\*\*201 Created\*\***
-
-
 
 \`\`\`json
 
@@ -3340,43 +1852,23 @@ logo = vendor-logo.png
 
 \`\`\`
 
-
-
 **### Errors**
-
-
 
 **\*\*400 Bad Request\*\***
 
-
-
 Returned when vendor request validation fails.
-
-
 
 **\*\*409 Conflict\*\***
 
-
-
 Returned when the supplied email address is already registered.
-
-
 
 \---
 
-
-
 **## GET&#x20;**\`/vendors\`
-
-
 
 Returns a paginated list of vendors with optional filtering and sorting.
 
-
-
 **### Endpoint**
-
-
 
 \`\`\`http
 
@@ -3384,15 +1876,9 @@ GET http\://localhost:5000/api/v1/vendors
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with \`Settings -> manage_vendors\` permission
 
-
-
 **### Query Parameters**
-
-
 
 \| Parameter   | Required | Default     | Description                                                                       |
 
@@ -3416,11 +1902,7 @@ GET http\://localhost:5000/api/v1/vendors
 
 \| \`sortOrder\` | No       | \`desc\`      | Sort direction: \`asc\` or \`desc\`                                                   |
 
-
-
 **### Example**
-
-
 
 \`\`\`http
 
@@ -3428,15 +1910,9 @@ GET http\://localhost:5000/api/v1/vendors?search=electronics&city=Pune&hasGst=tr
 
 \`\`\`
 
-
-
 **### Successful Response**
 
-
-
 **\*\*200 OK\*\***
-
-
 
 \`\`\`json
 
@@ -3500,23 +1976,13 @@ GET http\://localhost:5000/api/v1/vendors?search=electronics&city=Pune&hasGst=tr
 
 \`\`\`
 
-
-
 \---
-
-
 
 **## GET&#x20;**\`/vendors/:id\`
 
-
-
 Returns a vendor by its MongoDB ID.
 
-
-
 **### Endpoint**
-
-
 
 \`\`\`http
 
@@ -3524,19 +1990,11 @@ GET http\://localhost:5000/api/v1/vendors/VENDOR_ID
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with \`Settings -> manage_vendors\` permission
-
-
 
 **### Successful Response**
 
-
-
 **\*\*200 OK\*\***
-
-
 
 \`\`\`json
 
@@ -3582,19 +2040,11 @@ GET http\://localhost:5000/api/v1/vendors/VENDOR_ID
 
 \`\`\`
 
-
-
 **### Errors**
-
-
 
 **\*\*400 Bad Request\*\***
 
-
-
 Returned when the supplied ID is invalid.
-
-
 
 \`\`\`json
 
@@ -3608,15 +2058,9 @@ Returned when the supplied ID is invalid.
 
 \`\`\`
 
-
-
 **\*\*404 Not Found\*\***
 
-
-
 Returned when the vendor does not exist.
-
-
 
 \`\`\`json
 
@@ -3630,23 +2074,13 @@ Returned when the vendor does not exist.
 
 \`\`\`
 
-
-
 \---
-
-
 
 **## PUT&#x20;**\`/vendors/:id\`
 
-
-
 Updates an existing vendor.
 
-
-
 **### Endpoint**
-
-
 
 \`\`\`http
 
@@ -3654,41 +2088,23 @@ PUT http\://localhost:5000/api/v1/vendors/VENDOR_ID
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with \`Settings -> manage_vendors\` permission
-
-
 
 **### Request**
 
-
-
 Use \`multipart/form-data\` when uploading a new logo.
-
-
 
 All vendor fields are optional during an update.
 
-
-
 The accepted fields are the same as \`POST /vendors\`.
 
-
-
 If no new logo is supplied, the existing logo is preserved.
-
-
 
 If a new logo is supplied, the previous logo is removed after the
 
 database update succeeds.
 
-
-
 **### Example**
-
-
 
 \`\`\`text
 
@@ -3710,15 +2126,9 @@ logo = updated-vendor-logo.png
 
 \`\`\`
 
-
-
 **### Successful Response**
 
-
-
 **\*\*200 OK\*\***
-
-
 
 \`\`\`json
 
@@ -3766,51 +2176,27 @@ logo = updated-vendor-logo.png
 
 \`\`\`
 
-
-
 **### Errors**
-
-
 
 **\*\*400 Bad Request\*\***
 
-
-
 Returned when the supplied ID or vendor data is invalid.
-
-
 
 **\*\*404 Not Found\*\***
 
-
-
 Returned when the vendor does not exist.
-
-
 
 **\*\*409 Conflict\*\***
 
-
-
 Returned when the updated email address is already registered.
-
-
 
 \---
 
-
-
 **## DELETE&#x20;**\`/vendors/:id\`
-
-
 
 Deletes an existing vendor and its associated logo file.
 
-
-
 **### Endpoint**
-
-
 
 \`\`\`http
 
@@ -3818,19 +2204,11 @@ DELETE http\://localhost:5000/api/v1/vendors/VENDOR_ID
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with \`Settings -> manage_vendors\` permission
-
-
 
 **### Successful Response**
 
-
-
 **\*\*200 OK\*\***
-
-
 
 \`\`\`json
 
@@ -3844,67 +2222,35 @@ DELETE http\://localhost:5000/api/v1/vendors/VENDOR_ID
 
 \`\`\`
 
-
-
 **### Errors**
-
-
 
 **\*\*400 Bad Request\*\***
 
-
-
 Returned when the supplied ID is invalid.
-
-
 
 **\*\*404 Not Found\*\***
 
-
-
 Returned when the vendor does not exist.
-
-
 
 Warehouse APIs
 
-
-
 Base URL: http\://localhost:5000/api/v1
-
-
 
 Warehouse management uses the existing Center permission module.
 
-
-
 Permission Module
-
-
 
 Center
 
-
-
 Create / Update / Delete: manage_all_center
-
-
 
 Read: view_all_center
 
-
-
 Create Warehouse
-
-
 
 POST /warehouses
 
-
-
 Request Body
-
-
 
 { "resellerId": "RESELLER_ID", "areaId": "AREA_ID", "warehouseName":
 
@@ -3916,201 +2262,106 @@ Request Body
 
 "state": "Maharashtra", "stockVerified": "" }
 
-
-
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 Get All Warehouses
 
-
-
 GET /warehouses
-
-
 
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 Get Warehouse By ID
 
-
-
 GET /warehouses/Id:
-
-
 
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 Update Warehouse
 
-
-
 PUT /warehouses/Id:
-
-
 
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 Delete Warehouse
 
-
-
 DELETE /warehouses/Id:
-
-
 
 API Test
 
-
-
 Status: Tested successfully.
-
-
 
 Warehouse Fields Tested
 
-
-
 reseller
-
-
 
 area
 
-
-
 warehouseName
-
-
 
 warehouseCode
 
-
-
 email
-
-
 
 mobile
 
-
-
 status
-
-
 
 addressLine1
 
-
-
 addressLine2
-
-
 
 city
 
-
-
 state
-
-
 
 stockVerified
 
-
-
 createdAt
-
-
 
 updatedAt
 
-
-
 Center-Warehouse Relationship
-
-
 
 The Center API supports an optional warehouse field.
 
-
-
 A Center can be created without a Warehouse ID.
-
-
 
 A Center can also be created with a Warehouse ID.
 
-
-
 Multiple Centers can reference the same Warehouse.
-
-
 
 Example:
 
-
-
 Warehouse ├── Center 1 ├── Center 2 ├── Center 3 └── Center 4
-
-
 
 Warehouse ID used during API testing:
 
-
-
 6aba30402aa35bb478e4d340
-
-
 
 The Center-with-Warehouse create API was tested successfully with this
 
 Warehouse ID.
 
-
-
 **### Get Login History**
-
-
 
 Retrieves login history records.
 
-
-
 **\*\*Endpoint:\*\***
-
-
 
 \`\`\`\`http
 
 GET /api/v1/auth/login-history
 
-
-
 \
+
 # Stock Purchase APIs
 
 ## Overview
@@ -4122,33 +2373,33 @@ Stock Purchase manages purchase records and the stock created from those purchas
 
 ### Permission Matrix
 
-| Operation | Permission |
-|---|---|
-| Create purchase | `Purchase -> add_purchase_stock` |
-| List / view purchases | `Purchase -> view_own_purchase_stock` or `view_all_purchase_stock` |
-| Product stock lookup | `Purchase -> view_own_purchase_stock` or `view_all_purchase_stock` |
+| Operation              | Permission                                                         |
+| ---------------------- | ------------------------------------------------------------------ |
+| Create purchase        | `Purchase -> add_purchase_stock`                                   |
+| List / view purchases  | `Purchase -> view_own_purchase_stock` or `view_all_purchase_stock` |
+| Product stock lookup   | `Purchase -> view_own_purchase_stock` or `view_all_purchase_stock` |
 | Vendor purchase lookup | `Purchase -> view_own_purchase_stock` or `view_all_purchase_stock` |
-| Outlet stock summary | `Purchase -> view_own_purchase_stock` or `view_all_purchase_stock` |
-| Outlet serial lookup | `Purchase -> view_own_purchase_stock` or `view_all_purchase_stock` |
+| Outlet stock summary   | `Purchase -> view_own_purchase_stock` or `view_all_purchase_stock` |
+| Outlet serial lookup   | `Purchase -> view_own_purchase_stock` or `view_all_purchase_stock` |
 
 All endpoints require authentication. Validation is applied where defined by the route.
 
 ## Endpoint Summary
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| POST | `/stockpurchase` | Create a stock purchase |
-| GET | `/stockpurchase` | List stock purchases |
-| GET | `/stockpurchase/products/with-stock` | Get products with stock |
-| GET | `/stockpurchase/stock/available/:productId` | Get available stock for a product |
-| GET | `/stockpurchase/:id` | Get purchase by ID |
-| PUT | `/stockpurchase/:id` | Update a stock purchase |
-| DELETE | `/stockpurchase/:id` | Delete a stock purchase |
-| GET | `/stockpurchase/vendor/:vendorId` | Get purchases by vendor |
-| GET | `/stockpurchase/stock/outlet-summary` | Get outlet stock summary |
-| GET | `/stockpurchase/serial-numbers/product/:outletId/:productId` | Get outlet serial numbers |
-| PUT | `/stockpurchase/serial-numbers/product/:productId/serial/:serialNumber` | Update an outlet serial number |
-| DELETE | `/stockpurchase/serial-numbers/product/:productId/serial/:serialNumber` | Delete an outlet serial number |
+| Method | Endpoint                                                                | Purpose                           |
+| ------ | ----------------------------------------------------------------------- | --------------------------------- |
+| POST   | `/stockpurchase`                                                        | Create a stock purchase           |
+| GET    | `/stockpurchase`                                                        | List stock purchases              |
+| GET    | `/stockpurchase/products/with-stock`                                    | Get products with stock           |
+| GET    | `/stockpurchase/stock/available/:productId`                             | Get available stock for a product |
+| GET    | `/stockpurchase/:id`                                                    | Get purchase by ID                |
+| PUT    | `/stockpurchase/:id`                                                    | Update a stock purchase           |
+| DELETE | `/stockpurchase/:id`                                                    | Delete a stock purchase           |
+| GET    | `/stockpurchase/vendor/:vendorId`                                       | Get purchases by vendor           |
+| GET    | `/stockpurchase/stock/outlet-summary`                                   | Get outlet stock summary          |
+| GET    | `/stockpurchase/serial-numbers/product/:outletId/:productId`            | Get outlet serial numbers         |
+| PUT    | `/stockpurchase/serial-numbers/product/:productId/serial/:serialNumber` | Update an outlet serial number    |
+| DELETE | `/stockpurchase/serial-numbers/product/:productId/serial/:serialNumber` | Delete an outlet serial number    |
 
 ## POST `/stockpurchase`
 
@@ -4162,23 +2413,23 @@ POST http://localhost:5000/api/v1/stockpurchase
 
 ### Request Body
 
-| Field | Required | Type | Description |
-|---|---|---|---|
-| `type` | Yes | String | `new` or `refurbish` |
-| `date` | No | ISO date | Purchase date |
-| `invoiceNo` | Yes | String | Purchase invoice number |
-| `vendor` | Yes | ObjectId | Vendor ID |
-| `outlet` | No | ObjectId | Outlet/Center ID |
-| `transportAmount` | No | Number | Transport amount, minimum 0 |
-| `remark` | No | String | Purchase remark |
-| `cgst` | No | Number | CGST, minimum 0 |
-| `sgst` | No | Number | SGST, minimum 0 |
-| `igst` | No | Number | IGST, minimum 0 |
-| `products` | Yes | Array | At least one purchased product |
-| `products[].product` | Yes | ObjectId | Product ID |
-| `products[].price` | Yes | Number | Product purchase price |
-| `products[].purchasedQuantity` | Yes | Integer | Quantity, minimum 1 |
-| `products[].serialNumbers` | No | Array[String] | Serial numbers for serialized products |
+| Field                          | Required | Type          | Description                            |
+| ------------------------------ | -------- | ------------- | -------------------------------------- |
+| `type`                         | Yes      | String        | `new` or `refurbish`                   |
+| `date`                         | No       | ISO date      | Purchase date                          |
+| `invoiceNo`                    | Yes      | String        | Purchase invoice number                |
+| `vendor`                       | Yes      | ObjectId      | Vendor ID                              |
+| `outlet`                       | No       | ObjectId      | Outlet/Center ID                       |
+| `transportAmount`              | No       | Number        | Transport amount, minimum 0            |
+| `remark`                       | No       | String        | Purchase remark                        |
+| `cgst`                         | No       | Number        | CGST, minimum 0                        |
+| `sgst`                         | No       | Number        | SGST, minimum 0                        |
+| `igst`                         | No       | Number        | IGST, minimum 0                        |
+| `products`                     | Yes      | Array         | At least one purchased product         |
+| `products[].product`           | Yes      | ObjectId      | Product ID                             |
+| `products[].price`             | Yes      | Number        | Product purchase price                 |
+| `products[].purchasedQuantity` | Yes      | Integer       | Quantity, minimum 1                    |
+| `products[].serialNumbers`     | No       | Array[String] | Serial numbers for serialized products |
 
 ### Access
 
@@ -4190,9 +2441,9 @@ Returns stock purchases accessible to the authenticated user.
 
 ### Query Parameters
 
-| Parameter | Required | Description |
-|---|---|---|
-| Pagination/filter parameters | No | Validated by `getStockPurchasesValidator` |
+| Parameter                    | Required | Description                               |
+| ---------------------------- | -------- | ----------------------------------------- |
+| Pagination/filter parameters | No       | Validated by `getStockPurchasesValidator` |
 
 **Access:** `Purchase -> view_own_purchase_stock` or `view_all_purchase_stock`
 
@@ -4275,53 +2526,53 @@ The route module uses the `Indent` permission module.
 
 ## Permission Matrix
 
-| Operation | Permission(s) |
-|---|---|
-| Create / Update | `manage_indent` |
-| List / View | `indent_all_center`, `indent_own_center` |
-| Delete | `delete_indent_own_center`, `delete_indent_all_center` |
-| Approve | `stock_transfer_approve_from_outlet`, `manage_indent` |
-| Ship | `manage_indent` |
-| Complete | `complete_indent`, `manage_indent` |
-| Complete incomplete | `manage_indent` |
-| Shipping info | `manage_indent` |
-| Reject shipment | `manage_indent` |
-| Mark incomplete | `manage_indent` |
-| Approved quantities | `manage_indent` |
-| Warehouse challan approval | `manage_indent` |
-| Center challan approval | `manage_indent` |
-| Status update | `manage_indent` |
-| Excel export | `indent_all_center`, `indent_own_center` |
-| Serial-number lookup | `indent_all_center`, `indent_own_center` |
-| Count / notifications | Authenticated |
+| Operation                  | Permission(s)                                          |
+| -------------------------- | ------------------------------------------------------ |
+| Create / Update            | `manage_indent`                                        |
+| List / View                | `indent_all_center`, `indent_own_center`               |
+| Delete                     | `delete_indent_own_center`, `delete_indent_all_center` |
+| Approve                    | `stock_transfer_approve_from_outlet`, `manage_indent`  |
+| Ship                       | `manage_indent`                                        |
+| Complete                   | `complete_indent`, `manage_indent`                     |
+| Complete incomplete        | `manage_indent`                                        |
+| Shipping info              | `manage_indent`                                        |
+| Reject shipment            | `manage_indent`                                        |
+| Mark incomplete            | `manage_indent`                                        |
+| Approved quantities        | `manage_indent`                                        |
+| Warehouse challan approval | `manage_indent`                                        |
+| Center challan approval    | `manage_indent`                                        |
+| Status update              | `manage_indent`                                        |
+| Excel export               | `indent_all_center`, `indent_own_center`               |
+| Serial-number lookup       | `indent_all_center`, `indent_own_center`               |
+| Count / notifications      | Authenticated                                          |
 
 ## Endpoint Summary
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| POST | `/stockrequest` | Create a Stock Request |
-| GET | `/stockrequest` | List Stock Requests |
-| GET | `/stockrequest/export-excel` | Export Stock Requests to Excel |
-| GET | `/stockrequest/indent-count` | Get Stock Request count |
-| GET | `/stockrequest/recent-order-number` | Get most recent order number |
-| GET | `/stockrequest/notifications` | Get Stock Request notifications |
-| POST | `/stockrequest/bulk-upload` | Bulk upload Stock Requests |
-| GET | `/stockrequest/download/sample` | Download Stock Request sample CSV |
-| GET | `/stockrequest/serial-numbers/product/:productId` | Get Center serial numbers for a product |
-| GET | `/stockrequest/:id` | Get Stock Request by ID |
-| PUT | `/stockrequest/:id` | Update Stock Request |
-| DELETE | `/stockrequest/:id` | Delete Stock Request |
-| POST | `/stockrequest/:id/approve` | Approve Stock Request |
-| POST | `/stockrequest/:id/ship` | Ship Stock Request |
-| POST | `/stockrequest/:id/complete` | Complete Stock Request |
-| PATCH | `/stockrequest/:id/complete-incomplete` | Complete an incomplete Stock Request |
-| PATCH | `/stockrequest/:id/shipping-info` | Update shipping information |
-| POST | `/stockrequest/:id/reject-shipment` | Reject shipment |
-| POST | `/stockrequest/:id/mark-incomplete` | Mark Stock Request incomplete |
-| PATCH | `/stockrequest/:id/approved-quantities` | Update approved quantities |
-| PATCH | `/stockrequest/:id/warehouse-challan-approval` | Update warehouse challan approval |
-| PATCH | `/stockrequest/:id/center-challan-approval` | Update center challan approval |
-| PATCH | `/stockrequest/:id/status` | Update Stock Request status |
+| Method | Endpoint                                          | Purpose                                 |
+| ------ | ------------------------------------------------- | --------------------------------------- |
+| POST   | `/stockrequest`                                   | Create a Stock Request                  |
+| GET    | `/stockrequest`                                   | List Stock Requests                     |
+| GET    | `/stockrequest/export-excel`                      | Export Stock Requests to Excel          |
+| GET    | `/stockrequest/indent-count`                      | Get Stock Request count                 |
+| GET    | `/stockrequest/recent-order-number`               | Get most recent order number            |
+| GET    | `/stockrequest/notifications`                     | Get Stock Request notifications         |
+| POST   | `/stockrequest/bulk-upload`                       | Bulk upload Stock Requests              |
+| GET    | `/stockrequest/download/sample`                   | Download Stock Request sample CSV       |
+| GET    | `/stockrequest/serial-numbers/product/:productId` | Get Center serial numbers for a product |
+| GET    | `/stockrequest/:id`                               | Get Stock Request by ID                 |
+| PUT    | `/stockrequest/:id`                               | Update Stock Request                    |
+| DELETE | `/stockrequest/:id`                               | Delete Stock Request                    |
+| POST   | `/stockrequest/:id/approve`                       | Approve Stock Request                   |
+| POST   | `/stockrequest/:id/ship`                          | Ship Stock Request                      |
+| POST   | `/stockrequest/:id/complete`                      | Complete Stock Request                  |
+| PATCH  | `/stockrequest/:id/complete-incomplete`           | Complete an incomplete Stock Request    |
+| PATCH  | `/stockrequest/:id/shipping-info`                 | Update shipping information             |
+| POST   | `/stockrequest/:id/reject-shipment`               | Reject shipment                         |
+| POST   | `/stockrequest/:id/mark-incomplete`               | Mark Stock Request incomplete           |
+| PATCH  | `/stockrequest/:id/approved-quantities`           | Update approved quantities              |
+| PATCH  | `/stockrequest/:id/warehouse-challan-approval`    | Update warehouse challan approval       |
+| PATCH  | `/stockrequest/:id/center-challan-approval`       | Update center challan approval          |
+| PATCH  | `/stockrequest/:id/status`                        | Update Stock Request status             |
 
 ## POST `/stockrequest`
 
@@ -4335,16 +2586,16 @@ POST http://localhost:5000/api/v1/stockrequest
 
 ### Request Body
 
-| Field | Required | Type | Description |
-|---|---|---|---|
-| `warehouse` | Yes | ObjectId | Warehouse ID |
-| `center` | Yes | ObjectId | Center ID |
-| `orderNumber` | Yes | String | Stock Request order number |
-| `date` | No | ISO date | Request date |
-| `remark` | No | String | Request remark |
-| `products` | Yes | Array | At least one product |
-| `products[].product` | Yes | ObjectId | Product ID |
-| `products[].quantity` | Yes | Integer | Requested quantity, minimum 1 |
+| Field                 | Required | Type     | Description                   |
+| --------------------- | -------- | -------- | ----------------------------- |
+| `warehouse`           | Yes      | ObjectId | Warehouse ID                  |
+| `center`              | Yes      | ObjectId | Center ID                     |
+| `orderNumber`         | Yes      | String   | Stock Request order number    |
+| `date`                | No       | ISO date | Request date                  |
+| `remark`              | No       | String   | Request remark                |
+| `products`            | Yes      | Array    | At least one product          |
+| `products[].product`  | Yes      | ObjectId | Product ID                    |
+| `products[].quantity` | Yes      | Integer  | Requested quantity, minimum 1 |
 
 ## GET `/stockrequest`
 
@@ -4352,13 +2603,13 @@ Returns Stock Requests accessible to the authenticated user.
 
 ### Query Parameters
 
-| Parameter | Required | Description |
-|---|---|---|
-| `page` | No | Page number, minimum 1 |
-| `limit` | No | Page size, 1–500 |
-| `center` | No | Center ID |
-| `warehouse` | No | Warehouse ID |
-| Additional filters | No | Supported by `validateStockRequestQuery` |
+| Parameter          | Required | Description                              |
+| ------------------ | -------- | ---------------------------------------- |
+| `page`             | No       | Page number, minimum 1                   |
+| `limit`            | No       | Page size, 1–500                         |
+| `center`           | No       | Center ID                                |
+| `warehouse`        | No       | Warehouse ID                             |
+| Additional filters | No       | Supported by `validateStockRequestQuery` |
 
 **Access:** `Indent -> indent_all_center` or `indent_own_center`
 
@@ -4392,9 +2643,9 @@ Bulk uploads Stock Requests using a file upload.
 
 **Content-Type:** `multipart/form-data`
 
-| Field | Required | Type | Description |
-|---|---|---|---|
-| `file` | Yes | File | Stock Request bulk-upload file |
+| Field  | Required | Type | Description                    |
+| ------ | -------- | ---- | ------------------------------ |
+| `file` | Yes      | File | Stock Request bulk-upload file |
 
 **Access:** Authenticated.
 
@@ -4518,29 +2769,17 @@ The Stock Request route layer also exposes approved-quantity, shipping, challan,
 
 # Stock Transfer APIs
 
-
-
 \## Overview
 
-
-
 Stock Transfer manages inventory movement between Centers through the existing legacy transfer workflow.
-
-
 
 \*\*Base URL:\*\* \`http\://localhost:5000/api/v1\`
 
 \*\*Resource:\*\* \`/stock-transfers\`
 
-
-
 All Stock Transfer endpoints require authentication and use the existing database-driven \`Transfer\` permission module.
 
-
-
 \## Permission Matrix
-
-
 
 \| Operation | Permission(s) |
 
@@ -4556,11 +2795,7 @@ All Stock Transfer endpoints require authentication and use the existing databas
 
 \| Admin pending approval | \`indent_all_center\`, \`indent_own_center\` |
 
-
-
 \## Status Flow
-
-
 
 \| Current Status | Supported Next Status |
 
@@ -4583,8 +2818,6 @@ All Stock Transfer endpoints require authentication and use the existing databas
 \| \`Completed\` | — |
 
 \| \`Rejected\` | — |
-
-
 
 \`\`\`text
 
@@ -4612,11 +2845,7 @@ Completed / Incompleted
 
 \`\`\`\`
 
-
-
 **## Endpoint Summary**
-
-
 
 \| Method | Endpoint                                   | Purpose                             |
 
@@ -4664,11 +2893,7 @@ Completed / Incompleted
 
 \| GET    | \`/stock-transfers/admin/pending-approval\`  | Get pending admin approvals         |
 
-
-
 **## Common Transfer Fields**
-
-
 
 \| Field              | Description                                     |
 
@@ -4716,19 +2941,11 @@ Completed / Incompleted
 
 \| \`lastStatusChange\` | Last status transition timestamp                |
 
-
-
 **## POST&#x20;**\`/stock-transfers\`
-
-
 
 Creates a new Stock Transfer.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -4736,15 +2953,9 @@ POST http\://localhost:5000/api/v1/stock-transfers
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer management permission.
 
-
-
 **### Request Body**
-
-
 
 \| Field            | Required | Description                                                                                  |
 
@@ -4762,11 +2973,7 @@ POST http\://localhost:5000/api/v1/stock-transfers
 
 \| \`products\`       | Yes      | Products included in the transfer                                                            |
 
-
-
 **### Product Fields**
-
-
 
 \| Field              | Required | Description                               |
 
@@ -4794,11 +3001,7 @@ POST http\://localhost:5000/api/v1/stock-transfers
 
 \| \`productRemark\`    | No       | Product-level remark                      |
 
-
-
 **### Example**
-
-
 
 \`\`\`json
 
@@ -4828,11 +3031,7 @@ POST http\://localhost:5000/api/v1/stock-transfers
 
 \`\`\`
 
-
-
 **### Important Rules**
-
-
 
 \- \`transferNumber\` must be unique.
 
@@ -4842,19 +3041,11 @@ POST http\://localhost:5000/api/v1/stock-transfers
 
 \- Submitted transfers validate source stock availability.
 
-
-
 **## GET&#x20;**\`/stock-transfers\`
-
-
 
 Returns Stock Transfers accessible to the authenticated user.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -4862,15 +3053,9 @@ GET http\://localhost:5000/api/v1/stock-transfers
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer view permission.
 
-
-
 **### Query Parameters**
-
-
 
 \| Parameter               | Required | Description                                                       |
 
@@ -4884,11 +3069,7 @@ GET http\://localhost:5000/api/v1/stock-transfers
 
 \| Other supported filters | No       | Additional filters accepted by the Stock Transfer query validator |
 
-
-
 **### Empty Response**
-
-
 
 \`\`\`json
 
@@ -4926,19 +3107,11 @@ GET http\://localhost:5000/api/v1/stock-transfers
 
 \`\`\`
 
-
-
 **## GET&#x20;**\`/stock-transfers/:id\`
-
-
 
 Returns a Stock Transfer by MongoDB ID.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -4946,11 +3119,7 @@ GET http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer view permission.
-
-
 
 \| Status | Description              |
 
@@ -4960,19 +3129,11 @@ GET http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID
 
 \| 404    | Stock Transfer not found |
 
-
-
 **## PUT&#x20;**\`/stock-transfers/:id\`
-
-
 
 Updates an existing Stock Transfer.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -4980,23 +3141,13 @@ PUT http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer management permission.
-
-
 
 **## DELETE&#x20;**\`/stock-transfers/:id\`
 
-
-
 Deletes an existing Stock Transfer.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5004,23 +3155,13 @@ DELETE http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with delete Stock Transfer permission.
-
-
 
 **## POST&#x20;**\`/stock-transfers/:id/submit\`
 
-
-
 Submits a Draft Stock Transfer.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5028,33 +3169,19 @@ POST http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID/submit
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer management permission.
 
-
-
 **\*\*State transition:\*\*** \`Draft → Submitted\`
-
-
 
 The submission validates source stock availability and serialized stock
 
 when applicable.
 
-
-
 **## PATCH&#x20;**\`/stock-transfers/:id/admin/approve\`
-
-
 
 Approves a submitted Stock Transfer as administrator.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5062,27 +3189,15 @@ PATCH http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID/admin/approve
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer management permission.
-
-
 
 **\*\*State transition:\*\*** \`Submitted → Admin_Approved\`
 
-
-
 **## PATCH&#x20;**\`/stock-transfers/:id/admin/reject\`
-
-
 
 Rejects a submitted Stock Transfer as administrator.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5090,27 +3205,15 @@ PATCH http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID/admin/reject
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer management permission.
-
-
 
 **\*\*State transition:\*\*** \`Submitted → Admin_Rejected\`
 
-
-
 **## POST&#x20;**\`/stock-transfers/:id/approve\`
-
-
 
 Confirms an administrator-approved Stock Transfer.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5118,17 +3221,11 @@ POST http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID/approve
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer management permission or
 
 \`approval_transfer_center\`.
 
-
-
 **### Request Body**
-
-
 
 \`\`\`json
 
@@ -5154,11 +3251,7 @@ POST http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID/approve
 
 \`\`\`
 
-
-
 **\*\*State transition:\*\*** \`Admin_Approved → Confirmed\`
-
-
 
 For non-serialized stock, approved quantity is reserved by moving
 
@@ -5166,19 +3259,11 @@ quantity from available stock to in-transit stock. Serialized stock is
 
 validated and updated accordingly.
 
-
-
 **## POST&#x20;**\`/stock-transfers/:id/reject\`
-
-
 
 Rejects a Stock Transfer according to the current workflow state.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5186,23 +3271,13 @@ POST http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID/reject
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer management permission.
-
-
 
 **## POST&#x20;**\`/stock-transfers/:id/ship\`
 
-
-
 Ships a confirmed Stock Transfer.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5210,19 +3285,11 @@ POST http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID/ship
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer management permission.
-
-
 
 **### Request Body**
 
-
-
 The current shipping validator requires \`shippedDate\`.
-
-
 
 \`\`\`json
 
@@ -5234,23 +3301,13 @@ The current shipping validator requires \`shippedDate\`.
 
 \`\`\`
 
-
-
 **\*\*State transition:\*\*** \`Confirmed → Shipped\`
-
-
 
 **## PATCH&#x20;**\`/stock-transfers/:id/shipping-info\`
 
-
-
 Updates shipping information.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5258,23 +3315,13 @@ PATCH http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID/shipping-info
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer management permission.
-
-
 
 **## PATCH&#x20;**\`/stock-transfers/:id/reject-shipment\`
 
-
-
 Rejects shipment information.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5282,23 +3329,13 @@ PATCH http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID/reject-shipment
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer management permission.
-
-
 
 **## POST&#x20;**\`/stock-transfers/:id/complete\`
 
-
-
 Completes a shipped Stock Transfer.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5306,25 +3343,15 @@ POST http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID/complete
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer management permission.
-
-
 
 **\*\*State transition:\*\*** \`Shipped → Completed\`
 
-
-
 **### Request Body**
-
-
 
 \`productReceipts\` is optional. When provided, it records the quantity and
 
 serial numbers actually received/used at the destination.
-
-
 
 \`\`\`json
 
@@ -5350,11 +3377,7 @@ serial numbers actually received/used at the destination.
 
 \`\`\`
 
-
-
 **### Product Receipt Fields**
-
-
 
 \| Field                                | Required                      | Type          | Description                                                    |
 
@@ -5370,15 +3393,9 @@ serial numbers actually received/used at the destination.
 
 \| \`productReceipts[].receivedRemark\`   | No                            | String        | Receiving remark                                               |
 
-
-
 **### Partial Receipt / Return Rule**
 
-
-
 The actual received quantity can be less than the approved quantity.
-
-
 
 \`\`\`text
 
@@ -5386,11 +3403,7 @@ Return Quantity = Approved Quantity - Received Quantity
 
 \`\`\`
 
-
-
 Example:
-
-
 
 \| Product | Approved | Received / Used | Returned to Source |
 
@@ -5400,11 +3413,7 @@ Example:
 
 \| P2      |       20 |              15 |                  5 |
 
-
-
 For non-serialized products:
-
-
 
 \| Stock Field                     | Completion Movement             |
 
@@ -5420,11 +3429,7 @@ For non-serialized products:
 
 \| Destination \`availableQuantity\` | Increase by received quantity   |
 
-
-
 For serialized products:
-
-
 
 \- \`receivedSerials\` must belong to the approved serial numbers.
 
@@ -5440,31 +3445,19 @@ For serialized products:
 
 \- Destination stock is increased only by the actually received quantity.
 
-
-
 If \`productReceipts\` is omitted, the existing legacy completion behavior
 
 uses each product's approved quantity as its received quantity.
-
-
 
 Completion performs pending source deduction and destination stock
 
 addition when those operations have not already been completed.
 
-
-
 **## POST&#x20;**\`/stock-transfers/:id/mark-incomplete\`
-
-
 
 Marks a transfer incomplete.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5472,27 +3465,15 @@ POST http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID/mark-incomplete
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer management permission.
-
-
 
 **\*\*State transition:\*\*** \`Shipped / Confirmed → Incompleted\`
 
-
-
 **## PATCH&#x20;**\`/stock-transfers/:id/complete-incomplete\`
-
-
 
 Completes an incomplete transfer.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5500,23 +3481,13 @@ PATCH http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID/complete-incompl
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer management permission.
-
-
 
 **## PATCH&#x20;**\`/stock-transfers/:id/approved-quantities\`
 
-
-
 Updates approved quantities and related approval information.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5524,15 +3495,9 @@ PATCH http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID/approved-quantit
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer management permission.
 
-
-
 **### Request Body**
-
-
 
 \`\`\`json
 
@@ -5556,11 +3521,7 @@ PATCH http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID/approved-quantit
 
 \`\`\`
 
-
-
 **### Product Approval Fields**
-
-
 
 \| Field                                 | Required | Type     | Description                             |
 
@@ -5574,27 +3535,17 @@ PATCH http\://localhost:5000/api/v1/stock-transfers/TRANSFER_ID/approved-quantit
 
 \| \`productApprovals[].approvedRemark\`   | No       | String   | Approval remark                         |
 
-
-
 Approved quantities determine the quantity reserved during confirmation.
 
 For serialized products, the approved serial numbers associated with the
 
 transfer are used during the confirmation workflow.
 
-
-
 **## GET&#x20;**\`/stock-transfers/admin/pending-approval\`
-
-
 
 Returns Stock Transfers pending administrator approval.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5602,25 +3553,15 @@ GET http\://localhost:5000/api/v1/stock-transfers/admin/pending-approval
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with \`indent_all_center\` or
 
 \`indent_own_center\`.
 
-
-
 **## GET&#x20;**\`/stock-transfers/latest-transfer-number\`
-
-
 
 Returns the most recent transfer number.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5628,25 +3569,15 @@ GET http\://localhost:5000/api/v1/stock-transfers/latest-transfer-number
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer view permission.
 
-
-
 **## GET&#x20;**\`/stock-transfers/summary/original-outlet\`
-
-
 
 Returns the warehouse/product summary used by the Stock Transfer
 
 workflow.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5654,23 +3585,13 @@ GET http\://localhost:5000/api/v1/stock-transfers/summary/original-outlet
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer view permission.
-
-
 
 **## GET&#x20;**\`/stock-transfers/stats\`
 
-
-
 Returns Stock Transfer statistics.
 
-
-
 **\*\*Endpoint\*\***
-
-
 
 \`\`\`http
 
@@ -5678,19 +3599,11 @@ GET http\://localhost:5000/api/v1/stock-transfers/stats
 
 \`\`\`
 
-
-
 **\*\*Access:\*\*** Authenticated with Stock Transfer view permission.
-
-
 
 **## Stock Movement**
 
-
-
 For non-serialized products:
-
-
 
 \`\`\`text
 
@@ -5714,23 +3627,15 @@ Destination available stock
 
 \`\`\`
 
-
-
 For serialized products, serial status and current location are updated
 
 as part of the transfer lifecycle.
 
-
-
 **## Partial Approval and Partial Receipt**
-
-
 
 Stock Transfer supports cases where the approved quantity is greater than
 
 the quantity actually received/used at the destination.
-
-
 
 \| Stage           | Quantity                                      |
 
@@ -5744,11 +3649,7 @@ the quantity actually received/used at the destination.
 
 \| Returned        | \`Approved - Received\`                         |
 
-
-
 Example:
-
-
 
 \`\`\`text
 
@@ -5762,19 +3663,13 @@ Returned to source: 5
 
 \`\`\`
 
-
-
 For serialized products, the same rule is applied at serial-number level:
 
 received serials move to the destination, while approved but unreceived
 
 serials return to the source as available stock.
 
-
-
 **## Stock Transfer API Test Coverage**
-
-
 
 \| Operation                     | Status   |
 
@@ -5808,11 +3703,7 @@ serials return to the source as available stock.
 
 \| Status progression            | Verified |
 
-
-
 **### Tested Lifecycle**
-
-
 
 \`\`\`text
 
@@ -5840,32 +3731,36 @@ Completed
 
 \`\`\`
 
-
 CUSTOMER APIs
 
 > **Base URL:** `/api/v1/customers`
 
 ### 🟢 Create Customer
+
 **POST** `/api/v1/customers`
 
 **Authorization:** 🔐 Required
 
 **Permission:**
+
 - `manage_customer_all_center`
 - `manage_customer_own_center`
 
 ---
 
 ### 🔵 Get Customers
+
 **GET** `/api/v1/customers`
 
 **Authorization:** 🔐 Required
 
 **Permission:**
+
 - `view_customer_all_center`
 - `view_customer_own_center`
 
 **Query Parameters:**
+
 - `page`
 - `limit`
 - `search`
@@ -5875,6 +3770,7 @@ CUSTOMER APIs
 ---
 
 ### 🟣 Get Customer by ID
+
 **GET** `/api/v1/customers/:id`
 
 **Authorization:** 🔐 Required
@@ -5882,28 +3778,33 @@ CUSTOMER APIs
 ---
 
 ### 🟡 Update Customer
+
 **PUT** `/api/v1/customers/:id`
 
 **Authorization:** 🔐 Required
 
 **Permission:**
+
 - `manage_customer_all_center`
 - `manage_customer_own_center`
 
 ---
 
 ### 🔴 Delete Customer
+
 **DELETE** `/api/v1/customers/:id`
 
 **Authorization:** 🔐 Required
 
 **Permission:**
+
 - `manage_customer_all_center`
 - `manage_customer_own_center`
 
 ---
 
 ### 🟠 Import Customers
+
 **POST** `/api/v1/customers/import`
 
 **Authorization:** 🔐 Required
@@ -5924,20 +3825,20 @@ All Building routes use `protect` and the `Settings` permission module.
 
 ## Permission Matrix
 
-| Operation | Permission |
-|---|---|
+| Operation                | Permission                                                   |
+| ------------------------ | ------------------------------------------------------------ |
 | Create / Update / Delete | `manage_building_all_center` or `manage_building_own_center` |
-| List / Get by ID | `view_building_all_center` or `view_building_own_center` |
+| List / Get by ID         | `view_building_all_center` or `view_building_own_center`     |
 
 ## Endpoint Summary
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| POST | `/buildings` | Create a building |
-| GET | `/buildings` | List buildings with filtering and pagination |
-| GET | `/buildings/:id` | Get a building by ID |
-| PUT | `/buildings/:id` | Update a building |
-| DELETE | `/buildings/:id` | Delete a building |
+| Method | Endpoint         | Purpose                                      |
+| ------ | ---------------- | -------------------------------------------- |
+| POST   | `/buildings`     | Create a building                            |
+| GET    | `/buildings`     | List buildings with filtering and pagination |
+| GET    | `/buildings/:id` | Get a building by ID                         |
+| PUT    | `/buildings/:id` | Update a building                            |
+| DELETE | `/buildings/:id` | Delete a building                            |
 
 ## POST `/buildings`
 
@@ -5947,21 +3848,38 @@ Creates a building.
 
 ### Request body
 
-| Field | Required | Description |
-|---|---|---|
-| `center` | Yes | Center MongoDB ID |
-| `buildingName` | Yes | Building name |
-| `displayName` | No | Display name |
-| `address1` | Yes | Primary address |
-| `address2` | No | Secondary address |
-| `landmark` | No | Landmark |
-| `pincode` | No | Six-digit pincode matching the model's pattern |
+| Field          | Required | Description                                    |
+| -------------- | -------- | ---------------------------------------------- |
+| `center`       | Yes      | Center MongoDB ID                              |
+| `buildingName` | Yes      | Building name                                  |
+| `displayName`  | No       | Display name                                   |
+| `address1`     | Yes      | Primary address                                |
+| `address2`     | No       | Secondary address                              |
+| `landmark`     | No       | Landmark                                       |
+| `pincode`      | No       | Six-digit pincode matching the model's pattern |
 
 ### Example
+
+## Stock Usage APIs
+
+Base URL: `/api/v1/stock-usage`
+
+Authentication: Bearer Token required.
+
+### 1. Create Stock Usage
+
+**Endpoint:** `POST /api/v1/stock-usage`
+
+Creates a stock usage entry. For Damage usage, it deducts available stock and records the damage in `FaultyStock` for verification.
+
+**Request Body — Damage**
+
+> > > > > > > 0fa7747 (feat: add stock usage module)
 
 ```json
 {
   "center": "CENTER_ID",
+
   "buildingName": "Example Building",
   "displayName": "Example",
   "address1": "Main Road",
@@ -5972,6 +3890,7 @@ Creates a building.
 ```
 
 Responses:
+
 - `201 Created`: `{ "success": true, "data": BUILDING }`
 - `400 Bad Request`: model/validation error
 - `404 Not Found`: referenced Center not found
@@ -5983,20 +3902,20 @@ Returns a paginated list of buildings.
 
 **Access:** Authenticated; requires `view_building_all_center` or `view_building_own_center`.
 
-| Query parameter | Description |
-|---|---|
-| `search` | Searches building name, display name, address lines, landmark, and pincode |
-| `center` | Center ID filter |
-| `reseller` | Filters through the related Center's reseller |
-| `area` | Filters through the related Center's area |
-| `centerType` | Filters through the related Center's type |
-| `status` | Filters through the related Center's status |
-| `city` | Filters through the related Center's city |
-| `state` | Filters through the related Center's state |
-| `page` | Page number; defaults to `1` |
-| `limit` | Page size; defaults to `100` |
-| `sortBy` | Sort field; defaults to `createdAt` |
-| `sortOrder` | `asc` or `desc`; defaults to `desc` |
+| Query parameter | Description                                                                |
+| --------------- | -------------------------------------------------------------------------- |
+| `search`        | Searches building name, display name, address lines, landmark, and pincode |
+| `center`        | Center ID filter                                                           |
+| `reseller`      | Filters through the related Center's reseller                              |
+| `area`          | Filters through the related Center's area                                  |
+| `centerType`    | Filters through the related Center's type                                  |
+| `status`        | Filters through the related Center's status                                |
+| `city`          | Filters through the related Center's city                                  |
+| `state`         | Filters through the related Center's state                                 |
+| `page`          | Page number; defaults to `1`                                               |
+| `limit`         | Page size; defaults to `100`                                               |
+| `sortBy`        | Sort field; defaults to `createdAt`                                        |
+| `sortOrder`     | `asc` or `desc`; defaults to `desc`                                        |
 
 Response shape includes `success`, `data`, and `pagination` with `currentPage`, `totalPages`, and `totalBuildings`.
 
@@ -6007,6 +3926,7 @@ Returns a building by MongoDB ID.
 **Access:** Authenticated; requires `view_building_all_center` or `view_building_own_center`.
 
 Responses:
+
 - `200 OK`: `{ "success": true, "data": BUILDING }`
 - `404 Not Found`: building not found
 - `403 Forbidden`: own-center user attempts to view a building belonging to another center
@@ -6028,11 +3948,10 @@ Deletes a building.
 **Access:** Authenticated; requires `manage_building_all_center` or `manage_building_own_center`.
 
 Responses:
+
 - `200 OK`: `{ "success": true, "message": "Building deleted successfully" }`
 - `403 Forbidden`: permission/scope denied
 - `404 Not Found`: building not found
-
-
 
 ---
 
@@ -6042,13 +3961,13 @@ The Control Room module is mounted under `/api/v1/control-rooms`.
 
 ## Endpoints
 
-| Method | Endpoint | Description |
-| --- | --- | --- |
-| POST | `/api/v1/control-rooms` | Create a Control Room |
-| GET | `/api/v1/control-rooms` | List Control Rooms |
-| GET | `/api/v1/control-rooms/:id` | Get a Control Room by ID |
-| PUT | `/api/v1/control-rooms/:id` | Update a Control Room |
-| DELETE | `/api/v1/control-rooms/:id` | Delete a Control Room |
+| Method | Endpoint                    | Description              |
+| ------ | --------------------------- | ------------------------ |
+| POST   | `/api/v1/control-rooms`     | Create a Control Room    |
+| GET    | `/api/v1/control-rooms`     | List Control Rooms       |
+| GET    | `/api/v1/control-rooms/:id` | Get a Control Room by ID |
+| PUT    | `/api/v1/control-rooms/:id` | Update a Control Room    |
+| DELETE | `/api/v1/control-rooms/:id` | Delete a Control Room    |
 
 ## Permissions
 
@@ -6083,8 +4002,7 @@ Updates an existing Control Room.
 
 ## DELETE `/api/v1/control-rooms/:id`
 
-Deletes an existing Control Room.
----
+## Deletes an existing Control Room.
 
 Raise Purchase Order (Raise PO) APIs
 Raise PO manages purchase orders, including creation, listing, approval, rejection, resetting a PO to pending, and deletion.
@@ -6093,25 +4011,23 @@ Resource: /raise-pos
 All Raise PO routes require authentication. Existing route names and field names are preserved.
 Permission and Role Notes
 This documentation's manual endpoint test results are based on the Admin login. Other roles are listed in the final testing note and are not presented as fully tested.
-Operation	Permission / restriction
-Create PO	Purchase -> add_purchase_stock
-View own-center POs	Purchase -> view_own_purchase_stock
-View all POs	Purchase -> view_all_purchase_stock
-Approve PO	Admin / Superadmin only
-Reject PO	Admin / Superadmin only
-Change approved/rejected PO to pending	Current implementation restricts this to Admin / Superadmin
-Delete PO	Center-access and stock conditions are enforced by the service
-
+Operation Permission / restriction
+Create PO Purchase -> add_purchase_stock
+View own-center POs Purchase -> view_own_purchase_stock
+View all POs Purchase -> view_all_purchase_stock
+Approve PO Admin / Superadmin only
+Reject PO Admin / Superadmin only
+Change approved/rejected PO to pending Current implementation restricts this to Admin / Superadmin
+Delete PO Center-access and stock conditions are enforced by the service
 
 Endpoint Summary
-Method	Endpoint	Purpose
-POST	/raise-pos	Create a purchase order
-GET	/raise-pos	List purchase orders
-DELETE	/raise-pos/:id	Delete a purchase order
-PUT	/raise-pos/:id/approve	Approve a pending purchase order
-PUT	/raise-pos/:id/reject	Reject a pending purchase order
-PATCH	/raise-pos/:id/change-to-pending	Change an approved/rejected PO back to pending
-
+Method Endpoint Purpose
+POST /raise-pos Create a purchase order
+GET /raise-pos List purchase orders
+DELETE /raise-pos/:id Delete a purchase order
+PUT /raise-pos/:id/approve Approve a pending purchase order
+PUT /raise-pos/:id/reject Reject a pending purchase order
+PATCH /raise-pos/:id/change-to-pending Change an approved/rejected PO back to pending
 
 POST /raise-pos
 Creates a purchase order. New POs start with pending status and a generated voucher number.
@@ -6120,60 +4036,58 @@ POST http://localhost:5000/api/v1/raise-pos
 Access: Authenticated user with Purchase -> add_purchase_stock.
 Request Body
 {
-  "date": "2026-10-10",
-  "vendor": "VENDOR_ID",
-  "outlet": "CENTER_ID",
-  "products": [
-    {
-      "product": "PRODUCT_ID",
-      "price": 200,
-      "purchasedQuantity": 2
-    }
-  ]
+"date": "2026-10-10",
+"vendor": "VENDOR_ID",
+"outlet": "CENTER_ID",
+"products": [
+{
+"product": "PRODUCT_ID",
+"price": 200,
+"purchasedQuantity": 2
 }
-Field	Required	Type	Description
-date	No	Date	Purchase order date
-vendor	Yes	ObjectId	Vendor ID
-outlet	Context-dependent	ObjectId	Outlet/Center ID; service may derive it from the authenticated user's center
-products	Yes	Array	Products included in the PO
-products[].product	Yes	ObjectId	Product ID
-products[].price	Yes	Number	Purchase price
-products[].purchasedQuantity	Yes	Number	Purchased quantity
-products[].availableQuantity	Generated	Number	Initialized from purchasedQuantity
-
+]
+}
+Field Required Type Description
+date No Date Purchase order date
+vendor Yes ObjectId Vendor ID
+outlet Context-dependent ObjectId Outlet/Center ID; service may derive it from the authenticated user's center
+products Yes Array Products included in the PO
+products[].product Yes ObjectId Product ID
+products[].price Yes Number Purchase price
+products[].purchasedQuantity Yes Number Purchased quantity
+products[].availableQuantity Generated Number Initialized from purchasedQuantity
 
 The voucher number is generated by the backend.
 Successful Response
 201 Created
 {
-  "success": true,
-  "message": "Purchase Order created successfully and pending approval",
-  "data": {
-    "_id": "RAISE_PO_ID",
-    "date": "2026-10-10T00:00:00.000Z",
-    "voucherNo": "STELE/NN/26-27",
-    "vendor": "VENDOR_ID",
-    "outlet": "CENTER_ID",
-    "products": [
-      {
-        "product": "PRODUCT_ID",
-        "price": 200,
-        "purchasedQuantity": 2,
-        "availableQuantity": 2
-      }
-    ],
-    "status": "pending",
-    "createdBy": "USER_ID"
-  }
+"success": true,
+"message": "Purchase Order created successfully and pending approval",
+"data": {
+"\_id": "RAISE_PO_ID",
+"date": "2026-10-10T00:00:00.000Z",
+"voucherNo": "STELE/NN/26-27",
+"vendor": "VENDOR_ID",
+"outlet": "CENTER_ID",
+"products": [
+{
+"product": "PRODUCT_ID",
+"price": 200,
+"purchasedQuantity": 2,
+"availableQuantity": 2
+}
+],
+"status": "pending",
+"createdBy": "USER_ID"
+}
 }
 The response may include populated vendor, outlet, product, and user objects.
 Common Errors
-HTTP status	Meaning
-400 Bad Request	Invalid request data or ID
-401 Unauthorized	Missing/invalid authentication
-403 Forbidden	Required purchase permission is missing
-409 Conflict	Duplicate/conflicting value where handled
-
+HTTP status Meaning
+400 Bad Request Invalid request data or ID
+401 Unauthorized Missing/invalid authentication
+403 Forbidden Required purchase permission is missing
+409 Conflict Duplicate/conflicting value where handled
 
 GET /raise-pos
 Returns purchase orders accessible to the authenticated user.
@@ -6181,31 +4095,30 @@ Endpoint
 GET http://localhost:5000/api/v1/raise-pos
 Access: Purchase -> view_own_purchase_stock or Purchase -> view_all_purchase_stock.
 Query Parameters
-Parameter	Required	Description
-page	No	Page number; defaults to 1
-limit	No	Page size; defaults to 100
-search	No	Searches supported PO fields, including voucher number and referenced vendor/outlet/product fields where available
-type	No	Filters by PO type if supported by the stored schema
-vendor	No	Filters by vendor ID
-outlet	No	Filters by outlet/Center ID
-startDate	No	Start of date range
-endDate	No	End of date range
-
+Parameter Required Description
+page No Page number; defaults to 1
+limit No Page size; defaults to 100
+search No Searches supported PO fields, including voucher number and referenced vendor/outlet/product fields where available
+type No Filters by PO type if supported by the stored schema
+vendor No Filters by vendor ID
+outlet No Filters by outlet/Center ID
+startDate No Start of date range
+endDate No End of date range
 
 Example:
 GET http://localhost:5000/api/v1/raise-pos?page=1&limit=10&search=STELE&vendor=VENDOR_ID
 Successful Response
 200 OK
 {
-  "success": true,
-  "message": "Data retrieved successfully",
-  "data": [],
-  "pagination": {
-    "currentPage": 1,
-    "totalPages": 0,
-    "totalItems": 0,
-    "itemsPerPage": 100
-  }
+"success": true,
+"message": "Data retrieved successfully",
+"data": [],
+"pagination": {
+"currentPage": 1,
+"totalPages": 0,
+"totalItems": 0,
+"itemsPerPage": 100
+}
 }
 When records exist, data contains matching POs. Responses may include populated vendor, outlet, product, createdBy, and approvedBy details. A no-record response uses No raise po found.
 Users with own-center view permission are restricted to their associated center; all-center view permission permits broader results subject to supplied filters and service rules.
@@ -6218,21 +4131,20 @@ Request body: None required.
 Successful Response
 200 OK
 {
-  "success": true,
-  "message": "Purchase Order approved successfully",
-  "data": {
-    "_id": "RAISE_PO_ID",
-    "status": "approved"
-  }
+"success": true,
+"message": "Purchase Order approved successfully",
+"data": {
+"\_id": "RAISE_PO_ID",
+"status": "approved"
+}
 }
 The returned PO may contain additional populated fields.
 Expected Errors
-HTTP status	Meaning
-400 Bad Request	PO is not in pending status
-403 Forbidden	Caller is not Admin / Superadmin
-404 Not Found	PO does not exist
-401 Unauthorized	Missing/invalid authentication
-
+HTTP status Meaning
+400 Bad Request PO is not in pending status
+403 Forbidden Caller is not Admin / Superadmin
+404 Not Found PO does not exist
+401 Unauthorized Missing/invalid authentication
 
 Stock note: Approval does not guarantee a stock-ledger update. The current service contains a note that stock integration is not implemented; verify that workflow separately.
 PUT /raise-pos/:id/reject
@@ -6244,20 +4156,19 @@ Request body: None required.
 Successful Response
 200 OK
 {
-  "success": true,
-  "message": "Purchase Order rejected successfully",
-  "data": {
-    "_id": "RAISE_PO_ID",
-    "status": "rejected"
-  }
+"success": true,
+"message": "Purchase Order rejected successfully",
+"data": {
+"\_id": "RAISE_PO_ID",
+"status": "rejected"
+}
 }
 Expected Errors
-HTTP status	Meaning
-400 Bad Request	PO is not pending, including an already-approved PO
-403 Forbidden	Caller is not Admin / Superadmin
-404 Not Found	PO does not exist
-401 Unauthorized	Missing/invalid authentication
-
+HTTP status Meaning
+400 Bad Request PO is not pending, including an already-approved PO
+403 Forbidden Caller is not Admin / Superadmin
+404 Not Found PO does not exist
+401 Unauthorized Missing/invalid authentication
 
 During manual testing, attempting to reject an already-approved PO returned 400 Bad Request with PO is already approved, which is the expected status-conflict behavior.
 PATCH /raise-pos/:id/change-to-pending
@@ -6269,21 +4180,20 @@ Request body: None required.
 Successful Response
 200 OK
 {
-  "success": true,
-  "message": "Purchase Order status changed to pending successfully",
-  "data": {
-    "_id": "RAISE_PO_ID",
-    "status": "pending"
-  }
+"success": true,
+"message": "Purchase Order status changed to pending successfully",
+"data": {
+"\_id": "RAISE_PO_ID",
+"status": "pending"
+}
 }
 The service clears prior approval metadata when changing the status back to pending.
 Expected Errors
-HTTP status	Meaning
-400 Bad Request	PO cannot be changed to pending from its current status
-403 Forbidden	Caller is not permitted to perform this operation
-404 Not Found	PO does not exist
-401 Unauthorized	Missing/invalid authentication
-
+HTTP status Meaning
+400 Bad Request PO cannot be changed to pending from its current status
+403 Forbidden Caller is not permitted to perform this operation
+404 Not Found PO does not exist
+401 Unauthorized Missing/invalid authentication
 
 DELETE /raise-pos/:id
 Deletes a PO subject to center-access and stock checks.
@@ -6293,35 +4203,108 @@ Access: Authenticated; center scope and stock conditions are enforced by the ser
 Successful Response
 200 OK
 {
-  "success": true,
-  "message": "PO deleted successfully"
+"success": true,
+"message": "PO deleted successfully"
 }
 Expected Errors
-HTTP status	Meaning
-400 Bad Request	Invalid PO ID or deletion is blocked by a stock condition
-403 Forbidden	User is not allowed to access the PO
-404 Not Found	PO does not exist or is inaccessible under the service's access checks
-401 Unauthorized	Missing/invalid authentication
-
+HTTP status Meaning
+400 Bad Request Invalid PO ID or deletion is blocked by a stock condition
+403 Forbidden User is not allowed to access the PO
+404 Not Found PO does not exist or is inaccessible under the service's access checks
+401 Unauthorized Missing/invalid authentication
 
 Raise PO API Test Coverage
 Admin Login — Manual Thunder Client Testing
 The following test results were observed while testing with the Admin login.
-Test	Observed result	Status
-Create PO	PO created with pending status and generated voucher number	Tested
-Get all POs	Request succeeded	Tested
-Approve pending PO	200 OK	Tested
-Reject pending PO	200 OK	Tested
-Reject an already-approved PO	400 Bad Request, PO is already approved	Tested
-Change rejected PO back to pending	200 OK	Tested
-Response fields and populated data	Checked in the returned responses	Checked during manual testing
-
+Test Observed result Status
+Create PO PO created with pending status and generated voucher number Tested
+Get all POs Request succeeded Tested
+Approve pending PO 200 OK Tested
+Reject pending PO 200 OK Tested
+Reject an already-approved PO 400 Bad Request, PO is already approved Tested
+Change rejected PO back to pending 200 OK Tested
+Response fields and populated data Checked in the returned responses Checked during manual testing
 
 Other Roles — To Be Verified Separately
 Only Admin-login testing is recorded above. Other roles have not been fully verified across every Raise PO endpoint.
 The Area Manager create-PO attempt returned 403 Forbidden with Access denied. add_purchase_stock permission required. This is consistent with the supplied role-permission table, where Area Manager does not have add_purchase_stock.
 The Area Manager list request returned 200 OK with an empty data array. This confirms the request response only; center-scope and data visibility must be verified using records associated with that user's center.
 Important Implementation Notes
+
 - Keep the existing route prefix /api/v1/raise-pos and all field names unchanged.
 - 200 OK with an empty list does not alone verify data visibility or center scoping.
-- Stock integration for PO approval/deletion should not be documented as supported until verified in the current implementation
+- # Stock integration for PO approval/deletion should not be documented as supported until verified in the current implementation
+  "toCenter": "TO_CENTER_ID",
+  "usageType": "Damage",
+  "damageReason": "Cable damaged during installation",
+  "date": "2026-10-09",
+  "remark": "Testing damage report",
+  "items": [
+  {
+  "product": "PRODUCT_ID",
+  "quantity": 1,
+  "serialNumbers": []
+  }
+  ]
+  }
+
+````
+
+**Required fields for the tested Damage flow**
+
+- `center`: Source center ID.
+- `toCenter`: Destination center ID.
+- `usageType`: `Damage`.
+- `damageReason`: Reason for damage.
+- `items`: Array containing product, quantity, and serial numbers when applicable.
+
+**Successful response:** HTTP success response with `success: true`, StockUsage data, and status `completed`.
+
+**Verified behavior**
+
+- Non-serialized Damage: decreases `availableQuantity` and `totalQuantity`.
+- Serialized Damage: marks selected serials as `damaged` and decreases `availableQuantity`.
+- Creates or updates the corresponding `FaultyStock` record with pending damage history.
+- Matching Damage reports are merged into one FaultyStock record for the same product, center, destination center, and usage type.
+
+### 2. Revert Damage Entry
+
+**Endpoint:** `PUT /api/v1/stock-usage/:id/revert-damage`
+
+Reverts a completed Damage usage entry and records cancellation metadata.
+
+**Path parameter**
+
+- `id`: StockUsage document ID to revert.
+
+**Request Body**
+
+```json
+{
+  "revertRemark": "Testing damage revert"
+}
+````
+
+**Successful response:** HTTP success response with `success: true`, message `Damage entry reverted successfully`, and the updated StockUsage record.
+
+**Verified behavior**
+
+- Changes StockUsage status to `cancelled`.
+- Records `revertedBy`, `revertRemark`, and `revertDate`.
+- Restores the selected serialized items to `available`.
+- Updates the relevant FaultyStock damage quantity and history.
+- Partial revert preserves other pending damage reports in the merged FaultyStock record.
+
+### Testing Summary
+
+| Test case                                   | Result                          |
+| ------------------------------------------- | ------------------------------- |
+| Non-serialized Damage creation              | Passed                          |
+| FaultyStock merge across two Damage reports | Passed                          |
+| Non-serialized partial Damage revert        | Passed                          |
+| Serialized Damage creation                  | Passed                          |
+| Serialized Damage revert                    | Passed — serial status restored |
+
+**Note:** These results reflect the tested scenarios, not exhaustive validation of every Stock Usage behavior. CenterStock quantity consistency and other usage types should be verified separately.
+
+> > > > > > > 0fa7747 (feat: add stock usage module)

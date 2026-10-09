@@ -23,6 +23,7 @@ import stockPurchaseRoutes from "./routes/stockPurchaseRoutes.js";
 import stockRequestRoutes from "./routes/stockRequestRoutes.js";
 import raisePORoutes from "./routes/raisePORoutes.js";
 import { errorMiddleware } from "./middlewares/errorMiddleware.js";
+import stockUsageRoutes from "./routes/stockUsageRoutes.js";
 
 const app = express();
 /*
@@ -100,11 +101,16 @@ app.use(
     "/api/v1/stockrequest",
     stockRequestRoutes
 );
+
 app.use(
     "/api/v1/raise-pos",
     raisePORoutes
 );
 
+app.use(
+    "/api/v1/stock-usage",
+    stockUsageRoutes
+);
 /*
  * ------------------------------------------------------------
  * Error handling
