@@ -4282,7 +4282,7 @@ Reverts a completed Damage usage entry and records cancellation metadata.
 {
   "revertRemark": "Testing damage revert"
 }
-````
+```
 
 **Successful response:** HTTP success response with `success: true`, message `Damage entry reverted successfully`, and the updated StockUsage record.
 
@@ -4306,9 +4306,7 @@ Reverts a completed Damage usage entry and records cancellation metadata.
 
 **Note:** These results reflect the tested scenarios, not exhaustive validation of every Stock Usage behavior. CenterStock quantity consistency and other usage types should be verified separately.
 
-
 - Stock integration for PO approval/deletion should not be documented as supported until verified in the current implementation
-
 
 # Testing Material API
 
@@ -4335,9 +4333,7 @@ Reverts a completed Damage usage entry and records cancellation metadata.
     {
       "product": "<product_id>",
       "quantity": 1,
-      "serialNumbers": [
-        "<serial_number>"
-      ],
+      "serialNumbers": ["<serial_number>"],
       "remark": "Forward testing request"
     }
   ],
@@ -4388,9 +4384,9 @@ Retrieves testing material requests with supported pagination, sorting, and filt
 
 ### Path Parameters
 
-| Parameter | Required | Description |
-|---|---|---|
-| `id` | Yes | Testing material request MongoDB ID |
+| Parameter | Required | Description                         |
+| --------- | -------- | ----------------------------------- |
+| `id`      | Yes      | Testing material request MongoDB ID |
 
 ### Example
 
@@ -4448,9 +4444,9 @@ Accepts a pending testing material request at its destination center.
 
 ### Query Parameters
 
-| Parameter | Required | Description |
-|---|---|---|
-| `centerId` | Yes | Destination center's MongoDB ID |
+| Parameter  | Required | Description                     |
+| ---------- | -------- | ------------------------------- |
+| `centerId` | Yes      | Destination center's MongoDB ID |
 
 ### Example
 
@@ -4472,15 +4468,15 @@ Retrieves products currently under testing for the specified center.
 
 ### Path Parameters
 
-| Parameter | Required | Description |
-|---|---|---|
-| `productId` | Yes | Product MongoDB ID |
+| Parameter   | Required | Description        |
+| ----------- | -------- | ------------------ |
+| `productId` | Yes      | Product MongoDB ID |
 
 ### Query Parameters
 
-| Parameter | Required | Description |
-|---|---|---|
-| `centerId` | Yes | Destination center's MongoDB ID |
+| Parameter  | Required | Description                     |
+| ---------- | -------- | ------------------------------- |
+| `centerId` | Yes      | Destination center's MongoDB ID |
 
 ### Example
 
@@ -4516,3 +4512,178 @@ All six implemented endpoints have been tested locally using Postman and the dev
 - The API uses the existing TruNet backend authentication, role permissions, models, and stock-management logic.
 - Testing was performed in the local development environment.
 
+# Shifting Request APIs
+
+**Base URL:** `http://localhost:5000/api/v1`  
+**Resource:** `/shifting-requests`
+Shifting Request manages customer transfers from one Center to another. On approval, the workflow updates the customer's Center and creates `FilledStock` records from completed customer Stock Usage entries associated with the source Center.
+
+## Permission Matrix
+
+| Operation                | Permission(s)                                                |
+| ------------------------ | ------------------------------------------------------------ |
+| Create / Update / Delete | `manage_shifting_own_center` or `manage_shifting_all_center` |
+| List / View              | `view_shifting_own_center` or `view_shifting_all_center`     |
+| Approve / Reject         | `accept_shifting_own_center` or `accept_shifting_all_center` |
+
+All routes require authentication and use the `Shifting Request` authorization module.
+
+## Endpoint Summary
+
+| Method | Endpoint                                                  | Purpose                           |
+| ------ | --------------------------------------------------------- | --------------------------------- |
+| POST   | `/shifting-requests`                                      | Create a shifting request         |
+| GET    | `/shifting-requests`                                      | List shifting requests            |
+| GET    | `/shifting-requests/:id`                                  | Get a shifting request by ID      |
+| GET    | `/shifting-requests/customer/:customerId/requests`        | Get requests for a customer       |
+| PUT    | `/shifting-requests/:id`                                  | Update a shifting request         |
+| DELETE | `/shifting-requests/:id`                                  | Delete a shifting request         |
+| PUT    | `/shifting-requests/:id/status`                           | Approve or reject a request       |
+| GET    | `/shifting-requests/customers/:customerId/history`        | Get customer shifting history     |
+| GET    | `/shifting-requests/customers/:customerId/current-center` | Get the customer's current Center |
+
+## POST `/shifting-requests`
+
+Creates a shifting request. The source Center is derived from the authenticated user's Center context.
+
+**Endpoint**
+
+```http
+POST http://localhost:5000/api/v1/shifting-requests
+```
+
+**Request Body**
+
+```json
+{
+  "date": "2026-10-10",
+  "customer": "CUSTOMER_ID",
+  "address1": "Address line 1",
+  "address2": "Address line 2",
+  "city": "Pune",
+  "remark": "Customer shifting request",
+  "toCenter": "DESTINATION_CENTER_ID"
+}
+```
+
+| Field      | Required                               | Description           |
+| ---------- | -------------------------------------- | --------------------- |
+| `date`     | Yes, according to the create validator | Shifting request date |
+| `customer` | Yes, according to the create validator | Customer MongoDB ID   |
+| `address1` | As accepted by the model/validator     | Primary address       |
+| `address2` | No                                     | Secondary address     |
+| `city`     | As accepted by the model/validator     | City                  |
+| `remark`   | No                                     | Request remark        |
+| `toCenter` | Destination-dependent                  | Destination Center ID |
+
+A newly created request has status `Pending` and `customerCenterUpdated: false`.
+
+## GET `/shifting-requests`
+
+Returns shifting requests accessible to the authenticated user.
+
+## GET `/shifting-requests/:id`
+
+Returns a shifting request by MongoDB ID.
+
+## GET `/shifting-requests/customer/:customerId/requests`
+
+Returns shifting requests associated with the specified customer.
+
+## PUT `/shifting-requests/:id`
+
+Updates an existing shifting request. The update route does not use the create-request validator; update behavior follows the current controller and model implementation.
+
+## DELETE `/shifting-requests/:id`
+
+Deletes a shifting request.
+
+**Endpoint**
+
+```http
+DELETE http://localhost:5000/api/v1/shifting-requests/SHIFTING_REQUEST_ID
+```
+
+Successful response observed during testing:
+
+```json
+{
+  "success": true,
+  "message": "Shifting request deleted successfully"
+}
+```
+
+A follow-up GET for the deleted request ID returned `404 Not Found` with `Shifting request not found or access denied`, confirming that the request was no longer accessible through that endpoint.
+
+## PUT `/shifting-requests/:id/status`
+
+Approves or rejects a pending shifting request.
+
+### Approve
+
+**Request Body**
+
+```json
+{
+  "status": "Approve"
+}
+```
+
+On approval, the current implementation:
+
+- transfers completed customer Stock Usage quantities into `FilledStock`;
+- updates the customer's Center to the request's destination Center;
+- adds an entry to the customer's `shiftingHistory`;
+- records approval metadata and sets `customerCenterUpdated: true`.
+
+Successful approval response includes a `transferSummary` with `transferredProducts`, `totalQuantity`, source and destination Centers, and per-product details.
+
+### Reject
+
+**Request Body**
+
+```json
+{
+  "status": "Reject",
+  "rejectionReason": "Reason for rejection"
+}
+```
+
+On rejection, the current implementation sets status to `Reject`, records `rejectedBy` and `rejectedAt`, and appends the rejection reason to the request's `remark` when supplied. Rejection does not update the customer's Center; `customerCenterUpdated` remains `false`.
+
+**Status values used by the current implementation:** `Pending`, `Approve`, `Reject`.
+
+## GET `/shifting-requests/customers/:customerId/history`
+
+Returns the shifting history recorded for a customer.
+
+## GET `/shifting-requests/customers/:customerId/current-center`
+
+Returns the customer's current Center information.
+
+## Filled Stock Transfer Behavior
+
+When a shifting request is approved, the transfer helper queries completed Stock Usage records matching the request's customer, source Center, `usageType: "Customer"`, and `status: "completed"`. It aggregates quantities by product and collects serial numbers before creating `FilledStock` records.
+
+The current helper assigns `FilledStock.center` to `fromCenter` (the source Center). Confirm that this matches the legacy implementation before changing it; the API response's `toCenter` in `transferSummary` identifies the destination but does not itself determine the stored `FilledStock.center`.
+
+## Shifting Request API Test Coverage
+
+The following endpoints/actions were manually tested using the Admin login:
+
+| Test                                                            | Result                         |
+| --------------------------------------------------------------- | ------------------------------ |
+| Create shifting request                                         | Passed                         |
+| List shifting requests                                          | Passed                         |
+| Get shifting request by ID                                      | Passed                         |
+| Get requests for a customer                                     | Passed                         |
+| Update shifting request                                         | Passed                         |
+| Delete shifting request                                         | Passed                         |
+| Approve shifting request                                        | Passed                         |
+| Reject shifting request with rejection reason                   | Passed                         |
+| Get customer shifting history                                   | Passed                         |
+| Get customer current Center                                     | Passed                         |
+| Stock Usage to Filled Stock flow for one non-serialized product | Passed for the tested scenario |
+| Verify deleted request is no longer accessible via GET          | Passed (`404 Not Found`)       |
+
+**Testing note:** These results reflect the scenarios exercised during manual API testing. They do not establish exhaustive coverage of all edge cases, permission scopes, multi-product aggregation, serialized-stock transfers, or all legacy parity behavior.

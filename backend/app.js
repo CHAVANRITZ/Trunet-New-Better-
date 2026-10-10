@@ -25,7 +25,7 @@ import raisePORoutes from "./routes/raisePORoutes.js";
 import testingMaterialRoutes from "./routes/testingMaterialRoutes.js";
 import { errorMiddleware } from "./middlewares/errorMiddleware.js";
 import stockUsageRoutes from "./routes/stockUsageRoutes.js";
-
+import shiftingRequestRoutes from "./routes/shiftingRequestRoutes.js";
 const app = express();
 /*
  * ------------------------------------------------------------
@@ -115,6 +115,10 @@ app.use(
 app.use(
     "/api/v1/stock-usage",
     stockUsageRoutes
+);
+app.use(
+    "/api/v1/shifting-requests",
+    shiftingRequestRoutes
 );
 /*
  * ------------------------------------------------------------
