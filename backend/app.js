@@ -22,6 +22,7 @@ import stockTransferRoutes from "./routes/stockTransferRoutes.js";
 import stockPurchaseRoutes from "./routes/stockPurchaseRoutes.js";
 import stockRequestRoutes from "./routes/stockRequestRoutes.js";
 import raisePORoutes from "./routes/raisePORoutes.js";
+import testingMaterialRoutes from "./routes/testingMaterialRoutes.js";
 import { errorMiddleware } from "./middlewares/errorMiddleware.js";
 import stockUsageRoutes from "./routes/stockUsageRoutes.js";
 
@@ -105,6 +106,10 @@ app.use(
 app.use(
     "/api/v1/raise-pos",
     raisePORoutes
+);
+app.use(
+    "/api/v1/testing-materials",
+    testingMaterialRoutes
 );
 
 app.use(

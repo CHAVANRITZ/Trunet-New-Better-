@@ -4233,6 +4233,7 @@ Important Implementation Notes
 
 - Keep the existing route prefix /api/v1/raise-pos and all field names unchanged.
 - 200 OK with an empty list does not alone verify data visibility or center scoping.
+
 - # Stock integration for PO approval/deletion should not be documented as supported until verified in the current implementation
   "toCenter": "TO_CENTER_ID",
   "usageType": "Damage",
@@ -4247,8 +4248,6 @@ Important Implementation Notes
   }
   ]
   }
-
-````
 
 **Required fields for the tested Damage flow**
 
@@ -4307,4 +4306,213 @@ Reverts a completed Damage usage entry and records cancellation metadata.
 
 **Note:** These results reflect the tested scenarios, not exhaustive validation of every Stock Usage behavior. CenterStock quantity consistency and other usage types should be verified separately.
 
-> > > > > > > 0fa7747 (feat: add stock usage module)
+
+- Stock integration for PO approval/deletion should not be documented as supported until verified in the current implementation
+
+
+# Testing Material API
+
+**Base URL:** `/api/v1/testing-materials`
+
+**Authentication:** Required for all endpoints.
+
+**Permission Module:** `Testing Material`
+
+---
+
+## 1. Create Testing Material Request
+
+- **Method:** `POST`
+- **Endpoint:** `/`
+- **Permission:** `create_testing_request`
+
+### Request Body
+
+```json
+{
+  "toCenter": "<destination_center_id>",
+  "products": [
+    {
+      "product": "<product_id>",
+      "quantity": 1,
+      "serialNumbers": [
+        "<serial_number>"
+      ],
+      "remark": "Forward testing request"
+    }
+  ],
+  "remark": "Testing Material API test"
+}
+```
+
+### Description
+
+Creates a testing material request from an outlet to a destination center.
+
+### Business Rules
+
+- The destination center must be valid.
+- The product must exist.
+- Requested quantities must be valid.
+- The outlet must have sufficient stock.
+- For serialized products, serial numbers must be valid and match the requested quantity.
+
+---
+
+## 2. Get All Testing Material Requests
+
+- **Method:** `GET`
+- **Endpoint:** `/`
+- **Permission:** `view_testing_request`
+
+### Supported Query Parameters
+
+- Pagination parameters
+- Sorting parameters
+- `fromCenter`
+- `toCenter`
+- `startDate`
+- `endDate`
+
+### Description
+
+Retrieves testing material requests with supported pagination, sorting, and filters.
+
+---
+
+## 3. Get Testing Material Request by ID
+
+- **Method:** `GET`
+- **Endpoint:** `/:id`
+- **Permission:** `view_testing_request`
+
+### Path Parameters
+
+| Parameter | Required | Description |
+|---|---|---|
+| `id` | Yes | Testing material request MongoDB ID |
+
+### Example
+
+```http
+GET /api/v1/testing-materials/<request_id>
+```
+
+### Description
+
+Retrieves a testing material request by its MongoDB ID.
+
+---
+
+## 4. Accept Testing Material Request
+
+- **Method:** `PUT`
+- **Endpoint:** `/:id/accept`
+- **Permission:** `accept_testing_request`
+
+### Request Body
+
+```json
+{
+  "remark": "Accepted for testing"
+}
+```
+
+### Example
+
+```http
+PUT /api/v1/testing-materials/<request_id>/accept
+```
+
+### Description
+
+Accepts a pending testing material request at its destination center.
+
+### Business Rules
+
+- The request must exist.
+- The accepting user's center must match the request's destination center.
+- Only requests with `pending_testing` status can be accepted.
+- Product and stock availability are validated.
+- Serialized product quantities must match the supplied serial-number count.
+- The applicable outlet stock and testing stock are updated.
+- The request status changes to `under_testing` after successful acceptance.
+
+---
+
+## 5. Get Under-Testing Products
+
+- **Method:** `GET`
+- **Endpoint:** `/under-testing-product`
+- **Permission:** `view_testing_request`
+
+### Query Parameters
+
+| Parameter | Required | Description |
+|---|---|---|
+| `centerId` | Yes | Destination center's MongoDB ID |
+
+### Example
+
+```http
+GET /api/v1/testing-materials/under-testing-product?centerId=692047541f4d11d2c88e4d26
+```
+
+### Description
+
+Retrieves products currently under testing for the specified center.
+
+---
+
+## 6. Get Under-Testing Serials by Product
+
+- **Method:** `GET`
+- **Endpoint:** `/under-testing/product/:productId/serial`
+- **Permission:** `view_testing_request`
+
+### Path Parameters
+
+| Parameter | Required | Description |
+|---|---|---|
+| `productId` | Yes | Product MongoDB ID |
+
+### Query Parameters
+
+| Parameter | Required | Description |
+|---|---|---|
+| `centerId` | Yes | Destination center's MongoDB ID |
+
+### Example
+
+```http
+GET /api/v1/testing-materials/under-testing/product/6aab8f0b7ef6c48101d6b2d0/serial?centerId=692047541f4d11d2c88e4d26
+```
+
+### Description
+
+Retrieves serial numbers under testing for the specified product and center.
+
+---
+
+## Authentication and Authorization
+
+- All endpoints require authentication through the existing authentication middleware.
+- Access is controlled by the existing `Testing Material` permission module.
+- The relevant permissions are:
+  - `create_testing_request`
+  - `view_testing_request`
+  - `accept_testing_request`
+- A user can accept a request only when their center matches the request's destination center.
+
+---
+
+## Testing Status
+
+All six implemented endpoints have been tested locally using Postman and the development MongoDB database.
+
+## Important Notes
+
+- No DELETE endpoint is currently implemented in the Testing Material routes.
+- The API uses the existing TruNet backend authentication, role permissions, models, and stock-management logic.
+- Testing was performed in the local development environment.
+

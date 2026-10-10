@@ -20,7 +20,7 @@ import Permission from "../models/Permission.js";
  *
  * No database records are modified.
  */
-const normalizePermissions = async (rolePermissions = []) => {
+export const normalizePermissions = async (rolePermissions = []) => {
     if (!Array.isArray(rolePermissions)) {
         return [];
     }
