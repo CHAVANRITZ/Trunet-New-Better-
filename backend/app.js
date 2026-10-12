@@ -26,6 +26,7 @@ import testingMaterialRoutes from "./routes/testingMaterialRoutes.js";
 import { errorMiddleware } from "./middlewares/errorMiddleware.js";
 import stockUsageRoutes from "./routes/stockUsageRoutes.js";
 import shiftingRequestRoutes from "./routes/shiftingRequestRoutes.js";
+import usageSummaryRoutes from "./routes/usageSummaryRoutes.js";
 const app = express();
 /*
  * ------------------------------------------------------------
@@ -120,6 +121,7 @@ app.use(
     "/api/v1/shifting-requests",
     shiftingRequestRoutes
 );
+app.use("/api/v1", usageSummaryRoutes);
 /*
  * ------------------------------------------------------------
  * Error handling

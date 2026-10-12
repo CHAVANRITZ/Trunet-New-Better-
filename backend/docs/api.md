@@ -5431,3 +5431,27 @@ Reject Damage Request Passed
 These results reflect the manual test scenarios run on 2026-10-12 and do
 not establish exhaustive testing of all permission scopes, error paths,
 serialized/non-serialized combinations, or stock-counter consistency.
+
+### Get Indent Usage Summary Report
+
+- **Method:** `GET`
+- **Endpoint:** `/api/v1/reports/indent-usage-summary`
+- **Authentication:** Bearer Token required
+- **Authorization:** `view_usage_own_center` or `view_usage_all_center`
+
+**Query Parameters (all optional):**
+
+- `startDate` — Start date for the report
+- `endDate` — End date for the report
+- `centerId` — Filter by center ID or use `all` for all centers (requires all-center permission)
+- `productId` — Filter by product ID
+- `month` — Month for the report
+- `year` — Year for the report
+- `page` — Page number (default: `1`)
+- `limit` — Records per page (default: `100`)
+
+**Success Response:** `200 OK`
+
+Returns product-wise usage summary, stock quantities, center details, pagination, summary statistics, applied filters, and report metadata.
+
+**Postman Test:** `GET {{baseUrl}}/api/v1/reports/indent-usage-summary`
