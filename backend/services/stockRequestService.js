@@ -2879,55 +2879,59 @@ export const rejectShipment = async (user, id) => {
   }
 };
 
-export const markAsIncomplete = async (req, res) => {
-  console.log("[MARK-INCOMPLETE DEBUG]", {
-    reqParams: req.params,
-    reqBody: req.body,
-    reqType: typeof req,
-    resType: typeof res,
-  });
-
+export const markAsIncomplete = async (user, id, body) => {
   try {
-    const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
-      req,
-      ["manage_indent"]
-    );
+    const { hasAccess, permissions, userCenter } =
+      await checkStockRequestPermissions(user, ["manage_indent"]);
 
     if (!hasAccess) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. manage_indent permission required.",
-      });
+      return {
+        statusCode: 403,
+        body: {
+          success: false,
+          message: "Access denied. manage_indent permission required.",
+        },
+      };
     }
 
-    const { id } = req.params;
-    const { incompleteRemark, receivedProducts } = req.body;
+    const { incompleteRemark, receivedProducts } = body;
 
-    const stockRequest = await StockRequest.findById(id)
-      .populate("center", "reseller");
+    const stockRequest = await StockRequest.findById(id).populate(
+      "center",
+      "reseller"
+    );
 
     if (!stockRequest) {
-      return res.status(404).json({
-        success: false,
-        message: "Stock request not found",
-      });
+      return {
+        statusCode: 404,
+        body: {
+          success: false,
+          message: "Stock request not found",
+        },
+      };
     }
 
     if (!checkCenterAccess(stockRequest, userCenter, permissions)) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "Access denied. You can only mark stock requests from your own center as incomplete.",
-      });
+      return {
+        statusCode: 403,
+        body: {
+          success: false,
+          message:
+            "Access denied. You can only mark stock requests from your own center as incomplete.",
+        },
+      };
     }
 
-    const userId = req.user?.id;
+    const userId = user?.id;
 
     if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: "User authentication required",
-      });
+      return {
+        statusCode: 400,
+        body: {
+          success: false,
+          message: "User authentication required",
+        },
+      };
     }
 
     const ResellerStock = mongoose.model("ResellerStock");
@@ -2944,20 +2948,18 @@ export const markAsIncomplete = async (req, res) => {
         );
 
         if (!productItem) {
-          return res.status(400).json({
-            success: false,
-            message: `Product ${receivedProduct.productId} not found in stock request`,
-          });
+          return {
+            statusCode: 400,
+            body: {
+              success: false,
+              message: `Product ${receivedProduct.productId} not found in stock request`,
+            },
+          };
         }
 
         const approvedQuantity = productItem.approvedQuantity || 0;
         const receivedQuantity = receivedProduct.receivedQuantity || 0;
         const quantityToRestore = approvedQuantity - receivedQuantity;
-
-        console.log(`[DEBUG] Product ${receivedProduct.productId}:`);
-        console.log(`[DEBUG]   Approved: ${approvedQuantity}`);
-        console.log(`[DEBUG]   Received: ${receivedQuantity}`);
-        console.log(`[DEBUG]   To Restore: ${quantityToRestore}`);
 
         if (quantityToRestore > 0) {
           const productDoc = await Product.findById(
@@ -2973,7 +2975,7 @@ export const markAsIncomplete = async (req, res) => {
           };
 
           const resellerQuantity =
-            sourceBreakdown.fromReseller.quantity || 0;
+            sourceBreakdown.fromReseller?.quantity || 0;
 
           if (resellerQuantity > 0 && resellerId) {
             const resellerRestoreQuantity = Math.min(
@@ -2990,7 +2992,7 @@ export const markAsIncomplete = async (req, res) => {
               if (resellerStock) {
                 if (
                   tracksSerialNumbers &&
-                  sourceBreakdown.fromReseller.serials
+                  sourceBreakdown.fromReseller?.serials
                 ) {
                   const serialsToRestore =
                     sourceBreakdown.fromReseller.serials.slice(
@@ -3015,10 +3017,6 @@ export const markAsIncomplete = async (req, res) => {
                             th.referenceId?.toString() !==
                             stockRequest._id.toString()
                         );
-
-                      console.log(
-                        `[DEBUG] Restored reseller serial ${serialNumber}`
-                      );
                     }
                   }
 
@@ -3036,16 +3034,12 @@ export const markAsIncomplete = async (req, res) => {
                 }
 
                 await resellerStock.save();
-
-                console.log(
-                  `[DEBUG] Restored ${resellerRestoreQuantity} units to reseller stock`
-                );
               }
             }
           }
 
           const outletQuantity =
-            sourceBreakdown.fromOutlet.quantity || 0;
+            sourceBreakdown.fromOutlet?.quantity || 0;
 
           const outletRestoreQuantity = Math.min(
             quantityToRestore,
@@ -3061,7 +3055,7 @@ export const markAsIncomplete = async (req, res) => {
             if (outletStock) {
               if (
                 tracksSerialNumbers &&
-                sourceBreakdown.fromOutlet.serials
+                sourceBreakdown.fromOutlet?.serials
               ) {
                 const serialsToRestore =
                   sourceBreakdown.fromOutlet.serials.slice(
@@ -3088,10 +3082,6 @@ export const markAsIncomplete = async (req, res) => {
                         serial.transferHistory.pop();
                       }
                     }
-
-                    console.log(
-                      `[DEBUG] Restored outlet serial ${serialNumber}`
-                    );
                   }
                 }
 
@@ -3101,19 +3091,13 @@ export const markAsIncomplete = async (req, res) => {
                 outletStock.inTransitQuantity -=
                   serialsToRestore.length;
               } else {
-                // FIX:
-                // For non-serialized stock, completion already reduced
-                // inTransitQuantity back to 0. Therefore, only restore
-                // availableQuantity here.
+                // Completion already adjusted in-transit quantity.
+                // Restore only the available quantity here.
                 outletStock.availableQuantity +=
                   outletRestoreQuantity;
               }
 
               await outletStock.save();
-
-              console.log(
-                `[DEBUG] Restored ${outletRestoreQuantity} units to outlet stock`
-              );
             }
           }
         }
@@ -3191,24 +3175,30 @@ export const markAsIncomplete = async (req, res) => {
       .populate("createdBy", "_id fullName email")
       .populate("updatedBy", "_id fullName email");
 
-    res.status(200).json({
-      success: true,
-      message:
-        "Stock request marked as incomplete successfully. Reseller stock restored for unreceived quantities.",
-      data: populatedRequest,
-    });
-  } catch (error) {
-    console.error(
-      "Error marking stock request as incomplete:",
-      error
-    );
+    return {
+      statusCode: 200,
+      body: {
+        success: true,
+        message:
+          "Stock request marked as incomplete successfully. Reseller stock restored for unreceived quantities.",
+        data: populatedRequest,
+      },
+    };
+} catch (error) {
+  console.error(
+    "Error marking stock request as incomplete:",
+    error
+  );
 
-    res.status(500).json({
+  return {
+    statusCode: 500,
+    body: {
       success: false,
       message: "Error marking stock request as incomplete",
       error: error.message,
-    });
-  }
+    },
+  };
+}
 };
 
 export const completeIncompleteRequest = async (user, id, body) => {
