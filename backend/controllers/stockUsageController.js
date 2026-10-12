@@ -394,12 +394,33 @@ export const getDamageReturnRecordsWithStats = async (req, res) => {
 
 export const returnProductSerial = async (req, res) => {
     try {
+        const userCenterId =
+            req.selectedCenterId ??
+            req.authorizationContext?.centerId ??
+            req.user?.fullUser?.center?._id ??
+            req.user?.fullUser?.center ??
+            null;
+
+        if (!userCenterId) {
+            return sendError(
+                res,
+                new Error("No center is assigned to the authenticated user"),
+                "Error returning product serial"
+            );
+        }
+
         const result = await stockUsageService.returnProductSerial({
             ...req.body,
-            returnedBy: req.user?._id,
-            userCenterId: req.authorizationContext?.centerId,
+            returnedBy: req.user?.id,
+            userCenterId,
         });
-        return sendSuccess(res, 200, "Product serial returned successfully", result);
+
+        return sendSuccess(
+            res,
+            200,
+            "Product serial returned successfully",
+            result
+        );
     } catch (error) {
         return sendError(res, error, "Error returning product serial");
     }
@@ -407,12 +428,33 @@ export const returnProductSerial = async (req, res) => {
 
 export const replaceProductSerial = async (req, res) => {
     try {
+        const userCenterId =
+            req.selectedCenterId ??
+            req.authorizationContext?.centerId ??
+            req.user?.fullUser?.center?._id ??
+            req.user?.fullUser?.center ??
+            null;
+
+        if (!userCenterId) {
+            return sendError(
+                res,
+                new Error("No center is assigned to the authenticated user"),
+                "Error replacing product serial"
+            );
+        }
+
         const result = await stockUsageService.replaceProductSerial({
             ...req.body,
-            replacedBy: req.user?._id,
-            userCenterId: req.authorizationContext?.centerId,
+            replacedBy: req.user?.id,
+            userCenterId,
         });
-        return sendSuccess(res, 200, "Product serial replaced successfully", result);
+
+        return sendSuccess(
+            res,
+            200,
+            "Product serial replaced successfully",
+            result
+        );
     } catch (error) {
         return sendError(res, error, "Error replacing product serial");
     }
