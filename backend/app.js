@@ -27,6 +27,7 @@ import { errorMiddleware } from "./middlewares/errorMiddleware.js";
 import stockUsageRoutes from "./routes/stockUsageRoutes.js";
 import shiftingRequestRoutes from "./routes/shiftingRequestRoutes.js";
 import usageSummaryRoutes from "./routes/usageSummaryRoutes.js";
+import invoiceRoutes from "./routes/invoiceRoutes.js";
 const app = express();
 /*
  * ------------------------------------------------------------
@@ -122,6 +123,8 @@ app.use(
     shiftingRequestRoutes
 );
 app.use("/api/v1", usageSummaryRoutes);
+
+app.use("/api/v1/invoices", invoiceRoutes);
 /*
  * ------------------------------------------------------------
  * Error handling

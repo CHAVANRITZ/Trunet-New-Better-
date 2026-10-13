@@ -4512,10 +4512,13 @@ expected status-conflict behavior. PATCH
 /raise-pos/:id/change-to-pending Changes an approved or rejected PO back
 to pending. Endpoint PATCH
 http://localhost:5000/api/v1/raise-pos/RAISE_PO_ID/change-to-pending
+
 Access: Current implementation restricts this operation to Admin /
-Superadmin. Request body: None required. Successful Response 200 OK {
+Superadmin. Request body: None required. Successful Response 200 OK
+{
 "success": true, "message": "Purchase Order status changed to pending
 successfully", "data": { "\_id": "RAISE_PO_ID", "status": "pending" } }
+
 The service clears prior approval metadata when changing the status back
 to pending. Expected Errors HTTP status Meaning 400 Bad Request PO
 cannot be changed to pending from its current status 403 Forbidden
