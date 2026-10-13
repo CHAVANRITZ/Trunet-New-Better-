@@ -10,11 +10,9 @@ import productRoutes from "./routes/productRoutes.js";
 import resellerRoutes from "./routes/resellerRoutes.js";
 import centerRoutes from "./routes/centerRoutes.js";
 import areaRoutes from "./routes/areaRoutes.js";
-
 import customerRoutes from "./routes/customerRoutes.js";
 import buildingRoutes from "./routes/buildingRoutes.js";
 import controlRoomRoutes from "./routes/controlRoomRoutes.js";
-
 import roleRoutes from "./routes/roleRoutes.js";
 import vendorRoutes from "./routes/vendorRoutes.js";
 import warehouseRoutes from "./routes/warehouseRoutes.js";
@@ -23,7 +21,6 @@ import stockPurchaseRoutes from "./routes/stockPurchaseRoutes.js";
 import stockRequestRoutes from "./routes/stockRequestRoutes.js";
 import raisePORoutes from "./routes/raisePORoutes.js";
 import testingMaterialRoutes from "./routes/testingMaterialRoutes.js";
-import { errorMiddleware } from "./middlewares/errorMiddleware.js";
 import stockUsageRoutes from "./routes/stockUsageRoutes.js";
 import shiftingRequestRoutes from "./routes/shiftingRequestRoutes.js";
 import usageSummaryRoutes from "./routes/usageSummaryRoutes.js";
@@ -33,23 +30,18 @@ import faultyStockRoutes from "./routes/faultyStockRoutes.js";
 import reportRoutes from "./routes/reportRoutes.js";
 import reportSubmissionRoutes from "./routes/reportSubmissionRoutes.js";
 import availableReportRoutes from "./routes/availabelReportRoutes.js";
+import centerStockImportRoutes from "./routes/centerStockImportRoutes.js";
+import centerReturnRoutes from "./routes/centerReturnRoutes.js";
+
+import { errorMiddleware } from "./middlewares/errorMiddleware.js";
+
 const app = express();
-/*
- * ------------------------------------------------------------
- * Global middleware
- * ------------------------------------------------------------
- */
 
-// Adds security-related HTTP headers.
+// Global middleware
 app.use(helmet());
-
-// Allows the frontend to communicate with the backend.
 app.use(cors());
-
-// Parses incoming JSON request bodies.
 app.use(express.json());
 
-// Prevents excessively frequent requests from a single client.
 const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 6000,
@@ -59,92 +51,44 @@ const apiLimiter = rateLimit({
 
 app.use("/api", apiLimiter);
 
-/*
- * ------------------------------------------------------------
- * API routes
- * ------------------------------------------------------------
- */
-
+// API routes
 app.use("/api/v1/health", healthRoutes);
 app.use("/api/v1/auth", authRoutes);
-
-app.use(
-    "/api/v1/product-categories",
-    productCategoryRoutes
-);
-
-app.use(
-    "/api/v1/products",
-    productRoutes
-);
-
-app.use(
-    "/api/v1/vendors",
-    vendorRoutes
-);
-
-app.use(
-    "/api/v1/roles",
-    roleRoutes
-);
-
+app.use("/api/v1/product-categories", productCategoryRoutes);
+app.use("/api/v1/products", productRoutes);
+app.use("/api/v1/vendors", vendorRoutes);
+app.use("/api/v1/roles", roleRoutes);
 app.use("/api/v1/resellers", resellerRoutes);
 app.use("/api/v1/centers", centerRoutes);
 app.use("/api/v1/areas", areaRoutes);
-
 app.use("/api/v1/customers", customerRoutes);
 app.use("/api/v1/buildings", buildingRoutes);
 app.use("/api/v1/control-rooms", controlRoomRoutes);
-
 app.use("/api/v1/warehouses", warehouseRoutes);
-app.use(
-    "/api/v1/stock-transfers",
-    stockTransferRoutes
-);
-app.use(
-    "/api/v1/stockpurchase",
-    stockPurchaseRoutes
-);
-app.use(
-    "/api/v1/stockrequest",
-    stockRequestRoutes
-);
-
-app.use(
-    "/api/v1/raise-pos",
-    raisePORoutes
-);
-app.use(
-    "/api/v1/testing-materials",
-    testingMaterialRoutes
-);
-
-app.use(
-    "/api/v1/stock-usage",
-    stockUsageRoutes
-);
-app.use(
-    "/api/v1/shifting-requests",
-    shiftingRequestRoutes
-);
+app.use("/api/v1/stock-transfers", stockTransferRoutes);
+app.use("/api/v1/stockpurchase", stockPurchaseRoutes);
+app.use("/api/v1/stockrequest", stockRequestRoutes);
+app.use("/api/v1/raise-pos", raisePORoutes);
+app.use("/api/v1/testing-materials", testingMaterialRoutes);
+app.use("/api/v1/stock-usage", stockUsageRoutes);
+app.use("/api/v1/shifting-requests", shiftingRequestRoutes);
 app.use("/api/v1", usageSummaryRoutes);
-
 app.use("/api/v1/invoices", invoiceRoutes);
 
+// Package Duration and Faulty Stock
 app.use("/api/v1/package-durations", packageDurationRoutes);
-// Faulty Stock routes
 app.use("/api/v1/faulty-stock", faultyStockRoutes);
+
+// Reports
 app.use("/api/v1/reports", reportRoutes);
 app.use("/api/v1/report-submissions", reportSubmissionRoutes);
 app.use("/api/v1/available-reports", availableReportRoutes);
-/*
- * ------------------------------------------------------------
- * Error handling
- * ------------------------------------------------------------
- *
- * This must be registered after all routes so that errors
- * propagated from controllers and services reach this middleware.
- */
+
+// Sakshi's Center Stock Import and Center Returns
+app.use("/api/v1/center-stock", centerStockImportRoutes);
+app.use("/api/v1/center-returns", centerReturnRoutes);
+
+// Error handling must come after all routes
 app.use(errorMiddleware);
 
 export default app;
