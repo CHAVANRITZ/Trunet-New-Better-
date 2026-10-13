@@ -28,6 +28,11 @@ import stockUsageRoutes from "./routes/stockUsageRoutes.js";
 import shiftingRequestRoutes from "./routes/shiftingRequestRoutes.js";
 import usageSummaryRoutes from "./routes/usageSummaryRoutes.js";
 import invoiceRoutes from "./routes/invoiceRoutes.js";
+import packageDurationRoutes from "./routes/packageDurationRoutes.js";
+import faultyStockRoutes from "./routes/faultyStockRoutes.js";
+import reportRoutes from "./routes/reportRoutes.js";
+import reportSubmissionRoutes from "./routes/reportSubmissionRoutes.js";
+import availableReportRoutes from "./routes/availabelReportRoutes.js";
 const app = express();
 /*
  * ------------------------------------------------------------
@@ -125,6 +130,13 @@ app.use(
 app.use("/api/v1", usageSummaryRoutes);
 
 app.use("/api/v1/invoices", invoiceRoutes);
+
+app.use("/api/v1/package-durations", packageDurationRoutes);
+// Faulty Stock routes
+app.use("/api/v1/faulty-stock", faultyStockRoutes);
+app.use("/api/v1/reports", reportRoutes);
+app.use("/api/v1/report-submissions", reportSubmissionRoutes);
+app.use("/api/v1/available-reports", availableReportRoutes);
 /*
  * ------------------------------------------------------------
  * Error handling
