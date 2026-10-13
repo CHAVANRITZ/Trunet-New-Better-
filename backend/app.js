@@ -28,6 +28,8 @@ import stockUsageRoutes from "./routes/stockUsageRoutes.js";
 import shiftingRequestRoutes from "./routes/shiftingRequestRoutes.js";
 import usageSummaryRoutes from "./routes/usageSummaryRoutes.js";
 import invoiceRoutes from "./routes/invoiceRoutes.js";
+import centerStockImportRoutes from "./routes/centerStockImportRoutes.js";
+import centerReturnRoutes from "./routes/centerReturnRoutes.js";
 const app = express();
 /*
  * ------------------------------------------------------------
@@ -125,6 +127,11 @@ app.use(
 app.use("/api/v1", usageSummaryRoutes);
 
 app.use("/api/v1/invoices", invoiceRoutes);
+app.use(
+    "/api/v1/center-stock",
+    centerStockImportRoutes
+);
+app.use("/api/v1/center-returns", centerReturnRoutes);
 /*
  * ------------------------------------------------------------
  * Error handling
