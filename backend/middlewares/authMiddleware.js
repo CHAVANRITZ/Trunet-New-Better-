@@ -1,18 +1,16 @@
 import jwt from "jsonwebtoken";
-
 import User from "../models/User.js";
 import Role from "../models/Role.js";
 import { env } from "../config/env.js";
-import { isSuperAdmin } from "../utils/checkPermissions.js";
+import { isSuperAdmin as checkIsSuperAdmin } from "../utils/checkPermissions.js";
 import { ApiError } from "../utils/ApiError.js";
 
 /**
  * Authenticates requests using the JWT access token.
  *
- * The access token identifies the user through the `sub`
- * claim. The current user and role are loaded from MongoDB
- * on every protected request so that changes to user status,
- * role, or permissions take effect without requiring a new token.
+ * The current user and role are loaded from MongoDB on every
+ * protected request so that changes to user status, role, or
+ * permissions take effect without requiring a new token.
  */
 export async function authMiddleware(req, res, next) {
     try {
@@ -36,10 +34,7 @@ export async function authMiddleware(req, res, next) {
 
         const decodedToken = jwt.verify(token, env.JWT_SECRET);
 
-        /*
-         * The new authentication service uses the standard
-         * JWT `sub` claim for the authenticated user's ID.
-         */
+        // Require the authenticated user's ID in the token.
         if (!decodedToken.sub) {
             throw new ApiError(
                 401,
@@ -47,10 +42,7 @@ export async function authMiddleware(req, res, next) {
             );
         }
 
-        /*
-         * Center-selection tokens must not be used to access
-         * normal protected endpoints.
-         */
+        // Center-selection tokens cannot access protected endpoints.
         if (decodedToken.step === "center_selection") {
             return res.status(403).json({
                 success: false,
@@ -59,14 +51,7 @@ export async function authMiddleware(req, res, next) {
             });
         }
 
-        /*
-         * Load the current user.
-         *
-         * The role is loaded separately using the raw MongoDB
-         * document so both legacy embedded permissions and
-         * ObjectId-based permissions are preserved exactly
-         * as stored in the database.
-         */
+        // Load the latest user record from MongoDB.
         const user = await User.findById(decodedToken.sub);
 
         if (!user) {
@@ -91,11 +76,8 @@ export async function authMiddleware(req, res, next) {
         }
 
         /*
-         * Read the raw role document.
-         *
-         * This is intentional because the current database may
-         * contain permissions as ObjectId references, while the
-         * legacy database stores embedded permission groups.
+         * Load the raw role document to preserve its stored
+         * permissions and Super Admin configuration.
          */
         const role = await Role.collection.findOne({
             _id: user.role
@@ -109,26 +91,56 @@ export async function authMiddleware(req, res, next) {
         }
 
         /*
-         * Keep the authenticated user object available to all
-         * downstream controllers and authorization middleware.
+         * Super Admin detection:
+         * 1. Check the user's explicit flag.
+         * 2. Check the role's explicit flag.
+         * 3. Recognize the superadmin role title.
+         *
+         * This supports your current database, where the user
+         * flag is false but the assigned role flag is true.
          */
+        const roleTitle =
+            typeof role.roleTitle === "string"
+                ? role.roleTitle.trim().toLowerCase()
+                : "";
+
+        const userIsSuperAdmin = user.isSuperAdmin === true;
+        const roleIsSuperAdmin = role.isSuperAdmin === true;
+        const titleIsSuperAdmin = roleTitle === "superadmin";
+
+        const superAdminStatus =
+            userIsSuperAdmin ||
+            roleIsSuperAdmin ||
+            titleIsSuperAdmin;
+
+        // Attach the authenticated user to the request.
         req.user = {
             id: user._id.toString(),
             role,
             status: user.status,
-            fullUser: user
+            fullUser: user,
+            isSuperAdmin: superAdminStatus
         };
 
         /*
-         * Preserve the center ID when it exists in a token.
-         * The current login flow may legitimately issue a token
-         * without a center when center selection has not occurred.
+         * Preserve the selected center from the token when
+         * present. A null user center is allowed here.
          */
         if (decodedToken.centerId) {
             req.selectedCenterId = decodedToken.centerId;
         }
 
-        next();
+        // Temporary diagnostic log; remove after verification.
+        console.log("AUTH MIDDLEWARE SUPERADMIN CHECK", {
+            email: user.email,
+            userIsSuperAdmin,
+            roleTitle: role.roleTitle,
+            roleIsSuperAdmin,
+            finalIsSuperAdmin: req.user.isSuperAdmin,
+            center: user.center?.toString?.() || user.center || null
+        });
+
+        return next();
     } catch (error) {
         if (error.name === "TokenExpiredError") {
             throw new ApiError(
@@ -151,10 +163,7 @@ export async function authMiddleware(req, res, next) {
 /**
  * Restricts access to specific database-backed role titles.
  *
- * This middleware is retained for legacy routes that explicitly
- * restrict access by role. It does not create or define roles.
- *
- * Super-admin access is determined using role.isSuperAdmin.
+ * Super Admin users are allowed through automatically.
  *
  * @param {...string} roles - Allowed role titles
  * @returns {Function} Express middleware
@@ -162,14 +171,24 @@ export async function authMiddleware(req, res, next) {
 export function restrictTo(...roles) {
     return function roleMiddleware(req, res, next) {
         if (!req.user) {
-            throw new ApiError(401, "Authentication required.");
+            throw new ApiError(
+                401,
+                "Authentication required."
+            );
         }
 
-        if (isSuperAdmin(req.user)) {
+        // Use the flag established by authMiddleware.
+        // Retain the existing utility as a compatibility fallback.
+        const hasSuperAdminAccess =
+            req.user.isSuperAdmin === true ||
+            checkIsSuperAdmin(req.user);
+
+        if (hasSuperAdminAccess) {
             return next();
         }
 
-        const currentRole = req.user.role?.roleTitle;
+        const currentRole =
+            req.user.role?.roleTitle;
 
         if (!roles.includes(currentRole)) {
             throw new ApiError(
@@ -178,6 +197,6 @@ export function restrictTo(...roles) {
             );
         }
 
-        next();
+        return next();
     };
 }

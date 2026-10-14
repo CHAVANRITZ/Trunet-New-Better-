@@ -32,9 +32,9 @@ import reportSubmissionRoutes from "./routes/reportSubmissionRoutes.js";
 import availableReportRoutes from "./routes/availabelReportRoutes.js";
 import centerStockImportRoutes from "./routes/centerStockImportRoutes.js";
 import centerReturnRoutes from "./routes/centerReturnRoutes.js";
-
+import damageReturnRoutes from "./routes/damageReturnRoutes.js";
 import { errorMiddleware } from "./middlewares/errorMiddleware.js";
-
+import getAllDataRoutes from "./routes/getAllDataRoutes.js";
 const app = express();
 
 // Global middleware
@@ -56,38 +56,38 @@ app.use("/api/v1/health", healthRoutes);
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/product-categories", productCategoryRoutes);
 app.use("/api/v1/products", productRoutes);
-app.use("/api/v1/vendors", vendorRoutes);
-app.use("/api/v1/roles", roleRoutes);
+app.use("/api/v1/vendor", vendorRoutes);
+app.use("/api/v1/role", roleRoutes);
 app.use("/api/v1/resellers", resellerRoutes);
 app.use("/api/v1/centers", centerRoutes);
 app.use("/api/v1/areas", areaRoutes);
 app.use("/api/v1/customers", customerRoutes);
 app.use("/api/v1/buildings", buildingRoutes);
-app.use("/api/v1/control-rooms", controlRoomRoutes);
+app.use("/api/v1/controlRooms", controlRoomRoutes);
 app.use("/api/v1/warehouses", warehouseRoutes);
-app.use("/api/v1/stock-transfers", stockTransferRoutes);
+app.use("/api/v1/stocktransfer", stockTransferRoutes);
 app.use("/api/v1/stockpurchase", stockPurchaseRoutes);
 app.use("/api/v1/stockrequest", stockRequestRoutes);
-app.use("/api/v1/raise-pos", raisePORoutes);
-app.use("/api/v1/testing-materials", testingMaterialRoutes);
-app.use("/api/v1/stock-usage", stockUsageRoutes);
-app.use("/api/v1/shifting-requests", shiftingRequestRoutes);
+app.use("/api/v1/raisePO", raisePORoutes);
+app.use("/api/v1/testing-material", testingMaterialRoutes);
+app.use("/api/v1/stockusage", stockUsageRoutes);
+app.use("/api/v1/shiftingrequest", shiftingRequestRoutes);
 app.use("/api/v1", usageSummaryRoutes);
 app.use("/api/v1/invoices", invoiceRoutes);
-
+app.use("/api/v1", getAllDataRoutes);
 // Package Duration and Faulty Stock
-app.use("/api/v1/package-durations", packageDurationRoutes);
+app.use("/api/v1/packageDuration", packageDurationRoutes);
 app.use("/api/v1/faulty-stock", faultyStockRoutes);
 
 // Reports
 app.use("/api/v1/reports", reportRoutes);
-app.use("/api/v1/report-submissions", reportSubmissionRoutes);
+app.use("/api/v1/reportsubmission", reportSubmissionRoutes);
 app.use("/api/v1/available-reports", availableReportRoutes);
-
+app.use("/api/v1/availableStock", availableReportRoutes);
 // Sakshi's Center Stock Import and Center Returns
 app.use("/api/v1/center-stock", centerStockImportRoutes);
 app.use("/api/v1/center-returns", centerReturnRoutes);
-
+app.use("/api/v1/damage-returns", damageReturnRoutes);
 // Error handling must come after all routes
 app.use(errorMiddleware);
 

@@ -1,4 +1,3 @@
-
 import express from "express";
 
 import {
@@ -14,8 +13,16 @@ import {
     getRepairedProductsInOutletStock,
     getAllFaultyStockForWarehouse,
     getAllFaultyStockForRepairing,
-    acceptRepairedTransfer, // Add this
+    acceptRepairedTransfer,
 } from "../controllers/faultyStockController.js";
+
+import {
+    acceptDamageItems,
+    rejectDamageItems,
+    acceptRepairTransfer,
+    acceptRejectRepairedTransfer,
+    acceptRejectResellerTransfer,
+} from "../controllers/acceptDamageController.js";
 
 import { authMiddleware } from "../middlewares/authMiddleware.js";
 
@@ -38,117 +45,231 @@ const managePermissions = [
     "manage_usage_all_center",
 ];
 
-const protect = (...permissions) => [
+const authorizeUsage = (...permissions) => [
     authMiddleware,
-    ...(permissions.length
-        ? [authorizeAccess(MODULE, ...permissions)]
-        : []),
+    authorizeAccess(MODULE, ...permissions),
     attachAuthorizationContext(MODULE),
 ];
 
 /*
- * Repair transfer operations
- */
+|--------------------------------------------------------------------------
+| Repair transfer operations
+|--------------------------------------------------------------------------
+*/
 
-// Transfer faulty stock to repair center
+// Current route
 router.post(
     "/repair-transfers",
-    ...protect(...managePermissions),
+    ...authorizeUsage(...managePermissions),
     transferToRepairCenter
 );
 
-// Return stock from repair center
+// Legacy alias
+router.post(
+    "/transfer",
+    ...authorizeUsage(...managePermissions),
+    transferToRepairCenter
+);
+
+// Current route
 router.post(
     "/repair-transfers/return",
-    ...protect(...managePermissions),
+    ...authorizeUsage(...managePermissions),
     returnFromRepairCenter
 );
 
-// Get repair transfers for a center
+// Legacy alias
+router.post(
+    "/return-from-repair",
+    ...authorizeUsage(...managePermissions),
+    returnFromRepairCenter
+);
+
 router.get(
     "/repair-transfers/center",
-    ...protect(...viewPermissions),
+    ...authorizeUsage(...viewPermissions),
     getRepairTransfersForCenter
 );
 
-// Get damaged and under-repair serial numbers
+// Current serial route: controller reads productId from req.query
 router.get(
     "/damaged-under-repair/serials",
-    ...protect(...viewPermissions),
+    ...authorizeUsage(...viewPermissions),
     getDamagedAndUnderRepairSerials
 );
 
-/*
- * Repair status and product information
- */
+// Legacy serial URL alias.
+// The controller reads req.query.productId, not req.params.productId.
+router.get(
+    "/serials/:productId",
+    ...authorizeUsage(...viewPermissions),
+    (req, res, next) => {
+        req.query.productId = req.params.productId;
+        return getDamagedAndUnderRepairSerials(req, res, next);
+    }
+);
 
-// Mark items as repaired or irreparable
+/*
+|--------------------------------------------------------------------------
+| Damage acceptance and rejection
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+    "/accept-damage",
+    ...authorizeUsage(...managePermissions),
+    acceptDamageItems
+);
+
+router.post(
+    "/reject-damage",
+    ...authorizeUsage(...managePermissions),
+    rejectDamageItems
+);
+
+router.post(
+    "/accept-repair-transfer",
+    ...authorizeUsage(...managePermissions),
+    acceptRepairTransfer
+);
+
+// Additional acceptance handlers
+router.post(
+    "/accept-reject-repaired-transfer",
+    ...authorizeUsage(...managePermissions),
+    acceptRejectRepairedTransfer
+);
+
+router.post(
+    "/accept-reject-reseller-transfer",
+    ...authorizeUsage(...managePermissions),
+    acceptRejectResellerTransfer
+);
+
+/*
+|--------------------------------------------------------------------------
+| Repair status and product information
+|--------------------------------------------------------------------------
+*/
+
+// Current route
 router.patch(
     "/repair-status",
-    ...protect(...managePermissions),
+    ...authorizeUsage(...managePermissions),
     markAsRepairedOrIrreparable
 );
 
-// Get damaged and under-repair product details
+// Legacy alias
+router.post(
+    "/mark-repair-status",
+    ...authorizeUsage(...managePermissions),
+    markAsRepairedOrIrreparable
+);
+
 router.get(
     "/damaged-under-repair/products",
-    ...protect(...viewPermissions),
+    ...authorizeUsage(...viewPermissions),
     getDamageAndUnderRepairProduct
 );
 
-// Get repaired products
+// Legacy alias
+router.get(
+    "/damage-products",
+    ...authorizeUsage(...viewPermissions),
+    getDamageAndUnderRepairProduct
+);
+
 router.get(
     "/repaired-products",
-    ...protect(...viewPermissions),
+    ...authorizeUsage(...viewPermissions),
     getRepairedProducts
 );
 
 /*
- * Repaired stock transfers
- */
+|--------------------------------------------------------------------------
+| Repaired stock transfers
+|--------------------------------------------------------------------------
+*/
 
-// Transfer repaired stock to main warehouse
+// Current route
 router.post(
     "/repaired-products/transfer/main-warehouse",
-    ...protect(...managePermissions),
+    ...authorizeUsage(...managePermissions),
     transferRepairedToMainWarehouse
 );
 
-router.patch(
-  "/repaired-products/transfer/accept",
-  ...protect(...managePermissions),
-  acceptRepairedTransfer
+// Legacy alias
+router.post(
+    "/transfer-repaired-to-warehouse",
+    ...authorizeUsage(...managePermissions),
+    transferRepairedToMainWarehouse
 );
 
-// Transfer repaired stock to reseller
+// Acceptance handler for repaired stock sent to an outlet
+router.patch(
+    "/repaired-products/transfer/accept",
+    ...authorizeUsage(...managePermissions),
+    acceptRepairedTransfer
+);
+
+// Current route
 router.post(
     "/repaired-products/transfer/reseller",
-    ...protect(...managePermissions),
+    ...authorizeUsage(...managePermissions),
     transferRepairedToResellerStock
 );
 
-// Get repaired products in outlet stock
+// Legacy alias
+router.post(
+    "/transfer-to-reseller-center",
+    ...authorizeUsage(...managePermissions),
+    transferRepairedToResellerStock
+);
+
 router.get(
     "/repaired-products/outlet-stock",
-    ...protect(...viewPermissions),
+    ...authorizeUsage(...viewPermissions),
+    getRepairedProductsInOutletStock
+);
+
+// Legacy alias
+router.get(
+    "/outlet-repaired-stock",
+    ...authorizeUsage(...viewPermissions),
     getRepairedProductsInOutletStock
 );
 
 /*
- * Faulty stock reports
- */
+|--------------------------------------------------------------------------
+| Faulty stock reports
+|--------------------------------------------------------------------------
+*/
 
-// Get faulty stock for warehouse
+// Current warehouse report
 router.get(
     "/warehouse",
-    ...protect(...viewPermissions),
+    ...authorizeUsage(...viewPermissions),
     getAllFaultyStockForWarehouse
 );
 
-// Get stock currently awaiting or undergoing repair
+// Legacy alias
+router.get(
+    "/product-status",
+    ...authorizeUsage(...viewPermissions),
+    getAllFaultyStockForWarehouse
+);
+
+// Current repairing report
 router.get(
     "/repairing",
-    ...protect(...viewPermissions),
+    ...authorizeUsage(...viewPermissions),
+    getAllFaultyStockForRepairing
+);
+
+// Legacy alias
+router.get(
+    "/under-repaired",
+    ...authorizeUsage(...viewPermissions),
     getAllFaultyStockForRepairing
 );
 

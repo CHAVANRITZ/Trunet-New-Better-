@@ -1,65 +1,79 @@
-import StockClosing from "../models/ReportSubmission.js";
+import StockClosing from "../models/StockClosing.js";
 import mongoose from "mongoose";
 import User from "../models/User.js";
 import Center from "../models/Center.js";
 import Reseller from "../models/Reseller.js";
 import { getMonthsBetweenDates, getCurrentMonthInfo } from "../utils/dateHelper.js";
+
 const checkStockClosingPermissions = (req, requiredPermissions = []) => {
-  const userPermissions = req.user.role?.permissions || [];
+  const userPermissions = req.user?.role?.permissions || [];
+
   const closingModule = userPermissions.find(
     (perm) => perm.module === "Closing"
   );
+
   if (!closingModule) {
-    return { hasAccess: false, permissions: {} };
+    return {
+      hasAccess: req.user?.role?.isSuperAdmin === true,
+      permissions: {},
+      userCenter:
+        req.selectedCenterId ||
+        req.user?.fullUser?.center?._id ||
+        req.user?.fullUser?.center ||
+        null,
+    };
   }
+
+  const modulePermissions = closingModule.permissions || [];
+
   const permissions = {
-    manage_closing_stock_own_center: closingModule.permissions.includes(
-      "manage_closing_stock_own_center"
-    ),
-    manage_closing_stock_all_center: closingModule.permissions.includes(
-      "manage_closing_stock_all_center"
-    ),
-    view_closing_stock_own_center: closingModule.permissions.includes(
-      "view_closing_stock_own_center"
-    ),
-    view_closing_stock_all_center: closingModule.permissions.includes(
-      "view_closing_stock_all_center"
-    ),
+    manage_closing_stock_own_center:
+      modulePermissions.includes("manage_closing_stock_own_center"),
+
+    manage_closing_stock_all_center:
+      modulePermissions.includes("manage_closing_stock_all_center"),
+
+    view_closing_stock_own_center:
+      modulePermissions.includes("view_closing_stock_own_center"),
+
+    view_closing_stock_all_center:
+      modulePermissions.includes("view_closing_stock_all_center"),
+
     change_closing_qty:
-      closingModule.permissions.includes("change_closing_qty"),
+      modulePermissions.includes("change_closing_qty"),
   };
 
-  const hasRequiredPermission = requiredPermissions.some(
-    (perm) => permissions[perm]
-  );
+  if (req.user?.role?.isSuperAdmin === true) {
+    Object.keys(permissions).forEach((key) => {
+      permissions[key] = true;
+    });
+  }
+
+  const hasRequiredPermission =
+    req.user?.role?.isSuperAdmin === true ||
+    requiredPermissions.some((permission) => permissions[permission] === true);
+
+  const userCenter =
+    req.selectedCenterId ||
+    req.user?.fullUser?.center?._id ||
+    req.user?.fullUser?.center ||
+    null;
 
   return {
     hasAccess: hasRequiredPermission,
     permissions,
-    userCenter: req.user.center,
+    userCenter,
   };
 };
 
 
-const getUserCenterId = async (userId) => {
-  if (!userId) {
-    throw new Error("User ID is required");
-  }
-
-  const user = await User.findById(userId).populate(
-    "center",
-    "centerName centerCode centerType"
+const getUserCenterId = (req) => {
+  return (
+    req.selectedCenterId ||
+    req.user?.fullUser?.center?._id ||
+    req.user?.fullUser?.center ||
+    null
   );
-
-  if (!user) {
-    throw new Error("User not found");
-  }
-
-  if (!user.center) {
-    throw new Error("User center information not found");
-  }
-
-  return user.center._id;
 };
 
 const handleControllerError = (error, res) => {
@@ -110,212 +124,6 @@ const handleControllerError = (error, res) => {
         : "Internal server error",
   });
 };
-
-// export const createStockClosing = async (req, res) => {
-//   try {
-//     const { hasAccess, permissions, userCenter } = checkStockClosingPermissions(
-//       req,
-//       ["manage_closing_stock_own_center", "manage_closing_stock_all_center"]
-//     );
-
-//     if (!hasAccess) {
-//       return res.status(403).json({
-//         success: false,
-//         message:
-//           "Access denied. manage_closing_stock_own_center or manage_closing_stock_all_center permission required.",
-//       });
-//     }
-
-//     const {
-//       date,
-//       stockClosingForOtherCenter,
-//       center,
-//       products,
-//       status,
-//       remark,
-//     } = req.body;
-
-//     if (!products || !Array.isArray(products) || products.length === 0) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Products array with at least one product is required",
-//       });
-//     }
-
-//     for (const [index, product] of products.entries()) {
-//       if (
-//         !product.product ||
-//         product.productQty === undefined ||
-//         product.damageQty === undefined
-//       ) {
-//         return res.status(400).json({
-//           success: false,
-//           message: `Product at index ${index} is missing required fields (product, productQty, damageQty)`,
-//         });
-//       }
-
-//       if (product.damageQty > product.productQty) {
-//         return res.status(400).json({
-//           success: false,
-//           message: `Damage quantity cannot exceed product quantity for product at index ${index}`,
-//         });
-//       }
-//     }
-
-//     let userClosingCenter = userCenter?._id || userCenter;
-//     if (!userClosingCenter) {
-//       userClosingCenter = await getUserCenterId(req.user._id);
-//     }
-
-//     if (!userClosingCenter) {
-//       return res.status(400).json({
-//         success: false,
-//         message:
-//           "User must be associated with a center to create stock closing",
-//       });
-//     }
-
-//     const Center = mongoose.model("Center");
-//     const closingCenterData = await Center.findById(userClosingCenter).select(
-//       "centerType"
-//     );
-
-//     if (!closingCenterData) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Invalid user center",
-//       });
-//     }
-
-//     const isOutlet = closingCenterData.centerType === "Outlet";
-//     const isCenter = closingCenterData.centerType === "Center";
-
-//     const actualStockClosingForOtherCenter = Boolean(
-//       stockClosingForOtherCenter
-//     );
-
-//     if (actualStockClosingForOtherCenter) {
-//       if (!center) {
-//         return res.status(400).json({
-//           success: false,
-//           message: "Center is required when stock closing is for other center",
-//         });
-//       }
-
-//       const targetCenter = await Center.findById(center);
-//       if (!targetCenter) {
-//         return res.status(400).json({
-//           success: false,
-//           message: "Target center not found",
-//         });
-//       }
-
-//       if (
-//         permissions.manage_closing_stock_own_center &&
-//         !permissions.manage_closing_stock_all_center
-//       ) {
-//         return res.status(403).json({
-//           success: false,
-//           message:
-//             "Access denied. You need manage_closing_stock_all_center permission to create stock closing for other centers.",
-//         });
-//       }
-
-//       if (!isOutlet) {
-//         return res.status(400).json({
-//           success: false,
-//           message:
-//             "Only outlet users can create stock closing for other centers",
-//         });
-//       }
-//     }
-
-//     const mainStockClosingData = {
-//       date: date || new Date(),
-//       stockClosingForOtherCenter: actualStockClosingForOtherCenter,
-//       products,
-//       status: status || "Draft",
-//       createdBy: req.user?.id,
-//       closingCenter: userClosingCenter,
-//       remark: remark || "",
-//     };
-
-//     if (actualStockClosingForOtherCenter) {
-//       mainStockClosingData.center = center;
-//     }
-
-//     const mainStockClosing = new StockClosing(mainStockClosingData);
-//     await mainStockClosing.save();
-
-//     let secondaryStockClosing = null;
-
-//     if (actualStockClosingForOtherCenter) {
-//       const secondaryStockClosingData = {
-//         date: date || new Date(),
-//         stockClosingForOtherCenter: false,
-//         products: JSON.parse(JSON.stringify(products)),
-//         status: status || "Draft",
-//         createdBy: req.user?.id,
-//         closingCenter: center,
-//         remark: remark,
-//         linkedStockClosing: mainStockClosing._id,
-//       };
-
-//       secondaryStockClosing = new StockClosing(secondaryStockClosingData);
-//       await secondaryStockClosing.save();
-
-//       mainStockClosing.linkedStockClosing = secondaryStockClosing._id;
-//       await mainStockClosing.save();
-//     }
-
-//     await mainStockClosing.populate([
-//       {
-//         path: "products.product",
-//         select: "productTitle productCode productPrice",
-//       },
-//       { path: "center", select: "centerName centerCode centerType" },
-//       { path: "closingCenter", select: "centerName centerCode centerType" },
-//       { path: "createdBy", select: "name email" },
-//       { path: "linkedStockClosing", select: "_id closingCenter status" },
-//     ]);
-
-//     const responseData = mainStockClosing.toObject();
-
-//     delete responseData.totalProductQty;
-//     delete responseData.totalDamageQty;
-//     delete responseData.totalQty;
-//     delete responseData.id;
-
-//     if (responseData.products && Array.isArray(responseData.products)) {
-//       responseData.products.forEach((product) => {
-//         if (product.product && product.product.id) {
-//           delete product.product.id;
-//         }
-//       });
-//     }
-
-//     let message = "Stock closing created successfully";
-//     if (actualStockClosingForOtherCenter) {
-//       message =
-//         "Stock closing created successfully with secondary entry for target center";
-//     }
-
-//     res.status(201).json({
-//       success: true,
-//       message,
-//       data: responseData,
-//       ...(secondaryStockClosing && {
-//         secondaryEntry: {
-//           _id: secondaryStockClosing._id,
-//           closingCenter: center,
-//         },
-//       }),
-//     });
-//   } catch (error) {
-//     console.error("Create stock closing error:", error);
-//     handleControllerError(error, res);
-//   }
-// };
 
 export const createStockClosing = async (req, res) => {
   try {
@@ -371,7 +179,7 @@ export const createStockClosing = async (req, res) => {
     // Get user's center info
     let userClosingCenter = userCenter?._id || userCenter;
     if (!userClosingCenter) {
-      userClosingCenter = await getUserCenterId(req.user._id);
+      userClosingCenter = getUserCenterId(req);
     }
 
     if (!userClosingCenter) {
