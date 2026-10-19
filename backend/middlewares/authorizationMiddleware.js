@@ -92,6 +92,34 @@ export const normalizePermissions = async (rolePermissions = []) => {
 };
 
 /**
+ * Allows only authenticated users whose database role
+ * is marked as Super Admin.
+ *
+ * Must run after authMiddleware.
+ */
+export function requireSuperAdmin(req, res, next) {
+    if (!req.user) {
+        return next(
+            new ApiError(
+                401,
+                "Authentication required."
+            )
+        );
+    }
+
+    if (!isSuperAdmin(req.user)) {
+        return next(
+            new ApiError(
+                403,
+                "Only a Super Admin can create another Super Admin."
+            )
+        );
+    }
+
+    return next();
+}
+
+/**
  * Checks whether the authenticated user has at least
  * one of the requested permission actions.
  */
@@ -144,9 +172,9 @@ export function authorize(...requiredPermissions) {
                 );
             }
 
-            next();
+            return next();
         } catch (error) {
-            next(error);
+            return next(error);
         }
     };
 }
@@ -212,9 +240,9 @@ export function authorizeAccess(
                 );
             }
 
-            next();
+            return next();
         } catch (error) {
-            next(error);
+            return next(error);
         }
     };
 }
@@ -223,12 +251,8 @@ export function authorizeAccess(
  * Builds a normalized authorization context for a module.
  *
  * This middleware does not grant or remove permissions.
- * It only exposes the permissions already granted to the
+ * It only exposes permissions already granted to the
  * authenticated user's database role.
- *
- * The context is consumed by services that need to make
- * business-level access decisions such as own-center versus
- * all-center access.
  */
 export function attachAuthorizationContext(moduleName) {
     return async function authorizationContextMiddleware(
@@ -279,13 +303,6 @@ export function attachAuthorizationContext(moduleName) {
             const permissions =
                 modulePermissions?.permissions || [];
 
-            /*
-             * Convert the database permissions into generic
-             * capability flags consumed by services.
-             *
-             * These flags do not create permissions. They only
-             * represent permissions already assigned to the user.
-             */
             req.authorizationContext = {
                 isSuperAdmin: false,
                 module: moduleName,
@@ -337,9 +354,9 @@ export function attachAuthorizationContext(moduleName) {
                     ),
             };
 
-            next();
+            return next();
         } catch (error) {
-            next(error);
+            return next(error);
         }
     };
 }

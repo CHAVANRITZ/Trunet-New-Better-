@@ -6,7 +6,10 @@ import {
     refreshTokenController,
     logoutController,
     getAllUsers,
-    createUserController
+    createUserController,
+    getUserById,
+    updateUserController,
+    deleteUserController
 } from "../controllers/authController.js";
 
 import { getLoginHistory } from "../controllers/loginHistoryController.js";
@@ -25,11 +28,7 @@ import { requirePermission } from "../middlewares/authorizationMiddleware.js";
 
 const router = express.Router();
 
-/**
- * @route   POST /api/v1/auth/login
- * @desc    Authenticate a user using username and password
- * @access  Public
- */
+// POST /api/v1/auth/login
 router.post(
     "/login",
     loginValidator,
@@ -37,11 +36,7 @@ router.post(
     asyncHandler(loginController)
 );
 
-/**
- * @route   POST /api/v1/auth/refresh
- * @desc    Issue a new access token and rotate the refresh token
- * @access  Public
- */
+// POST /api/v1/auth/refresh
 router.post(
     "/refresh",
     refreshTokenValidator,
@@ -49,11 +44,7 @@ router.post(
     asyncHandler(refreshTokenController)
 );
 
-/**
- * @route   POST /api/v1/auth/logout
- * @desc    Revoke the current refresh-token session
- * @access  Public
- */
+// POST /api/v1/auth/logout
 router.post(
     "/logout",
     refreshTokenValidator,
@@ -61,11 +52,7 @@ router.post(
     asyncHandler(logoutController)
 );
 
-/**
- * @route   POST /api/v1/auth
- * @desc    Create a new user
- * @access  Private - requires User:create_user permission
- */
+// POST /api/v1/auth/register
 router.post(
     "/register",
     asyncHandler(authMiddleware),
@@ -75,38 +62,74 @@ router.post(
     asyncHandler(createUserController)
 );
 
-/**
- * @route   GET /api/v1/auth/login-history
- * @desc    Get login history
- * @access  Private
- */
+// GET /api/v1/auth/login-history
 router.get(
     "/login-history",
     asyncHandler(authMiddleware),
     asyncHandler(getLoginHistory)
 );
 
-/**
- * @route   GET /api/v1/auth
- * @desc    Get paginated users
- * @access  Private - requires User:view_user permission
- */
+// GET /api/v1/auth/me
+router.get(
+    "/me",
+    asyncHandler(authMiddleware),
+    asyncHandler(getCurrentUser)
+);
+
+// GET /api/v1/auth
 router.get(
     "/",
     asyncHandler(authMiddleware),
     requirePermission("User", "view_user"),
     asyncHandler(getAllUsers)
 );
+// Backward-compatible user routes used by the existing frontend
 
-/**
- * @route   GET /api/v1/auth/me
- * @desc    Return the currently authenticated user's profile
- * @access  Private
- */
+// GET /api/v1/auth/user/:id
 router.get(
-    "/me",
+    "/user/:id",
     asyncHandler(authMiddleware),
-    asyncHandler(getCurrentUser)
+    requirePermission("User", "view_user"),
+    asyncHandler(getUserById)
+);
+
+// DELETE /api/v1/auth/user/:id
+router.delete(
+    "/user/:id",
+    asyncHandler(authMiddleware),
+    requirePermission("User", "delete_user"),
+    asyncHandler(deleteUserController)
+);
+
+// PUT /api/v1/auth/user/:id
+router.put(
+    "/user/:id",
+    asyncHandler(authMiddleware),
+    requirePermission("User", "update_user"),
+    asyncHandler(updateUserController)
+);
+// DELETE /api/v1/auth/:id
+router.delete(
+    "/:id",
+    asyncHandler(authMiddleware),
+    requirePermission("User", "delete_user"),
+    asyncHandler(deleteUserController)
+);
+
+// GET /api/v1/auth/:id
+router.get(
+    "/:id",
+    asyncHandler(authMiddleware),
+    requirePermission("User", "view_user"),
+    asyncHandler(getUserById)
+);
+
+// PUT /api/v1/auth/:id
+router.put(
+    "/:id",
+    asyncHandler(authMiddleware),
+    requirePermission("User", "update_user"),
+    asyncHandler(updateUserController)
 );
 
 export default router;

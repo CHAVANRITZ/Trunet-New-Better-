@@ -27,7 +27,16 @@ export const createRole = async (req, res) => {
  * Returns all roles.
  */
 export const getRoles = async (req, res) => {
-    const roles = await getRolesService();
+    let roles = await getRolesService();
+
+    // Hide Super Admin role from non-super-admin users
+    if (!req.user?.isSuperAdmin) {
+        roles = roles.filter(
+            (role) =>
+                !role.isSuperAdmin &&
+                role.roleTitle?.trim().toLowerCase() !== "superadmin"
+        );
+    }
 
     return res.status(200).json({
         success: true,

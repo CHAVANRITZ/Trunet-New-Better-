@@ -9,10 +9,30 @@ import Center from "../models/Center.js";
 import { hashPassword } from "../utils/password.js";
 import { sendSuccess } from "../utils/responseHandler.js";
 import { ApiError } from "../utils/ApiError.js";
+import { isSuperAdmin } from "../utils/checkPermissions.js";
+
+function normalizeId(value) {
+    if (value === undefined || value === null || value === "") {
+        return null;
+    }
+
+    if (typeof value === "object") {
+        return value._id ? String(value._id) : null;
+    }
+
+    return String(value);
+}
+
+function normalizeIdArray(values) {
+    if (!Array.isArray(values)) {
+        throw new ApiError(400, "Accessible centers must be an array.");
+    }
+
+    return [...new Set(values.map(normalizeId).filter(Boolean))];
+}
 
 /**
- * Authenticates a user using username and password
- * and returns authentication tokens.
+ * Authenticates a user using username and password.
  */
 export async function loginController(req, res) {
     const result = await login({
@@ -32,39 +52,27 @@ export async function loginController(req, res) {
  * Returns the currently authenticated user's profile.
  */
 export async function getCurrentUser(req, res) {
-    const user = await User.findById(req.user.id)
-        .populate("role");
+    const user = await User.findById(req.user.id).populate("role");
 
     if (!user) {
-        throw new ApiError(
-            401,
-            "Authenticated user no longer exists."
-        );
+        throw new ApiError(401, "Authenticated user no longer exists.");
     }
 
     if (user.status !== "Enable") {
-        throw new ApiError(
-            403,
-            "User account is disabled."
-        );
+        throw new ApiError(403, "User account is disabled.");
     }
 
     return sendSuccess(res, {
         message: "Current user retrieved successfully.",
-        data: {
-            user
-        }
+        data: { user }
     });
 }
 
 /**
- * Exchanges a valid refresh token for a new access token
- * and a rotated refresh token.
+ * Refreshes the access token.
  */
 export async function refreshTokenController(req, res) {
-    const result = await refreshToken(
-        req.body.refreshToken
-    );
+    const result = await refreshToken(req.body.refreshToken);
 
     return sendSuccess(res, {
         statusCode: 200,
@@ -87,7 +95,6 @@ export async function logoutController(req, res) {
 
 /**
  * Returns a paginated list of users.
- * Never returns password or account lockout fields.
  */
 export async function getAllUsers(req, res) {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -97,10 +104,8 @@ export async function getAllUsers(req, res) {
     );
 
     const skip = (page - 1) * limit;
-
     const filter = {};
 
-    // Optional filters
     if (req.query.status) {
         if (!["Enable", "Disable"].includes(req.query.status)) {
             throw new ApiError(400, "Invalid status filter.");
@@ -126,6 +131,10 @@ export async function getAllUsers(req, res) {
             .select("-password -loginAttempts -lockUntil")
             .populate("role")
             .populate("center", "centerName centerCode centerType")
+            .populate(
+                "accessibleCenters",
+                "centerName centerCode centerType status"
+            )
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(limit)
@@ -150,6 +159,10 @@ export async function getAllUsers(req, res) {
     });
 }
 
+/**
+ * Creates a user.
+ * Only a Super Admin can assign the Super Admin role.
+ */
 export async function createUserController(req, res) {
     const {
         fullName,
@@ -158,13 +171,26 @@ export async function createUserController(req, res) {
         mobile,
         role,
         center,
-        accessibleCenters = [],
+        centers,
+        accessibleCenters,
         status,
         password
     } = req.body;
 
-    const normalizedUsername = username.trim().toLowerCase();
-    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedUsername = String(username || "")
+        .trim()
+        .toLowerCase();
+
+    const normalizedEmail = String(email || "")
+        .trim()
+        .toLowerCase();
+
+    if (!normalizedUsername || !normalizedEmail) {
+        throw new ApiError(
+            400,
+            "Username and email are required."
+        );
+    }
 
     const existingUser = await User.findOne({
         $or: [
@@ -183,55 +209,122 @@ export async function createUserController(req, res) {
     const selectedRole = await Role.findById(role);
 
     if (!selectedRole) {
-        throw new ApiError(400, "Selected role does not exist.");
+        throw new ApiError(
+            400,
+            "Selected role does not exist."
+        );
     }
 
-    if (selectedRole.isSuperAdmin) {
+    if (
+        selectedRole.isSuperAdmin &&
+        !isSuperAdmin(req.user)
+    ) {
         throw new ApiError(
             403,
             "You cannot assign the Super Admin role through this endpoint."
         );
     }
 
-    if (center) {
-        const centerExists = await Center.exists({ _id: center });
+    // Support the existing frontend's "centers" field.
+    const submittedCenters =
+        centers !== undefined
+            ? centers
+            : accessibleCenters !== undefined
+                ? accessibleCenters
+                : center
+                    ? [center]
+                    : [];
 
-        if (!centerExists) {
-            throw new ApiError(400, "Selected center does not exist.");
+    if (!Array.isArray(submittedCenters)) {
+        throw new ApiError(
+            400,
+            "Centers must be provided as an array."
+        );
+    }
+
+    const centerIds = [
+        ...new Set(
+            submittedCenters
+                .map(value => {
+                    if (value && typeof value === "object") {
+                        return value._id
+                            ? String(value._id)
+                            : null;
+                    }
+
+                    return value ? String(value) : null;
+                })
+                .filter(Boolean)
+        )
+    ];
+
+    if (centerIds.length > 0) {
+        const matchingCount = await Center.countDocuments({
+            _id: { $in: centerIds }
+        });
+
+        if (matchingCount !== centerIds.length) {
+            throw new ApiError(
+                400,
+                "One or more selected branches do not exist."
+            );
         }
     }
 
-    if (accessibleCenters.length > 0) {
-        const matchingCenters = await Center.countDocuments({
-            _id: { $in: accessibleCenters }
+    // If a separate primary center was submitted, validate it.
+    const primaryCenterId = center
+        ? (
+            typeof center === "object"
+                ? String(center._id)
+                : String(center)
+        )
+        : centerIds[0] || null;
+
+    if (primaryCenterId) {
+        const primaryExists = await Center.exists({
+            _id: primaryCenterId
         });
 
-        if (matchingCenters !== new Set(accessibleCenters).size) {
+        if (!primaryExists) {
             throw new ApiError(
                 400,
-                "One or more accessible branches do not exist."
+                "Selected primary center does not exist."
             );
         }
+    }
+
+    if (!password) {
+        throw new ApiError(
+            400,
+            "Password is required."
+        );
     }
 
     const hashedPassword = await hashPassword(password);
 
     const user = await User.create({
-        fullName: fullName.trim(),
+        fullName: String(fullName || "").trim(),
         username: normalizedUsername,
         email: normalizedEmail,
         mobile: mobile || undefined,
         role: selectedRole._id,
-        center: center || null,
-        accessibleCenters,
-        status,
+        center: primaryCenterId,
+        accessibleCenters: centerIds,
+        status: status || "Enable",
         password: hashedPassword
     });
 
     const createdUser = await User.findById(user._id)
         .select("-password -loginAttempts -lockUntil")
         .populate("role")
-        .populate("center", "centerName centerCode centerType")
+        .populate(
+            "center",
+            "centerName centerCode centerType"
+        )
+        .populate(
+            "accessibleCenters",
+            "centerName centerCode centerType status"
+        )
         .lean();
 
     return sendSuccess(res, {
@@ -241,89 +334,242 @@ export async function createUserController(req, res) {
     });
 }
 
+/**
+ * GET /api/v1/auth/:id
+ * Retrieves a user for the edit form.
+ */
+export async function getUserById(req, res) {
+    const user = await User.findById(req.params.id)
+        .select("-password -loginAttempts -lockUntil")
+        .populate("role")
+        .populate("center", "centerName centerCode centerType")
+        .populate(
+            "accessibleCenters",
+            "centerName centerCode centerType status"
+        )
+        .lean();
 
-// new yachya mdhe login history add keli ahe fkt
-// import User from "../models/User.js";
+    if (!user) {
+        throw new ApiError(404, "User not found.");
+    }
 
-// import {
-//     login,
-//     refreshToken,
-//     logout
-// } from "../services/authService.js";
+    return sendSuccess(res, {
+        statusCode: 200,
+        message: "User retrieved successfully.",
+        data: { user }
+    });
+}
 
-// import { sendSuccess } from "../utils/responseHandler.js";
-// import { ApiError } from "../utils/ApiError.js";
+/**
+ * PUT /api/v1/auth/:id
+ * Updates an existing user.
+ */
+export async function updateUserController(req, res) {
+    const user = await User.findById(req.params.id);
 
-// /**
-//  * Authenticates a user using username and password
-//  * and returns authentication tokens.
-//  */
-// export async function loginController(req, res) {
-//     const result = await login({
-//         username: req.body.username,
-//         password: req.body.password
-//     });
+    if (!user) {
+        throw new ApiError(404, "User not found.");
+    }
 
-//     return sendSuccess(res, {
-//         statusCode: 200,
-//         message: "Login successful.",
-//         data: result
-//     });
-// }
+    const {
+        fullName,
+        username,
+        email,
+        mobile,
+        role,
+        center,
+        accessibleCenters,
+        status,
+        password
+    } = req.body;
 
-// /**
-//  * Returns the currently authenticated user's profile.
-//  */
-// export async function getCurrentUser(req, res) {
-//     const user = await User.findById(req.user.id)
-//         .populate("role");
+    const normalizedUsername =
+        username !== undefined
+            ? String(username).trim().toLowerCase()
+            : user.username;
 
-//     if (!user) {
-//         throw new ApiError(
-//             401,
-//             "Authenticated user no longer exists."
-//         );
-//     }
+    const normalizedEmail =
+        email !== undefined
+            ? String(email).trim().toLowerCase()
+            : user.email;
 
-//     if (user.status !== "Enable") {
-//         throw new ApiError(
-//             403,
-//             "User account is disabled."
-//         );
-//     }
+    if (!normalizedUsername || !normalizedEmail) {
+        throw new ApiError(400, "Username and email are required.");
+    }
 
-//     return sendSuccess(res, {
-//         message: "Current user retrieved successfully.",
-//         data: {
-//             user
-//         }
-//     });
-// }
+    if (username !== undefined || email !== undefined) {
+        const duplicate = await User.findOne({
+            _id: { $ne: user._id },
+            $or: [
+                { username: normalizedUsername },
+                { email: normalizedEmail }
+            ]
+        });
 
-// /**
-//  * Exchanges a valid refresh token for a new access token
-//  * and a rotated refresh token.
-//  */
-// export async function refreshTokenController(req, res) {
-//     const result = await refreshToken(
-//         req.body.refreshToken
-//     );
+        if (duplicate) {
+            throw new ApiError(409, "Username or email already exists.");
+        }
 
-//     return sendSuccess(res, {
-//         statusCode: 200,
-//         message: "Token refreshed successfully.",
-//         data: result
-//     });
-// }
+        user.username = normalizedUsername;
+        user.email = normalizedEmail;
+    }
 
-// /**
-//  * Logs out the current authentication session.
-//  */
-// export async function logoutController(req, res) {
-//     await logout(req.body.refreshToken);
+    if (role !== undefined && role !== null && role !== "") {
+        const roleId = normalizeId(role);
 
-//     return sendSuccess(res, {
-//         statusCode: 200,
-//         message: "Logout successful."
-//     });
-// }
+        if (!roleId) {
+            throw new ApiError(400, "Invalid role.");
+        }
+
+        const selectedRole = await Role.findById(roleId);
+
+        if (!selectedRole) {
+            throw new ApiError(400, "Selected role does not exist.");
+        }
+
+        if (selectedRole.isSuperAdmin && !isSuperAdmin(req.user)) {
+            throw new ApiError(
+                403,
+                "You cannot assign the Super Admin role through this endpoint."
+            );
+        }
+
+        user.role = selectedRole._id;
+    }
+
+    if (center !== undefined) {
+        const centerId = normalizeId(center);
+
+        if (centerId) {
+            const centerExists = await Center.exists({ _id: centerId });
+
+            if (!centerExists) {
+                throw new ApiError(400, "Selected center does not exist.");
+            }
+        }
+
+        user.center = centerId;
+    }
+
+    if (accessibleCenters !== undefined) {
+        const centerIds = normalizeIdArray(accessibleCenters);
+
+        if (centerIds.length > 0) {
+            const matchingCount = await Center.countDocuments({
+                _id: { $in: centerIds }
+            });
+
+            if (matchingCount !== centerIds.length) {
+                throw new ApiError(
+                    400,
+                    "One or more accessible branches do not exist."
+                );
+            }
+        }
+
+        user.accessibleCenters = centerIds;
+    }
+
+    if (fullName !== undefined) {
+        const value = String(fullName).trim();
+
+        if (!value) {
+            throw new ApiError(400, "Full name cannot be empty.");
+        }
+
+        user.fullName = value;
+    }
+
+    if (mobile !== undefined) {
+        user.mobile = mobile || undefined;
+    }
+
+    if (status !== undefined) {
+        if (!["Enable", "Disable"].includes(status)) {
+            throw new ApiError(400, "Invalid user status.");
+        }
+
+        user.status = status;
+    }
+
+    if (password) {
+        user.password = await hashPassword(password);
+    }
+
+    await user.save();
+
+    const updatedUser = await User.findById(user._id)
+        .select("-password -loginAttempts -lockUntil")
+        .populate("role")
+        .populate("center", "centerName centerCode centerType")
+        .populate(
+            "accessibleCenters",
+            "centerName centerCode centerType status"
+        )
+        .lean();
+
+    return sendSuccess(res, {
+        statusCode: 200,
+        message: "User updated successfully.",
+        data: { user: updatedUser }
+    });
+}
+
+/**
+ * DELETE /api/v1/auth/:id
+ * Permanently deletes a user.
+ * Super Admin accounts can only be deleted by another Super Admin,
+ * and the last Super Admin can never be deleted.
+ */
+export async function deleteUserController(req, res) {
+    const { id } = req.params;
+
+    if (String(req.user?.id || req.user?._id) === String(id)) {
+        throw new ApiError(400, "You cannot delete your own account.");
+    }
+
+    const user = await User.findById(id).populate("role");
+
+    if (!user) {
+        throw new ApiError(404, "User not found.");
+    }
+
+    const targetIsSuperAdmin = Boolean(
+        user.isSuperAdmin ||
+        user.role?.isSuperAdmin ||
+        String(user.role?.roleTitle || "").toLowerCase() === "superadmin"
+    );
+
+    if (targetIsSuperAdmin) {
+        if (!isSuperAdmin(req.user)) {
+            throw new ApiError(
+                403,
+                "Only a Super Admin can delete a Super Admin account."
+            );
+        }
+
+        const superRoleIds = await Role.find({ isSuperAdmin: true }).distinct(
+            "_id"
+        );
+
+        const remaining = await User.countDocuments({
+            _id: { $ne: user._id },
+            $or: [
+                { role: { $in: superRoleIds } },
+                { isSuperAdmin: true }
+            ]
+        });
+
+        if (remaining === 0) {
+            throw new ApiError(400, "You cannot delete the last Super Admin.");
+        }
+    }
+
+    await User.deleteOne({ _id: user._id });
+
+    return sendSuccess(res, {
+        statusCode: 200,
+        message: "User deleted successfully.",
+        data: {}
+    });
+}

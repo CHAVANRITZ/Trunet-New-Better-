@@ -471,6 +471,7 @@ export async function getPurchasesByVendor(
  *
  * Stock Purchase is an Outlet-level operation.
  */
+
 export async function getAllProductsWithStock(
     queryParams = {}
 ) {
@@ -481,67 +482,97 @@ export async function getAllProductsWithStock(
         search
     } = queryParams;
 
+    console.log(
+        "[StockPurchase] getAllProductsWithStock started",
+        {
+            outlet,
+            page,
+            limit,
+            search
+        }
+    );
+
+    // 1. Validate outlet ID
     if (!outlet) {
         throw new Error("Outlet is required.");
     }
 
-    await validateOutlet(outlet);
+    if (!mongoose.Types.ObjectId.isValid(outlet)) {
+        throw new Error("Invalid outlet ID.");
+    }
 
+    // 2. Validate that the supplied center is an Outlet
+    const validatedOutlet = await validateOutlet(outlet);
+
+    console.log("[StockPurchase] Outlet validated", {
+        outletId: validatedOutlet._id.toString(),
+        outletName: validatedOutlet.centerName,
+        centerType: validatedOutlet.centerType,
+        warehouse: validatedOutlet.warehouse
+            ? validatedOutlet.warehouse.toString()
+            : null
+    });
+
+    // 3. Validate pagination
+    const currentPage = Math.max(
+        1,
+        Number.parseInt(page, 10) || 1
+    );
+
+    const pageLimit = Math.min(
+        100,
+        Math.max(1, Number.parseInt(limit, 10) || 100)
+    );
+
+    // 4. Build product filters
     const filters = {};
 
-    if (search) {
+    if (search && String(search).trim()) {
+        const escapedSearch = String(search)
+            .trim()
+            .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
         const searchRegex = {
-            $regex: search,
+            $regex: escapedSearch,
             $options: "i"
         };
 
         filters.$or = [
-            {
-                productName: searchRegex
-            },
-            {
-                productTitle: searchRegex
-            },
-            {
-                productCode: searchRegex
-            }
+            { productName: searchRegex },
+            { productTitle: searchRegex },
+            { productCode: searchRegex }
         ];
     }
 
-    const currentPage = Number(page);
-    const pageLimit = Number(limit);
-
     const skip = (currentPage - 1) * pageLimit;
 
-    const [totalProducts, products] =
-        await Promise.all([
-            Product.countDocuments(filters),
+    // 5. Fetch products and count
+    const [totalProducts, products] = await Promise.all([
+        Product.countDocuments(filters),
 
-            Product.find(filters)
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(pageLimit)
-                .select("-__v")
-                .lean()
-        ]);
+        Product.find(filters)
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(pageLimit)
+            .select("-__v")
+            .lean()
+    ]);
 
+    const outletObjectId = validatedOutlet._id;
     const data = [];
 
+    // 6. Fetch stock and purchase summaries
     for (const product of products) {
-        const stock =
-            await OutletStock.findOne({
-                outlet,
+        const [stock, purchaseSummary] = await Promise.all([
+            OutletStock.findOne({
+                outlet: outletObjectId,
                 product: product._id
-            }).lean();
+            }).lean(),
 
-        const purchaseSummary =
-            await StockPurchase.aggregate([
+            StockPurchase.aggregate([
                 {
                     $match: {
-                        outlet:
-                            new mongoose.Types.ObjectId(
-                                outlet
-                            ),
+                        outlet: outletObjectId,
                         status: {
                             $ne: "cancelled"
                         }
@@ -552,39 +583,45 @@ export async function getAllProductsWithStock(
                 },
                 {
                     $match: {
-                        "products.product":
-                            product._id
+                        "products.product": product._id
                     }
                 },
                 {
                     $group: {
                         _id: null,
                         purchasedQuantity: {
-                            $sum:
-                                "$products.purchasedQuantity"
+                            $sum: "$products.purchasedQuantity"
                         },
                         availableQuantity: {
-                            $sum:
-                                "$products.availableQuantity"
+                            $sum: "$products.availableQuantity"
                         }
                     }
                 }
-            ]);
+            ])
+        ]);
 
         data.push({
             ...product,
             stock,
             purchasedQuantity:
-                purchaseSummary[0]
-                    ?.purchasedQuantity || 0,
+                purchaseSummary[0]?.purchasedQuantity || 0,
             availableQuantity:
                 stock?.availableQuantity || 0
         });
     }
 
+    // 7. Return results
     const totalPages = Math.ceil(
         totalProducts / pageLimit
     );
+
+    console.log("[StockPurchase] Products fetched successfully", {
+        outletId: outletObjectId.toString(),
+        totalProducts,
+        returnedProducts: data.length,
+        currentPage,
+        totalPages
+    });
 
     return {
         products: data,

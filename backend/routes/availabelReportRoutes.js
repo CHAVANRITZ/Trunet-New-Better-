@@ -7,7 +7,7 @@ import {
 } from "../controllers/availableReportController.js";
 
 import { authMiddleware } from "../middlewares/authMiddleware.js";
-
+import { getResellerStockList } from "../controllers/resellerStockController.js";
 import {
   authorizeAccess,
   attachAuthorizationContext,
@@ -45,5 +45,9 @@ router.get(
   ...authorizeAvailableStock(...viewPermissions),
   getStockUsageByCenter
 );
-
+router.get(
+  "/reseller",
+  ...authorizeAvailableStock(...viewPermissions),
+  getResellerStockList
+);
 export default router;

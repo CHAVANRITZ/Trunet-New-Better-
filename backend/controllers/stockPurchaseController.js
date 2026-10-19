@@ -12,7 +12,7 @@ import {
     updateOutletSerialNumber as updateOutletSerialNumberService,
     deleteOutletSerialNumber as deleteOutletSerialNumberService,
 } from "../services/stockPurchaseService.js";
-
+import Center from "../models/Center.js";
 import { ApiError } from "../utils/ApiError.js";
 
 /**
@@ -215,24 +215,103 @@ export async function getPurchasesByVendor(req, res) {
 //     });
 // }
 
+
 export async function getAllProductsWithStock(req, res) {
-    const result =
-        await getAllProductsWithStockService({
+    try {
+        const requestedOutlet = req.query.outlet;
+
+        const assignedCenter =
+            req.user?.center ||
+            req.user?.fullUser?.center?._id ||
+            req.user?.fullUser?.center;
+
+        let outletId = requestedOutlet;
+
+        if (!outletId) {
+            if (!assignedCenter) {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "No outlet was selected and the user has no assigned center.",
+                });
+            }
+
+            // A user's assigned center is not necessarily an Outlet.
+            // Resolve an Outlet linked to that center's reseller.
+            const parentCenter = await Center.findById(
+                assignedCenter
+            ).select("centerType reseller");
+
+            if (!parentCenter) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Assigned center not found.",
+                });
+            }
+
+            if (parentCenter.centerType === "Outlet") {
+                outletId = parentCenter._id.toString();
+            } else if (parentCenter.reseller) {
+                const outlet = await Center.findOne({
+                    centerType: "Outlet",
+                    reseller: parentCenter.reseller,
+                    status: "Enable",
+                }).select("_id");
+
+                if (!outlet) {
+                    return res.status(404).json({
+                        success: false,
+                        message:
+                            "No active Outlet was found for the assigned center's reseller.",
+                    });
+                }
+
+                outletId = outlet._id.toString();
+            } else {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "The assigned center has no reseller association to resolve an Outlet.",
+                });
+            }
+        }
+
+        const result = await getAllProductsWithStockService({
             ...req.query,
-            outlet:
-                req.query.outlet ||
-                req.user?.center ||
-                req.user?.fullUser?.center?._id ||
-                req.user?.fullUser?.center,
+            outlet: outletId,
         });
 
-    return res.status(200).json({
-        success: true,
-        message: "Products with stock information retrieved successfully",
-        data: result.products,
-        pagination: result.pagination,
-    });
+        return res.status(200).json({
+            success: true,
+            message:
+                "Products with stock information retrieved successfully",
+            data: result.products,
+            pagination: result.pagination,
+        });
+    } catch (error) {
+        console.error(
+            "[StockPurchase] getAllProductsWithStock error:",
+            error
+        );
+
+        const statusCode =
+            error.message === "Invalid outlet ID." ||
+            error.message === "Outlet is required."
+                ? 400
+                : error.message === "Outlet not found."
+                    ? 404
+                    : error.message === "Selected center must be an Outlet."
+                        ? 400
+                        : 500;
+
+        return res.status(statusCode).json({
+            success: false,
+            message: error.message ||
+                "Failed to retrieve products with stock information",
+        });
+    }
 }
+
 
 /**
  * Get Available Stock

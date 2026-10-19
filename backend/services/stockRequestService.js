@@ -689,97 +689,201 @@ const generateBulkOrderNumber = async (centerName, date) => {
 // Every function returns { statusCode, body }
 // ===========================================================================
 
+
 export const createStockRequest = async (user, body) => {
   try {
-    const { hasAccess, permissions } = await checkStockRequestPermissions(user, ["manage_indent"]);
+    // 1. Check permission
+    const { hasAccess } = await checkStockRequestPermissions(user, [
+      "manage_indent",
+    ]);
+
     if (!hasAccess) {
       return {
         statusCode: 403,
-        body: { success: false, message: "Access denied. manage_indent permission required." },
+        body: {
+          success: false,
+          message: "Access denied. manage_indent permission required.",
+        },
       };
     }
 
-    const { warehouse, remark, products, status = "Draft", orderNumber, date } = body;
-
-    if (!orderNumber || orderNumber.trim() === "") {
-      return { statusCode: 400, body: { success: false, message: "Order number is required" } };
+    // 2. Validate authenticated user
+    if (!user?.id) {
+      return {
+        statusCode: 401,
+        body: {
+          success: false,
+          message: "Authenticated user information not found.",
+        },
+      };
     }
+
+    const {
+      warehouse,
+      remark = "",
+      products,
+      status = "Draft",
+      orderNumber,
+      date,
+    } = body;
+
+    // 3. Validate order number
+    if (typeof orderNumber !== "string" || !orderNumber.trim()) {
+      return {
+        statusCode: 400,
+        body: {
+          success: false,
+          message: "Order number is required.",
+        },
+      };
+    }
+
     const trimmedOrderNumber = orderNumber.trim();
 
-    const existingRequest = await StockRequest.findOne({ orderNumber: trimmedOrderNumber });
+    // 4. Validate warehouse
+    if (!warehouse) {
+      return {
+        statusCode: 400,
+        body: {
+          success: false,
+          message: "Warehouse is required.",
+        },
+      };
+    }
+
+    const warehouseExists = await Center.findById(warehouse);
+
+    if (!warehouseExists) {
+      return {
+        statusCode: 404,
+        body: {
+          success: false,
+          message: "Warehouse not found.",
+        },
+      };
+    }
+
+    // Warehouse must be an Outlet, as required by the model
+    if (warehouseExists.centerType !== "Outlet") {
+      return {
+        statusCode: 400,
+        body: {
+          success: false,
+          message: "Selected warehouse must be an Outlet.",
+        },
+      };
+    }
+
+    // 5. Validate duplicate order number
+    const existingRequest = await StockRequest.findOne({
+      orderNumber: trimmedOrderNumber,
+    });
+
     if (existingRequest) {
       return {
         statusCode: 409,
         body: {
           success: false,
-          message: "Order number already exists. Please use a unique order number.",
+          message:
+            "Order number already exists. Please use a unique order number.",
           duplicateOrderNumber: trimmedOrderNumber,
           existingRequestId: existingRequest._id,
         },
       };
     }
 
-    let requestDate = new Date();
-    if (date) {
-      requestDate = new Date(date);
-      if (isNaN(requestDate.getTime())) {
-        return {
-          statusCode: 400,
-          body: { success: false, message: "Invalid date format. Please provide a valid date." },
-        };
-      }
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const providedDate = new Date(requestDate);
-      providedDate.setHours(0, 0, 0, 0);
-    }
+    // 6. Get the logged-in user's assigned center
+    // Never depend on body.center for the requester's center.
+    const userDoc = await User.findById(user.id).select("center");
 
-    const userDoc = await User.findById(user.id).populate("center");
     if (!userDoc || !userDoc.center) {
       return {
         statusCode: 400,
-        body: { success: false, message: "User center information not found" },
+        body: {
+          success: false,
+          message: "User center information not found.",
+        },
       };
     }
-    const centerId = userDoc.center._id;
 
-    if (permissions.indent_own_center && !permissions.indent_all_center) {
-      const userCenterId = userDoc.center._id || userDoc.center;
-      // Legacy: variable set but unused. Preserved.
-    }
+    const centerId = userDoc.center;
 
     const centerExists = await Center.findById(centerId);
-    if (!centerExists) {
-      return { statusCode: 404, body: { success: false, message: "Center not found" } };
-    }
 
-    if (!products || !Array.isArray(products) || products.length === 0) {
+    if (!centerExists) {
       return {
-        statusCode: 400,
-        body: { success: false, message: "Products array is required and cannot be empty" },
+        statusCode: 404,
+        body: {
+          success: false,
+          message: "The logged-in user's assigned center was not found.",
+        },
       };
     }
 
-    for (const product of products) {
-      if (!product.product || !product.quantity) {
+    // 7. Validate products
+    if (!Array.isArray(products) || products.length === 0) {
+      return {
+        statusCode: 400,
+        body: {
+          success: false,
+          message: "Products array is required and cannot be empty.",
+        },
+      };
+    }
+
+    for (const [index, product] of products.entries()) {
+      if (!product?.product) {
         return {
           statusCode: 400,
-          body: { success: false, message: "Each product must have product ID and quantity" },
+          body: {
+            success: false,
+            message: `Product ID is required for item ${index + 1}.`,
+          },
         };
       }
-      if (product.quantity <= 0) {
+
+      const quantity = Number(product.quantity);
+
+      if (!Number.isInteger(quantity) || quantity < 1) {
         return {
           statusCode: 400,
-          body: { success: false, message: "Product quantity must be greater than 0" },
+          body: {
+            success: false,
+            message: `Quantity must be a positive integer for item ${index + 1}.`,
+          },
         };
       }
     }
 
+    // 8. Validate date
+    let requestDate = new Date();
+
+    if (date) {
+      requestDate = new Date(date);
+
+      if (Number.isNaN(requestDate.getTime())) {
+        return {
+          statusCode: 400,
+          body: {
+            success: false,
+            message: "Invalid date format. Please provide a valid date.",
+          },
+        };
+      }
+    }
+
+    // 9. Create request using the user's assigned center
     const stockRequest = new StockRequest({
       orderNumber: trimmedOrderNumber,
-      warehouse, center: centerId,
-      remark: remark || "",
-      products, date: requestDate, status,
+      warehouse,
+      center: centerId,
+      remark,
+      products: products.map((product) => ({
+        ...product,
+        quantity: Number(product.quantity),
+      })),
+      date: requestDate,
+      status,
       centerChallanApproval: "pending",
       warehouseChallanApproval: "pending",
       createdBy: user.id,
@@ -787,14 +891,23 @@ export const createStockRequest = async (user, body) => {
 
     const savedStockRequest = await stockRequest.save();
 
-    const populatedRequest = await StockRequest.findById(savedStockRequest._id)
+    // 10. Populate response
+    const populatedRequest = await StockRequest.findById(
+      savedStockRequest._id
+    )
       .populate("warehouse", "_id centerName centerCode centerType")
       .populate("center", "_id centerName centerCode centerType")
       .populate("products.product", "_id productTitle productCode productImage")
       .populate("createdBy", "_id fullName email")
       .populate("approvalInfo.approvedBy", "_id fullName email")
-      .populate("approvalInfo.warehouseChallanApprovedBy", "_id fullName email")
-      .populate("approvalInfo.centerChallanApprovedBy", "_id fullName email")
+      .populate(
+        "approvalInfo.warehouseChallanApprovedBy",
+        "_id fullName email"
+      )
+      .populate(
+        "approvalInfo.centerChallanApprovedBy",
+        "_id fullName email"
+      )
       .populate("shippingInfo.shippedBy", "_id fullName email")
       .populate("receivingInfo.receivedBy", "_id fullName email");
 
@@ -802,7 +915,7 @@ export const createStockRequest = async (user, body) => {
       statusCode: 201,
       body: {
         success: true,
-        message: "Stock request created successfully",
+        message: "Stock request created successfully.",
         data: populatedRequest,
       },
     };
@@ -810,38 +923,56 @@ export const createStockRequest = async (user, body) => {
     console.error("Error creating stock request:", error);
 
     if (error.code === 11000) {
-      const duplicateField = Object.keys(error.keyPattern)[0];
-      if (duplicateField === "orderNumber") {
-        return {
-          statusCode: 409,
-          body: {
-            success: false,
-            message: "Order number already exists. Please use a unique order number.",
-            duplicateOrderNumber: body.orderNumber,
-          },
-        };
-      }
+      return {
+        statusCode: 409,
+        body: {
+          success: false,
+          message:
+            "Order number already exists. Please use a unique order number.",
+          duplicateOrderNumber: body?.orderNumber,
+        },
+      };
     }
+
     if (error.name === "ValidationError") {
-      const errors = Object.values(error.errors).map((err) => err.message);
-      return { statusCode: 400, body: { success: false, message: "Validation error", errors } };
+      const errors = Object.values(error.errors).map(
+        (validationError) => validationError.message
+      );
+
+      return {
+        statusCode: 400,
+        body: {
+          success: false,
+          message: "Validation error.",
+          errors,
+        },
+      };
     }
+
     if (error.name === "CastError") {
       return {
         statusCode: 400,
-        body: { success: false, message: `Invalid ${error.path}: ${error.value}` },
+        body: {
+          success: false,
+          message: `Invalid ${error.path}: ${error.value}`,
+        },
       };
     }
+
     return {
       statusCode: 500,
       body: {
         success: false,
-        message: "Error creating stock request",
-        error: process.env.NODE_ENV === "development" ? error.message : "Internal server error",
+        message: "Error creating stock request.",
+        error:
+          process.env.NODE_ENV === "development"
+            ? error.message
+            : "Internal server error",
       },
     };
   }
 };
+
 
 export const getAllStockRequests = async (user, query) => {
   try {

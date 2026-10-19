@@ -1,60 +1,108 @@
+import mongoose from "mongoose";
 import Reseller from "../models/Reseller.js";
 import Center from "../models/Center.js";
+import Warehouse from "../models/Warehouse.js";
 
+// Generate a unique center code.
 const generateCenterCode = async (businessName) => {
-    const baseCode = businessName
+    const baseCode = (businessName || "CENT")
         .replace(/\s+/g, "")
         .substring(0, 4)
         .toUpperCase();
 
     let counter = 1;
-    let centerCode;
 
-    do {
-        centerCode = `${baseCode}${String(counter).padStart(3, "0")}`;
+    while (true) {
+        const centerCode =
+            `${baseCode}${String(counter).padStart(3, "0")}`;
 
         const existingCenter = await Center.findOne({
             centerCode,
-        });
+        }).lean();
 
         if (!existingCenter) {
             return centerCode;
         }
 
         counter++;
-    } while (true);
+    }
 };
 
+// Create a reseller and its associated Outlet.
 export const createReseller = async (resellerData) => {
-    const reseller = await Reseller.create(resellerData);
+    const session = await mongoose.startSession();
 
-    const centerCode = await generateCenterCode(
-        reseller.businessName
-    );
+    try {
+        let createdReseller;
+        let createdCenter;
 
-    const centerData = {
-        reseller: reseller._id,
-        centerType: "Outlet",
-        centerName: reseller.businessName,
-        centerCode,
-        email: reseller.email || "",
-        mobile: reseller.mobile || reseller.contactNumber || "",
-        addressLine1: reseller.address1 || "",
-        addressLine2: reseller.address2 || "",
-        city: reseller.city || "",
-        state: reseller.state || "",
-        area: null,
-        status: "Enable",
-    };
+        await session.withTransaction(async () => {
+            // Create the reseller first so its ID can be used
+            // to find or create the correct warehouse.
+            const [reseller] = await Reseller.create(
+                [resellerData],
+                { session }
+            );
 
-    const center = await Center.create(centerData);
+            // Find an enabled warehouse belonging to this reseller.
+            // This also supports legacy data where the warehouse
+            // was created before the Outlet.
+            const warehouse = await Warehouse.findOne({
+                reseller: reseller._id,
+                status: "Enable",
+            }).session(session);
 
-    return {
-        reseller,
-        center,
-    };
+            if (!warehouse) {
+                throw new Error(
+                    `No enabled warehouse found for reseller "${reseller.businessName}". ` +
+                    "Create or assign a warehouse for this reseller first."
+                );
+            }
+
+            const centerCode = await generateCenterCode(
+                reseller.businessName
+            );
+
+            const centerData = {
+                reseller: reseller._id,
+                warehouse: warehouse._id,
+                centerType: "Outlet",
+                centerName: reseller.businessName,
+                centerCode,
+                email: reseller.email || "",
+                mobile:
+                    reseller.mobile ||
+                    reseller.contactNumber ||
+                    "",
+                addressLine1: reseller.address1 || "",
+                addressLine2: reseller.address2 || "",
+                city: reseller.city || "",
+                state: reseller.state || "",
+                area: warehouse.area || undefined,
+                status: "Enable",
+            };
+
+            const [center] = await Center.create(
+                [centerData],
+                { session }
+            );
+
+            createdReseller = reseller;
+            createdCenter = center;
+        });
+
+        return {
+            reseller: createdReseller,
+            center: createdCenter,
+        };
+    } catch (error) {
+        throw error;
+    } finally {
+        await session.endSession();
+    }
 };
 
+// Get resellers with search, filtering, sorting and pagination.
 export const getResellers = async ({
     search,
     city,
@@ -63,11 +111,16 @@ export const getResellers = async ({
     limit = 100,
     sortBy = "createdAt",
     sortOrder = "desc",
-}) => {
+} = {}) => {
     const filters = {};
 
-    if (search) {
-        const searchRegex = new RegExp(search, "i");
+    if (search?.trim()) {
+        const escapedSearch = search.trim().replace(
+            /[.*+?^${}()|[\]\\]/g,
+            "\\$&"
+        );
+
+        const searchRegex = new RegExp(escapedSearch, "i");
 
         filters.$or = [
             { businessName: searchRegex },
@@ -79,33 +132,52 @@ export const getResellers = async ({
         ];
     }
 
-    if (city) {
-        filters.city = new RegExp(city, "i");
+    if (city?.trim()) {
+        filters.city = new RegExp(
+            city.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+            "i"
+        );
     }
 
-    if (state) {
-        filters.state = new RegExp(state, "i");
+    if (state?.trim()) {
+        filters.state = new RegExp(
+            state.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+            "i"
+        );
     }
 
-    const currentPage = Number(page);
-    const currentLimit = Number(limit);
+    const currentPage = Math.max(1, Number(page) || 1);
+    const currentLimit = Math.min(
+        100,
+        Math.max(1, Number(limit) || 100)
+    );
 
     const skip = (currentPage - 1) * currentLimit;
 
-    const sortDirection =
-        sortOrder === "asc" ? 1 : -1;
+    // Whitelist sortable fields to prevent arbitrary sort keys.
+    const allowedSortFields = [
+        "createdAt",
+        "businessName",
+        "name",
+        "city",
+        "state",
+    ];
 
-    const [resellers, totalResellers] =
-        await Promise.all([
-            Reseller.find(filters)
-                .sort({
-                    [sortBy]: sortDirection,
-                })
-                .skip(skip)
-                .limit(currentLimit),
+    const safeSortBy = allowedSortFields.includes(sortBy)
+        ? sortBy
+        : "createdAt";
 
-            Reseller.countDocuments(filters),
-        ]);
+    const sortDirection = sortOrder === "asc" ? 1 : -1;
+
+    const [resellers, totalResellers] = await Promise.all([
+        Reseller.find(filters)
+            .sort({ [safeSortBy]: sortDirection })
+            .skip(skip)
+            .limit(currentLimit)
+            .lean(),
+
+        Reseller.countDocuments(filters),
+    ]);
 
     const totalPages = Math.ceil(
         totalResellers / currentLimit
@@ -124,14 +196,24 @@ export const getResellers = async ({
     };
 };
 
+// Get a reseller by ID.
 export const getResellerById = async (resellerId) => {
+    if (!mongoose.Types.ObjectId.isValid(resellerId)) {
+        throw new Error("Invalid reseller ID.");
+    }
+
     return Reseller.findById(resellerId);
 };
 
+// Update a reseller.
 export const updateReseller = async (
     resellerId,
     updateData
 ) => {
+    if (!mongoose.Types.ObjectId.isValid(resellerId)) {
+        throw new Error("Invalid reseller ID.");
+    }
+
     return Reseller.findByIdAndUpdate(
         resellerId,
         updateData,
@@ -142,6 +224,11 @@ export const updateReseller = async (
     );
 };
 
+// Delete a reseller.
 export const deleteReseller = async (resellerId) => {
+    if (!mongoose.Types.ObjectId.isValid(resellerId)) {
+        throw new Error("Invalid reseller ID.");
+    }
+
     return Reseller.findByIdAndDelete(resellerId);
 };

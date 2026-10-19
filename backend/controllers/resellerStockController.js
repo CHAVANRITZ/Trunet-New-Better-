@@ -4,6 +4,7 @@ import Reseller from "../models/Reseller.js";
 import Product from "../models/Product.js";
 import Center from "../models/Center.js";
 import ProductCategory from "../models/ProductCategory.js";
+import User from "../models/User.js";
 import XLSX from "xlsx";
 
 /**
@@ -288,4 +289,88 @@ const buildResellerStockFilter = async (
   }
 
   return filter;
+};
+
+export const getResellerStockList = async (req, res) => {
+  try {
+    const { hasAccess, permissions, userCenter } =
+      checkResellerStockPermissions(req, [
+        "available_stock_own_center",
+        "available_stock_all_center",
+      ]);
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied to reseller stock.",
+      });
+    }
+
+    const filter = await buildResellerStockFilter(
+      req.query,
+      permissions,
+      userCenter
+    );
+
+    if (filter.noAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have access to this reseller's stock.",
+      });
+    }
+
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(
+      Math.max(parseInt(req.query.limit, 10) || 10, 1),
+      100
+    );
+
+    const [stock, totalItems] = await Promise.all([
+      ResellerStock.find(filter)
+        .populate("reseller", "businessName")
+        .populate(
+          "product",
+          "productTitle productCode productPrice productCategory trackSerialNumber"
+        )
+        .sort({ updatedAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      ResellerStock.countDocuments(filter),
+    ]);
+
+    let center = null;
+
+    if (userCenter && mongoose.Types.ObjectId.isValid(userCenter)) {
+      center = await Center.findById(userCenter)
+        .select("_id centerName centerCode centerType reseller")
+        .lean();
+    }
+
+    const formattedStock = stock.map((item) => ({
+      ...item,
+      productName: item.product?.productTitle || "",
+      productCode: item.product?.productCode || "",
+      resellerName: item.reseller?.businessName || "",
+    }));
+
+    return res.status(200).json({
+      success: true,
+      message: "Reseller stock retrieved successfully.",
+      data: {
+        stock: formattedStock,
+        pagination: {
+          currentPage: page,
+          totalPages: Math.ceil(totalItems / limit),
+          totalItems,
+          itemsPerPage: limit,
+          hasNext: page < Math.ceil(totalItems / limit),
+          hasPrev: page > 1,
+        },
+        center,
+      },
+    });
+  } catch (error) {
+    return handleControllerError(error, res);
+  }
 };

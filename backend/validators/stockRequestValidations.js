@@ -17,11 +17,10 @@ export const validateCreateStockRequest = [
     .custom(objectId)
     .withMessage("Invalid warehouse ID"),
 
-  body("center")
-    .notEmpty()
-    .withMessage("Center is required")
-    .custom(objectId)
-    .withMessage("Invalid center ID"),
+body("center")
+  .optional()
+  .custom(objectId)
+  .withMessage("Invalid center ID"),
 
   body("orderNumber")
     .trim()
