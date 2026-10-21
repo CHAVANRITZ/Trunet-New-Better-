@@ -302,9 +302,13 @@ const generateVoucherNo = async () => {
         "Unable to generate a unique voucher number. Please contact support."
     );
 };
+
 export const getNextVoucherNo = async () => {
-    return generateVoucherNo();
+    const voucherNo = await generateVoucherNo();
+
+    return voucherNo;
 };
+
 /* -------------------------------------------------------------------------- */
 /*                                  Populate                                  */
 /* -------------------------------------------------------------------------- */
@@ -448,6 +452,7 @@ async function buildSearchConditions(search) {
 /**
  * Creates a Raise PO.
  */
+
 export async function createRaisePO(user, data) {
     const { hasAccess } = await checkStockPurchasePermissions(user, [
         "add_purchase_stock",
@@ -462,7 +467,13 @@ export async function createRaisePO(user, data) {
 
     const userId = getUserId(user);
 
-    const { date, vendor, outlet, products } = data || {};
+    const {
+        date,
+        vendor,
+        outlet,
+        products,
+        voucherNo: requestedVoucherNo,
+    } = data || {};
 
     if (!Array.isArray(products) || products.length === 0) {
         throw new ApiError(400, "At least one product is required");
@@ -474,7 +485,28 @@ export async function createRaisePO(user, data) {
         outletId = await getUserOutletId(userId);
     }
 
-    const voucherNo = await generateVoucherNo();
+    let voucherNo;
+
+    if (requestedVoucherNo) {
+        voucherNo = String(requestedVoucherNo).trim();
+
+        const voucherPattern = /^STELE\/\d{2,}\/\d{2}-\d{2}$/;
+
+        if (!voucherPattern.test(voucherNo)) {
+            throw new ApiError(400, "Invalid voucher number format.");
+        }
+
+        const existingVoucher = await RaisePO.exists({ voucherNo });
+
+        if (existingVoucher) {
+            throw new ApiError(
+                409,
+                "This voucher number has already been used. Please refresh the form."
+            );
+        }
+    } else {
+        voucherNo = await generateVoucherNo();
+    }
 
     const processedProducts = products.map((product) => ({
         product: product.product,
@@ -499,6 +531,7 @@ export async function createRaisePO(user, data) {
         raisePOPopulateOptions
     );
 }
+
 
 /**
  * Retrieves Raise POs.
