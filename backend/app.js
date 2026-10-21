@@ -3,6 +3,7 @@
     import helmet from "helmet";
     import rateLimit from "express-rate-limit";
     import repairCostRoutes from "./routes/repairCostRoutes.js";
+    import auditLogRoutes from "./routes/auditLogRoutes.js";
     import authRoutes from "./routes/authRoutes.js";
     import healthRoutes from "./routes/healthRoutes.js";
     import productCategoryRoutes from "./routes/productCategoryRoutes.js";
@@ -55,7 +56,7 @@
     // API routes
     app.use("/api/v1/health", healthRoutes);
     app.use("/api/v1/auth", authRoutes);
-    // app.use("/api/v1/product-categories", productCategoryRoutes);
+     app.use("/api/v1/auditLogs", auditLogRoutes);
     app.use("/api/v1/product-category", productCategoryRoutes);
     app.use("/api/v1/products", productRoutes);
     app.use("/api/v1/vendor", vendorRoutes);

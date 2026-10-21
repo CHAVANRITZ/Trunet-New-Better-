@@ -73,11 +73,21 @@ export const getTestingMaterialRequestById = handle(async (req, res) => {
     });
 });
 
+
 export const getAllUnderTestingProducts = handle(async (req, res) => {
-    const data = await testingMaterialService.getAllUnderTestingProducts(
-        req.user,
-        req.query
-    );
+    const userWithCenter = {
+        ...req.user,
+        selectedCenterId:
+            req.selectedCenterId ||
+            req.user?.selectedCenterId ||
+            null,
+    };
+
+    const data =
+        await testingMaterialService.getAllUnderTestingProducts(
+            userWithCenter,
+            req.query
+        );
 
     return sendSuccess(res, {
         message: "Under testing products retrieved successfully",
@@ -85,12 +95,23 @@ export const getAllUnderTestingProducts = handle(async (req, res) => {
     });
 });
 
+
+
 export const getUnderTestingSerialsByProduct = handle(async (req, res) => {
-    const result = await testingMaterialService.getUnderTestingSerialsByProduct(
-        req.user,
-        req.params.productId,
-        req.query
-    );
+    const userWithCenter = {
+        ...req.user,
+        selectedCenterId:
+            req.selectedCenterId ||
+            req.user?.selectedCenterId ||
+            null,
+    };
+
+    const result =
+        await testingMaterialService.getUnderTestingSerialsByProduct(
+            userWithCenter,
+            req.params.productId,
+            req.query
+        );
 
     if (!result.found) {
         return res.status(404).json({
@@ -105,3 +126,4 @@ export const getUnderTestingSerialsByProduct = handle(async (req, res) => {
         data: result.data,
     });
 });
+;

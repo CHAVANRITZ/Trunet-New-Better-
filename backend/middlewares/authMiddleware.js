@@ -1,3 +1,4 @@
+
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import Role from "../models/Role.js";
@@ -8,37 +9,71 @@ import { ApiError } from "../utils/ApiError.js";
 /**
  * Authenticates requests using the JWT access token.
  *
- * The current user and role are loaded from MongoDB on every
- * protected request so that changes to user status, role, or
- * permissions take effect without requiring a new token.
+ * Loads the current user and role from MongoDB on every protected
+ * request so account status and permission changes take effect.
+ *
+ * All errors are forwarded to Express error middleware with next(error).
  */
 export async function authMiddleware(req, res, next) {
     try {
         const authorizationHeader = req.headers.authorization;
 
         if (!authorizationHeader) {
-            throw new ApiError(
-                401,
-                "You are not logged in. Please log in to get access."
+            return next(
+                new ApiError(
+                    401,
+                    "You are not logged in. Please log in to get access."
+                )
             );
         }
 
         const [scheme, token] = authorizationHeader.split(" ");
 
         if (scheme !== "Bearer" || !token) {
-            throw new ApiError(
-                401,
-                "Invalid authorization header."
+            return next(
+                new ApiError(401, "Invalid authorization header.")
             );
         }
 
-        const decodedToken = jwt.verify(token, env.JWT_SECRET);
+        let decodedToken;
+
+        try {
+            decodedToken = jwt.verify(token, env.JWT_SECRET);
+        } catch (error) {
+            if (error.name === "TokenExpiredError") {
+                return next(
+                    new ApiError(
+                        401,
+                        "Your token has expired. Please log in again."
+                    )
+                );
+            }
+
+            if (
+                error.name === "JsonWebTokenError" ||
+                error.name === "NotBeforeError"
+            ) {
+                return next(
+                    new ApiError(
+                        401,
+                        "Invalid token. Please log in again."
+                    )
+                );
+            }
+
+            return next(error);
+        }
 
         // Require the authenticated user's ID in the token.
-        if (!decodedToken.sub) {
-            throw new ApiError(
-                401,
-                "Invalid token. User information is missing."
+        if (
+            !decodedToken.sub ||
+            !jwtIdIsValid(decodedToken.sub)
+        ) {
+            return next(
+                new ApiError(
+                    401,
+                    "Invalid token. User information is missing."
+                )
             );
         }
 
@@ -55,50 +90,41 @@ export async function authMiddleware(req, res, next) {
         const user = await User.findById(decodedToken.sub);
 
         if (!user) {
-            throw new ApiError(
-                401,
-                "The user belonging to this token no longer exists."
+            return next(
+                new ApiError(
+                    401,
+                    "The user belonging to this token no longer exists."
+                )
             );
         }
 
         if (user.status !== "Enable") {
-            throw new ApiError(
-                403,
-                "Your account has been disabled. Please contact administrator."
+            return next(
+                new ApiError(
+                    403,
+                    "Your account has been disabled. Please contact administrator."
+                )
             );
         }
 
         if (!user.role) {
-            throw new ApiError(
-                403,
-                "User role is not configured."
+            return next(
+                new ApiError(403, "User role is not configured.")
             );
         }
 
-        /*
-         * Load the raw role document to preserve its stored
-         * permissions and Super Admin configuration.
-         */
+        // Load the raw role document to preserve stored permissions.
         const role = await Role.collection.findOne({
             _id: user.role
         });
 
         if (!role) {
-            throw new ApiError(
-                403,
-                "User role is not configured."
+            return next(
+                new ApiError(403, "User role is not configured.")
             );
         }
 
-        /*
-         * Super Admin detection:
-         * 1. Check the user's explicit flag.
-         * 2. Check the role's explicit flag.
-         * 3. Recognize the superadmin role title.
-         *
-         * This supports your current database, where the user
-         * flag is false but the assigned role flag is true.
-         */
+        // Determine Super Admin access from the user or role.
         const roleTitle =
             typeof role.roleTitle === "string"
                 ? role.roleTitle.trim().toLowerCase()
@@ -122,63 +148,41 @@ export async function authMiddleware(req, res, next) {
             isSuperAdmin: superAdminStatus
         };
 
-        /*
-         * Preserve the selected center from the token when
-         * present. A null user center is allowed here.
-         */
+        // Preserve the selected center when present in the token.
         if (decodedToken.centerId) {
             req.selectedCenterId = decodedToken.centerId;
         }
 
-        // Temporary diagnostic log; remove after verification.
-        console.log("AUTH MIDDLEWARE SUPERADMIN CHECK", {
-            email: user.email,
-            userIsSuperAdmin,
-            roleTitle: role.roleTitle,
-            roleIsSuperAdmin,
-            finalIsSuperAdmin: req.user.isSuperAdmin,
-            center: user.center?.toString?.() || user.center || null
-        });
-
         return next();
     } catch (error) {
-        if (error.name === "TokenExpiredError") {
-            throw new ApiError(
-                401,
-                "Your token has expired. Please log in again."
-            );
-        }
-
-        if (error.name === "JsonWebTokenError") {
-            throw new ApiError(
-                401,
-                "Invalid token. Please log in again."
-            );
-        }
-
-        throw error;
+        // Forward database errors and all unexpected errors.
+        return next(error);
     }
+}
+
+/**
+ * Checks whether a value can be used as a MongoDB user ID.
+ */
+function jwtIdIsValid(value) {
+    return (
+        typeof value === "string" &&
+        /^[a-fA-F0-9]{24}$/.test(value)
+    );
 }
 
 /**
  * Restricts access to specific database-backed role titles.
  *
  * Super Admin users are allowed through automatically.
- *
- * @param {...string} roles - Allowed role titles
- * @returns {Function} Express middleware
  */
 export function restrictTo(...roles) {
     return function roleMiddleware(req, res, next) {
         if (!req.user) {
-            throw new ApiError(
-                401,
-                "Authentication required."
+            return next(
+                new ApiError(401, "Authentication required.")
             );
         }
 
-        // Use the flag established by authMiddleware.
-        // Retain the existing utility as a compatibility fallback.
         const hasSuperAdminAccess =
             req.user.isSuperAdmin === true ||
             checkIsSuperAdmin(req.user);
@@ -187,13 +191,14 @@ export function restrictTo(...roles) {
             return next();
         }
 
-        const currentRole =
-            req.user.role?.roleTitle;
+        const currentRole = req.user.role?.roleTitle;
 
         if (!roles.includes(currentRole)) {
-            throw new ApiError(
-                403,
-                "You do not have permission to perform this action."
+            return next(
+                new ApiError(
+                    403,
+                    "You do not have permission to perform this action."
+                )
             );
         }
 

@@ -1,6 +1,6 @@
 import express from "express";
 import multer from "multer";
-
+import { authMiddleware } from "../middlewares/authMiddleware.js";
 import {
     getAllRepairCosts,
     getRepairCostById,
@@ -13,6 +13,9 @@ import {
 } from "../controllers/repairCostController.js";
 
 const router = express.Router();
+
+// Authenticate all repaired-cost API requests.
+router.use(authMiddleware);
 
 const upload = multer({
     storage: multer.memoryStorage(),

@@ -1,3 +1,4 @@
+
 import mongoose from "mongoose";
 import TestingMaterial from "../models/TestingMaterial.js";
 import TestingStock from "../models/TestingStock.js";
@@ -7,7 +8,7 @@ import Product from "../models/Product.js";
 import { ApiError } from "../utils/ApiError.js";
 import { isSuperAdmin } from "../utils/checkPermissions.js";
 import { normalizePermissions } from "../middlewares/authorizationMiddleware.js";
-
+import User from "../models/User.js";
 const MODULE_NAME = "Testing Material";
 
 const CENTER_FIELDS = "_id centerName centerCode centerType";
@@ -17,7 +18,6 @@ const USER_FIELDS = "_id fullName email";
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
-/** ApiError that can carry extra response fields (kept from legacy responses). */
 export class TestingMaterialServiceError extends ApiError {
   constructor(statusCode, message, extras) {
     super(statusCode, message);
@@ -28,39 +28,177 @@ export class TestingMaterialServiceError extends ApiError {
 const httpError = (status, message, extras) =>
   new TestingMaterialServiceError(status, message, extras);
 
-/** Center-scoping context for the logged-in user (permission names come from DB role). */
+/**
+ * Resolve the user's active center and permissions.
+ * selectedCenterId takes precedence over the assigned center.
+ */
 const getAccessContext = async (user) => {
-  const userCenterId = user.fullUser?.center || null;
+  const userCenterId =
+    user?.selectedCenterId ||
+    user?.fullUser?.center ||
+    null;
 
   if (isSuperAdmin(user)) {
-    return { manageAllCenters: true, userCenterId };
+    return {
+      manageAllCenters: true,
+      userCenterId,
+    };
   }
 
-  const groups = await normalizePermissions(user.role?.permissions || []);
+  const groups = await normalizePermissions(
+    user?.role?.permissions || []
+  );
+
   const group = groups.find(
-    (item) => item.module?.toLowerCase() === MODULE_NAME.toLowerCase()
+    (item) =>
+      item.module?.toLowerCase() === MODULE_NAME.toLowerCase()
   );
 
   return {
-    manageAllCenters: !!group?.permissions?.includes("manage_testing_all_centers"),
+    manageAllCenters: !!group?.permissions?.includes(
+      "manage_testing_all_centers"
+    ),
     userCenterId,
   };
 };
 
+
 const getUserCenter = async (user) => {
-  const centerId = user.fullUser?.center;
-  return centerId ? Center.findById(centerId) : null;
+  const userId =
+    user?.fullUser?._id ||
+    user?._id ||
+    user?.id;
+
+  if (!userId || !mongoose.isValidObjectId(userId)) {
+    throw httpError(401, "Unable to identify the logged-in user");
+  }
+
+  const userDoc = await User.findById(userId)
+    .select("_id center accessibleCenters")
+    .populate("center", CENTER_FIELDS)
+    .lean();
+
+  if (!userDoc?.center) {
+    throw httpError(
+      400,
+      "No center is assigned to the logged-in user"
+    );
+  }
+
+  return userDoc.center;
 };
 
-/** Center to query for under-testing endpoints: query centerId or the user's own Center. */
+/**
+ * Resolve the center for under-testing endpoints.
+ *
+ * A requested center must exist and be of type "Center".
+ * Access is checked before stock data is returned.
+ */
+
+
+
 const resolveQueryCenterId = async (user, centerId) => {
-  if (centerId) return centerId;
+  // Prefer an explicitly requested location, then the active location,
+  // then the logged-in user's assigned location.
+  let locationId =
+    centerId ||
+    user?.selectedCenterId ||
+    user?.fullUser?.center?._id ||
+    user?.fullUser?.center ||
+    null;
 
-  const userCenter = await getUserCenter(user);
-  if (userCenter && userCenter.centerType === "Center") return userCenter._id;
+  // If the location is missing, fetch it from the database user record.
+  if (!locationId) {
+    const userId =
+      user?.fullUser?._id ||
+      user?._id ||
+      user?.id;
 
-  throw httpError(400, "Center ID is required or user must be from a Center");
+    if (!userId || !mongoose.isValidObjectId(userId)) {
+      throw httpError(401, "Unable to identify the logged-in user");
+    }
+
+    const userDoc = await User.findById(userId)
+      .select("_id center accessibleCenters isSuperAdmin")
+      .lean();
+
+    if (!userDoc) {
+      throw httpError(401, "Logged-in user was not found");
+    }
+
+    locationId = userDoc.center || null;
+
+    if (!locationId) {
+      throw httpError(
+        400,
+        "No location is assigned to the logged-in user"
+      );
+    }
+  }
+
+  // Normalize Mongoose ObjectIds and populated location objects.
+  if (typeof locationId === "object" && locationId?._id) {
+    locationId = locationId._id;
+  }
+
+  if (!mongoose.isValidObjectId(locationId)) {
+    throw httpError(400, "A valid location ID is required");
+  }
+
+  const location = await Center.findById(locationId)
+    .select("_id centerType centerName centerCode")
+    .lean();
+
+  if (!location) {
+    throw httpError(404, "Assigned location was not found");
+  }
+
+  // Check permissions against the authenticated user's context.
+  const { manageAllCenters, userCenterId } =
+    await getAccessContext(user);
+
+  const normalizeId = (value) => {
+    if (!value) return null;
+
+    if (typeof value === "object" && value._id) {
+      value = value._id;
+    }
+
+    return value.toString();
+  };
+
+  const resolvedId = normalizeId(location._id);
+  const ownLocationId = normalizeId(userCenterId);
+
+  const accessibleCenters =
+    user?.fullUser?.accessibleCenters || [];
+
+  const accessibleIds = accessibleCenters
+    .map(normalizeId)
+    .filter(Boolean);
+
+  const isOwnLocation = ownLocationId === resolvedId;
+  const isAccessible = accessibleIds.includes(resolvedId);
+
+  if (
+    !manageAllCenters &&
+    !isOwnLocation &&
+    !isAccessible
+  ) {
+    throw httpError(
+      403,
+      "Access denied for the selected location"
+    );
+  }
+
+  // Do not restrict the location by centerType.
+  // Both Center and Outlet records are valid locations.
+  return location._id;
 };
+
+
+
+
 
 const generateRequestNumber = async () => {
   const count = await TestingMaterial.countDocuments();
@@ -72,7 +210,10 @@ const generateRequestNumber = async () => {
   return `TM${year}${month}${day}${sequence}`;
 };
 
-const populateRequest = (query, { trackSerial = false, testResults = false } = {}) => {
+const populateRequest = (
+  query,
+  { trackSerial = false, testResults = false } = {}
+) => {
   query
     .populate("fromCenter", CENTER_FIELDS)
     .populate("toCenter", CENTER_FIELDS)
@@ -106,36 +247,55 @@ const validateRequestedProducts = async (products, fromCenterId) => {
 
   for (const item of products) {
     if (!item.product || !item.quantity) {
-      throw httpError(400, "Each product must have product ID and quantity");
+      throw httpError(
+        400,
+        "Each product must have product ID and quantity"
+      );
     }
+
     if (item.quantity <= 0) {
-      throw httpError(400, "Product quantity must be greater than 0");
+      throw httpError(
+        400,
+        "Product quantity must be greater than 0"
+      );
     }
 
     const productDoc = await Product.findById(item.product);
+
     if (!productDoc) {
       throw httpError(404, `Product ${item.product} not found`);
     }
 
     const key = item.product.toString();
+
     if (!outletStocks.has(key)) {
       outletStocks.set(
         key,
-        await OutletStock.findOne({ outlet: fromCenterId, product: item.product })
+        await OutletStock.findOne({
+          outlet: fromCenterId,
+          product: item.product,
+        })
       );
     }
+
     const outletStock = outletStocks.get(key);
 
     if (!outletStock) {
       throw httpError(
         400,
         `No stock available for product ${productDoc.productTitle} in your outlet`,
-        { productId: item.product, productName: productDoc.productTitle }
+        {
+          productId: item.product,
+          productName: productDoc.productTitle,
+        }
       );
     }
 
     if (productDoc.trackSerialNumber === "Yes") {
-      if (!item.serialNumbers || !Array.isArray(item.serialNumbers)) {
+      if (
+        !item.serialNumbers ||
+        !Array.isArray(item.serialNumbers)
+      ) {
         throw httpError(
           400,
           `Serial numbers are required for product ${productDoc.productTitle} as it tracks serial numbers`
@@ -149,18 +309,26 @@ const validateRequestedProducts = async (products, fromCenterId) => {
         );
       }
 
-      const duplicateSerials = item.serialNumbers.filter((serialNumber) => {
-        const serialKey = `${key}:${serialNumber}`;
-        if (requestedSerials.has(serialKey)) return true;
-        requestedSerials.add(serialKey);
-        return false;
-      });
+      const duplicateSerials = item.serialNumbers.filter(
+        (serialNumber) => {
+          const serialKey = `${key}:${serialNumber}`;
+
+          if (requestedSerials.has(serialKey)) return true;
+
+          requestedSerials.add(serialKey);
+          return false;
+        }
+      );
 
       if (duplicateSerials.length > 0) {
         throw httpError(
           400,
-          `Duplicate serial numbers provided for product ${productDoc.productTitle}: ${[...new Set(duplicateSerials)].join(", ")}`,
-          { duplicateSerials: [...new Set(duplicateSerials)] }
+          `Duplicate serial numbers provided for product ${productDoc.productTitle}: ${[
+            ...new Set(duplicateSerials),
+          ].join(", ")}`,
+          {
+            duplicateSerials: [...new Set(duplicateSerials)],
+          }
         );
       }
 
@@ -172,16 +340,23 @@ const validateRequestedProducts = async (products, fromCenterId) => {
           (sn) =>
             sn.serialNumber === serialNumber &&
             sn.status === "available" &&
-            sn.currentLocation?.toString() === fromCenterId.toString()
+            sn.currentLocation?.toString() ===
+              fromCenterId.toString()
         );
-        (serial ? availableSerials : unavailableSerials).push(serialNumber);
+
+        (serial ? availableSerials : unavailableSerials).push(
+          serialNumber
+        );
       }
 
       if (unavailableSerials.length > 0) {
         throw httpError(
           400,
           `Some serial numbers are not available in your outlet stock for product ${productDoc.productTitle}: ${unavailableSerials.join(", ")}`,
-          { unavailableSerials, availableSerials }
+          {
+            unavailableSerials,
+            availableSerials,
+          }
         );
       }
 
@@ -225,7 +400,7 @@ const validateRequestedProducts = async (products, fromCenterId) => {
   return { validatedProducts, outletStocks };
 };
 
-/** Marks outlet stock pending_testing WITHOUT decreasing availableQuantity (legacy behavior). */
+/** Marks outlet stock pending_testing WITHOUT decreasing availableQuantity. */
 const markOutletStockPendingTesting = async (
   validatedProducts,
   outletStocks,
@@ -238,7 +413,8 @@ const markOutletStockPendingTesting = async (
     if (item.serialNumbers.length > 0) {
       for (const serialItem of item.serialNumbers) {
         const serial = outletStock.serialNumbers.find(
-          (sn) => sn.serialNumber === serialItem.serialNumber
+          (sn) =>
+            sn.serialNumber === serialItem.serialNumber
         );
 
         if (serial) {
@@ -253,15 +429,20 @@ const markOutletStockPendingTesting = async (
         }
       }
     } else {
-      outletStock.pendingTestingQty = (outletStock.pendingTestingQty || 0) + item.quantity;
+      outletStock.pendingTestingQty =
+        (outletStock.pendingTestingQty || 0) + item.quantity;
     }
 
     await outletStock.save();
   }
 };
 
-export const createRequest = async (user, { toCenter, products, remark }) => {
+export const createRequest = async (
+  user,
+  { toCenter, products, remark }
+) => {
   const userCenter = await getUserCenter(user);
+
   if (!userCenter) {
     throw httpError(400, "User center information not found");
   }
@@ -276,18 +457,24 @@ export const createRequest = async (user, { toCenter, products, remark }) => {
   }
 
   const toCenterDoc = await Center.findById(toCenter);
+
   if (!toCenterDoc) {
     throw httpError(404, "Destination center not found");
   }
 
-  if (!products || !Array.isArray(products) || products.length === 0) {
-    throw httpError(400, "Products array is required and cannot be empty");
+  if (
+    !products ||
+    !Array.isArray(products) ||
+    products.length === 0
+  ) {
+    throw httpError(
+      400,
+      "Products array is required and cannot be empty"
+    );
   }
 
-  const { validatedProducts, outletStocks } = await validateRequestedProducts(
-    products,
-    fromCenterId
-  );
+  const { validatedProducts, outletStocks } =
+    await validateRequestedProducts(products, fromCenterId);
 
   try {
     const testingMaterial = await new TestingMaterial({
@@ -307,21 +494,31 @@ export const createRequest = async (user, { toCenter, products, remark }) => {
       toCenter
     );
 
-    return populateRequest(TestingMaterial.findById(testingMaterial._id), {
-      trackSerial: true,
-    });
+    return populateRequest(
+      TestingMaterial.findById(testingMaterial._id),
+      { trackSerial: true }
+    );
   } catch (error) {
     if (error.name === "ValidationError") {
       throw httpError(400, "Validation error", {
-        errors: Object.values(error.errors).map((err) => err.message),
+        errors: Object.values(error.errors).map(
+          (err) => err.message
+        ),
         details: error.errors,
       });
     }
 
-    if (error.code === 11000 && error.keyValue?.requestNumber) {
-      throw httpError(400, "Duplicate request number generated. Please try again.", {
-        duplicateRequestNumber: error.keyValue.requestNumber,
-      });
+    if (
+      error.code === 11000 &&
+      error.keyValue?.requestNumber
+    ) {
+      throw httpError(
+        400,
+        "Duplicate request number generated. Please try again.",
+        {
+          duplicateRequestNumber: error.keyValue.requestNumber,
+        }
+      );
     }
 
     throw error;
@@ -332,11 +529,11 @@ export const createRequest = async (user, { toCenter, products, remark }) => {
 /* 2. Accept request                                                   */
 /* ------------------------------------------------------------------ */
 
-/**
- * Validates every product and mutates outlet stock in memory only.
- * Nothing is persisted until all products pass validation.
- */
-export const acceptRequest = async (user, id, { remark } = {}) => {
+export const acceptRequest = async (
+  user,
+  id,
+  { remark } = {}
+) => {
   const testingMaterial = await TestingMaterial.findById(id)
     .populate("fromCenter", CENTER_FIELDS)
     .populate("toCenter", CENTER_FIELDS);
@@ -368,13 +565,14 @@ export const acceptRequest = async (user, id, { remark } = {}) => {
     );
   }
 
-  // Prepare and validate all stock changes before persisting them.
   const prepareAcceptance = async (request) => {
     const outletStocks = new Map();
     const plan = [];
 
     for (const productItem of request.products) {
-      const productDoc = await Product.findById(productItem.product);
+      const productDoc = await Product.findById(
+        productItem.product
+      );
 
       if (!productDoc) {
         throw httpError(
@@ -410,7 +608,8 @@ export const acceptRequest = async (user, id, { remark } = {}) => {
       if (serialNumbers.length > 0) {
         for (const serialItem of serialNumbers) {
           const serial = outletStock.serialNumbers.find(
-            (sn) => sn.serialNumber === serialItem.serialNumber
+            (sn) =>
+              sn.serialNumber === serialItem.serialNumber
           );
 
           if (!serial) {
@@ -453,7 +652,10 @@ export const acceptRequest = async (user, id, { remark } = {}) => {
 
         outletStock.availableQuantity -= productItem.quantity;
       } else {
-        if (outletStock.pendingTestingQty < productItem.quantity) {
+        if (
+          outletStock.pendingTestingQty <
+          productItem.quantity
+        ) {
           throw httpError(
             400,
             `Invalid pending testing quantity for product ${productDoc.productTitle}. Available: ${outletStock.pendingTestingQty}, Requested: ${productItem.quantity}`
@@ -515,7 +717,11 @@ export const acceptRequest = async (user, id, { remark } = {}) => {
       TestingMaterial.findById(testingMaterial._id)
     );
   } catch (error) {
-    if (error.message?.includes("already exists in TestingStock")) {
+    if (
+      error.message?.includes(
+        "already exists in TestingStock"
+      )
+    ) {
       throw httpError(
         400,
         "Duplicate serial numbers detected. Some products are already in testing.",
@@ -533,13 +739,19 @@ export const acceptRequest = async (user, id, { remark } = {}) => {
     throw error;
   }
 };
+
 /* ------------------------------------------------------------------ */
 /* 3. List requests                                                    */
 /* ------------------------------------------------------------------ */
 
 const parseStatusFilter = (status) => {
-  const list = Array.isArray(status) ? status : String(status).split(",");
-  return list.map((s) => String(s).trim()).filter((s) => s.length > 0);
+  const list = Array.isArray(status)
+    ? status
+    : String(status).split(",");
+
+  return list
+    .map((s) => String(s).trim())
+    .filter((s) => s.length > 0);
 };
 
 export const getAllRequests = async (user, query) => {
@@ -555,25 +767,36 @@ export const getAllRequests = async (user, query) => {
     endDate,
   } = query;
 
-  const { manageAllCenters, userCenterId } = await getAccessContext(user);
+  const { manageAllCenters, userCenterId } =
+    await getAccessContext(user);
+
   const filter = {};
 
   if (status) {
     const statuses = parseStatusFilter(status);
-    if (statuses.length > 0) filter.status = { $in: statuses };
+    if (statuses.length > 0) {
+      filter.status = { $in: statuses };
+    }
   }
 
   if (startDate || endDate) {
     filter.createdAt = {};
-    if (startDate) filter.createdAt.$gte = new Date(startDate);
-    if (endDate) filter.createdAt.$lte = new Date(endDate);
+    if (startDate) {
+      filter.createdAt.$gte = new Date(startDate);
+    }
+    if (endDate) {
+      filter.createdAt.$lte = new Date(endDate);
+    }
   }
 
   if (manageAllCenters) {
     if (fromCenter) filter.fromCenter = fromCenter;
     if (toCenter) filter.toCenter = toCenter;
   } else if (userCenterId) {
-    filter.$or = [{ fromCenter: userCenterId }, { toCenter: userCenterId }];
+    filter.$or = [
+      { fromCenter: userCenterId },
+      { toCenter: userCenterId },
+    ];
   }
 
   const pageNumber = Number.parseInt(page, 10) || 1;
@@ -581,14 +804,23 @@ export const getAllRequests = async (user, query) => {
 
   const [data, total, statusCounts] = await Promise.all([
     populateRequest(TestingMaterial.find(filter))
-      .sort({ [sortBy]: sortOrder === "desc" ? -1 : 1 })
+      .sort({
+        [sortBy]: sortOrder === "desc" ? -1 : 1,
+      })
       .limit(limitNumber)
       .skip((pageNumber - 1) * limitNumber)
       .lean(),
+
     TestingMaterial.countDocuments(filter),
+
     TestingMaterial.aggregate([
       { $match: filter },
-      { $group: { _id: "$status", count: { $sum: 1 } } },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+        },
+      },
     ]),
   ]);
 
@@ -605,7 +837,10 @@ export const getAllRequests = async (user, query) => {
       totalItems: total,
       itemsPerPage: limitNumber,
     },
-    filters: { status: statusStats, total },
+    filters: {
+      status: statusStats,
+      total,
+    },
   };
 };
 
@@ -614,24 +849,32 @@ export const getAllRequests = async (user, query) => {
 /* ------------------------------------------------------------------ */
 
 export const getRequestById = async (user, id) => {
-  const testingMaterial = await populateRequest(TestingMaterial.findById(id), {
-    trackSerial: true,
-    testResults: true,
-  });
+  const testingMaterial = await populateRequest(
+    TestingMaterial.findById(id),
+    {
+      trackSerial: true,
+      testResults: true,
+    }
+  );
 
   if (!testingMaterial) {
     throw httpError(404, "Testing material request not found");
   }
 
-  const { manageAllCenters, userCenterId } = await getAccessContext(user);
+  const { manageAllCenters, userCenterId } =
+    await getAccessContext(user);
 
   if (!manageAllCenters && userCenterId) {
     const centerId = userCenterId.toString();
+
     if (
       testingMaterial.fromCenter._id.toString() !== centerId &&
       testingMaterial.toCenter._id.toString() !== centerId
     ) {
-      throw httpError(403, "Access denied. You can only view requests from/to your center.");
+      throw httpError(
+        403,
+        "Access denied. You can only view requests from/to your center."
+      );
     }
   }
 
@@ -654,12 +897,20 @@ const collectSerialReferences = (testingStocks) => {
 
   for (const stock of testingStocks) {
     for (const serial of stock.serialNumbers || []) {
-      if (serial.originalOutlet) outletIds.add(serial.originalOutlet.toString());
-      if (serial.testingRequestId) requestIds.add(serial.testingRequestId.toString());
+      if (serial.originalOutlet) {
+        outletIds.add(serial.originalOutlet.toString());
+      }
+
+      if (serial.testingRequestId) {
+        requestIds.add(serial.testingRequestId.toString());
+      }
     }
   }
 
-  return { outletIds: [...outletIds], requestIds: [...requestIds] };
+  return {
+    outletIds: [...outletIds],
+    requestIds: [...requestIds],
+  };
 };
 
 const indexById = (docs) =>
@@ -668,18 +919,28 @@ const indexById = (docs) =>
     return acc;
   }, {});
 
-export const getAllUnderTestingProducts = async (user, { centerId }) => {
-  const queryCenterId = await resolveQueryCenterId(user, centerId);
+export const getAllUnderTestingProducts = async (
+  user,
+  { centerId }
+) => {
+  const queryCenterId = await resolveQueryCenterId(
+    user,
+    centerId
+  );
 
   const testingStocks = await TestingStock.find({
     center: queryCenterId,
     underTestingQuantity: { $gt: 0 },
   })
     .populate("center", "_id centerName centerCode")
-    .populate("product", "_id productTitle productCode trackSerialNumber category brand")
+    .populate(
+      "product",
+      "_id productTitle productCode trackSerialNumber category brand"
+    )
     .lean();
 
-  const { outletIds, requestIds } = collectSerialReferences(testingStocks);
+  const { outletIds, requestIds } =
+    collectSerialReferences(testingStocks);
 
   const [outletDocs, requestDocs] = await Promise.all([
     outletIds.length
@@ -687,8 +948,11 @@ export const getAllUnderTestingProducts = async (user, { centerId }) => {
           .select("_id centerName centerCode")
           .lean()
       : [],
+
     requestIds.length
-      ? TestingMaterial.find({ _id: { $in: requestIds } })
+      ? TestingMaterial.find({
+          _id: { $in: requestIds },
+        })
           .select("_id requestNumber status requestedAt")
           .populate("requestedBy", USER_FIELDS)
           .lean()
@@ -711,12 +975,21 @@ export const getAllUnderTestingProducts = async (user, { centerId }) => {
             testResult: serial.testResult,
             testRemark: serial.testRemark,
             testedAt: serial.testedAt,
+
             originalOutlet:
-              outlets[serial.originalOutlet?.toString()] || serial.originalOutlet,
-            testingRequest: testingRequests[serial.testingRequestId?.toString()] || null,
+              outlets[serial.originalOutlet?.toString()] ||
+              serial.originalOutlet,
+
+            testingRequest:
+              testingRequests[
+                serial.testingRequestId?.toString()
+              ] || null,
+
             currentLocation: serial.currentLocation,
+
             addedToTesting:
-              serial.transferHistory?.[0]?.transferDate || serial._id.getTimestamp(),
+              serial.transferHistory?.[0]?.transferDate ||
+              serial._id.getTimestamp(),
           }))
         : [];
 
@@ -724,7 +997,9 @@ export const getAllUnderTestingProducts = async (user, { centerId }) => {
       ...new Set(
         stock.serialNumbers
           .filter((serial) => serial.originalOutlet)
-          .map((serial) => serial.originalOutlet.toString())
+          .map((serial) =>
+            serial.originalOutlet.toString()
+          )
       ),
     ];
 
@@ -732,6 +1007,7 @@ export const getAllUnderTestingProducts = async (user, { centerId }) => {
       _id: stock._id,
       center: stock.center,
       product: stock.product,
+
       quantities: {
         total: stock.totalQuantity,
         available: stock.availableQuantity,
@@ -740,14 +1016,21 @@ export const getAllUnderTestingProducts = async (user, { centerId }) => {
         passed: stock.passedQuantity,
         failed: stock.failedQuantity,
       },
-      serialized: stock.product?.trackSerialNumber === "Yes",
+
+      serialized:
+        stock.product?.trackSerialNumber === "Yes",
+
       serialNumbers: {
         total: stock.serialNumbers.length,
         underTesting: serialsUnderTesting.length,
         byStatus: countByStatus(stock.serialNumbers),
         data: serialsData,
       },
-      outlets: stockOutletIds.map((id) => outlets[id]).filter(Boolean),
+
+      outlets: stockOutletIds
+        .map((id) => outlets[id])
+        .filter(Boolean),
+
       lastUpdated: stock.lastUpdated,
       createdAt: stock.createdAt,
     };
@@ -755,15 +1038,24 @@ export const getAllUnderTestingProducts = async (user, { centerId }) => {
 
   const productSummary = products.reduce((acc, item) => {
     const productId = item.product._id.toString();
+
     if (!acc[productId]) {
-      acc[productId] = { product: item.product, totalUnderTesting: 0, testingStocks: [] };
+      acc[productId] = {
+        product: item.product,
+        totalUnderTesting: 0,
+        testingStocks: [],
+      };
     }
-    acc[productId].totalUnderTesting += item.quantities.underTesting;
+
+    acc[productId].totalUnderTesting +=
+      item.quantities.underTesting;
+
     acc[productId].testingStocks.push({
       testingStockId: item._id,
       quantity: item.quantities.underTesting,
       center: item.center,
     });
+
     return acc;
   }, {});
 
@@ -771,7 +1063,13 @@ export const getAllUnderTestingProducts = async (user, { centerId }) => {
     products,
     summary: Object.values(productSummary),
     totalProducts: products.length,
-    totalUnderTestingItems: products.reduce((sum, p) => sum + p.quantities.underTesting, 0),
+
+    totalUnderTestingItems: products.reduce(
+      (sum, product) =>
+        sum + product.quantities.underTesting,
+      0
+    ),
+
     centerId: queryCenterId,
   };
 };
@@ -785,9 +1083,13 @@ export const getUnderTestingSerialsByProduct = async (
   productId,
   { centerId, status = "under_testing", search }
 ) => {
-  const queryCenterId = await resolveQueryCenterId(user, centerId);
+  const queryCenterId = await resolveQueryCenterId(
+    user,
+    centerId
+  );
 
   const product = await Product.findById(productId);
+
   if (!product) {
     throw httpError(404, "Product not found");
   }
@@ -796,12 +1098,18 @@ export const getUnderTestingSerialsByProduct = async (
     center: queryCenterId,
     product: productId,
   })
-    .populate("center", "_id centerName ")
-    .populate("product", "_id productTitle productCode trackSerialNumber")
+    .populate("center", "_id centerName")
+    .populate(
+      "product",
+      "_id productTitle productCode trackSerialNumber"
+    )
     .populate({
       path: "serialNumbers.testingRequestId",
       select: "requestNumber status requestedBy requestedAt fromCenter",
-      populate: { path: "requestedBy", select: "fullName email" },
+      populate: {
+        path: "requestedBy",
+        select: "fullName email",
+      },
     })
     .populate({
       path: "serialNumbers.currentLocation",
@@ -816,7 +1124,12 @@ export const getUnderTestingSerialsByProduct = async (
         centerId: queryCenterId,
         productId,
         underTestingSerials: [],
-        summary: { totalSerials: 0, underTesting: 0, tested: 0, failed: 0 },
+        summary: {
+          totalSerials: 0,
+          underTesting: 0,
+          tested: 0,
+          failed: 0,
+        },
       },
     };
   }
@@ -827,36 +1140,53 @@ export const getUnderTestingSerialsByProduct = async (
 
   if (search) {
     const term = search.toLowerCase();
+
     filteredSerials = filteredSerials.filter(
       (serial) =>
         serial.serialNumber.toLowerCase().includes(term) ||
-        serial.testingRequestId?.requestNumber?.toLowerCase().includes(term)
+        serial.testingRequestId?.requestNumber
+          ?.toLowerCase()
+          .includes(term)
     );
   }
 
   const serialDate = (serial) =>
-    new Date(serial.transferHistory[0]?.transferDate || serial._id.getTimestamp());
-  filteredSerials.sort((a, b) => serialDate(b) - serialDate(a));
+    new Date(
+      serial.transferHistory[0]?.transferDate ||
+      serial._id.getTimestamp()
+    );
+
+  filteredSerials.sort(
+    (a, b) => serialDate(b) - serialDate(a)
+  );
 
   return {
     found: true,
+
     data: {
       testingStockId: testingStock._id,
       center: testingStock.center,
       product: testingStock.product,
+
       quantities: {
         total: testingStock.totalQuantity,
         underTesting: testingStock.underTestingQuantity,
         passed: testingStock.passedQuantity,
         failed: testingStock.failedQuantity,
       },
+
       availableSerials: filteredSerials.map((serial) => ({
         serialNumber: serial.serialNumber,
         status: serial.status,
         testResult: serial.testResult,
         currentLocation: serial.currentLocation,
       })),
-      filters: { status, centerId: queryCenterId, searchApplied: !!search },
+
+      filters: {
+        status,
+        centerId: queryCenterId,
+        searchApplied: !!search,
+      },
     },
   };
 };
