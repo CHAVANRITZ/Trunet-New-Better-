@@ -1307,14 +1307,59 @@ export const getStockUsageByControlRoom = async (controlRoomId) => {
  * EntityStockUsage is the source for the current stock held
  * against the customer.
  */
+
 export const getProductDevicesByCustomer = async (customerId) => {
-    return EntityStockUsage.find({
+    // Fetch the customer's current stock records.
+    const entityStocks = await EntityStockUsage.find({
         entityType: "customer",
         entityId: customerId,
     })
         .populate("product")
-        .sort({ lastUpdated: -1 });
+        .sort({ lastUpdated: -1 })
+        .lean();
+
+    if (!entityStocks.length) {
+        return [];
+    }
+
+    // Fetch completed customer usage transactions, newest first.
+    const usageRecords = await StockUsage.find({
+        customer: customerId,
+        usageType: "Customer",
+        status: "completed",
+    })
+        .sort({ date: -1, createdAt: -1 })
+        .lean();
+
+    // Match transaction details to the relevant product.
+    return entityStocks.map((entityStock) => {
+        const productId =
+            entityStock.product?._id?.toString() ??
+            entityStock.product?.toString();
+
+        const matchingUsage = usageRecords.find((usage) =>
+            usage.items?.some(
+                (item) =>
+                    item.product?.toString() === productId
+            )
+        );
+
+        return {
+            ...entityStock,
+            connectionType: matchingUsage?.connectionType ?? null,
+            packageAmount: matchingUsage?.packageAmount ?? 0,
+            packageDuration: matchingUsage?.packageDuration ?? null,
+            onuCharges: matchingUsage?.onuCharges ?? 0,
+            installationCharges:
+                matchingUsage?.installationCharges ?? 0,
+            shiftingAmount: matchingUsage?.shiftingAmount ?? 0,
+            wireChangeAmount: matchingUsage?.wireChangeAmount ?? 0,
+            usageDate: matchingUsage?.date ?? null,
+            usageId: matchingUsage?._id ?? null,
+        };
+    });
 };
+
 
 
 /**

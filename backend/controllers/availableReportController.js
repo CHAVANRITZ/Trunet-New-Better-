@@ -1685,14 +1685,13 @@ const buildStockUsageSortOptions = (sortBy = "date", sortOrder = "desc") => {
 
 export const getStockUsageByCenter = async (req, res) => {
   try {
-    console.log('========== START getStockUsageByCenter ==========');
-    console.log('Full req.query:', JSON.stringify(req.query, null, 2));
-    
-    const { hasAccess, permissions, userCenter } =
-      checkAvailableStockPermissions(req, [
-        "available_stock_own_center",
-        "available_stock_all_center",
-      ]);
+    console.log("========== START getStockUsageByCenter ==========");
+    console.log("Full req.query:", JSON.stringify(req.query, null, 2));
+
+    const { hasAccess, permissions } = checkAvailableStockPermissions(req, [
+      "available_stock_own_center",
+      "available_stock_all_center",
+    ]);
 
     if (!hasAccess) {
       return res.status(403).json({
@@ -1722,142 +1721,174 @@ export const getStockUsageByCenter = async (req, res) => {
       ...filterParams
     } = req.query;
 
-    console.log('Extracted params:', { page, limit, sortBy, sortOrder, startDate, endDate, isExport });
-    console.log('Filter params:', { centerId, center, centerIds, resellerId, usageType, status, product, productId, search });
-    
+    console.log("Extracted params:", {
+      page,
+      limit,
+      sortBy,
+      sortOrder,
+      startDate,
+      endDate,
+      isExport,
+    });
+
+    console.log("Filter params:", {
+      centerId,
+      center,
+      centerIds,
+      resellerId,
+      usageType,
+      status,
+      product,
+      productId,
+      search,
+    });
+
     // ========== MANDATORY DATE FILTER FOR EXPORT ==========
     if (isExport === "true" || isExport === true) {
       if (!startDate && !endDate) {
         return res.status(400).json({
           success: false,
-          message: "Date range (startDate and/or endDate) is required for Excel export. Please provide at least one date filter.",
+          message:
+            "Date range (startDate and/or endDate) is required for Excel export. Please provide at least one date filter.",
         });
       }
-      
+
       if (startDate && isNaN(new Date(startDate).getTime())) {
         return res.status(400).json({
           success: false,
-          message: `Invalid startDate format: ${startDate}. Please use YYYY-MM-DD format.`
+          message: `Invalid startDate format: ${startDate}. Please use YYYY-MM-DD format.`,
         });
       }
-      
+
       if (endDate && isNaN(new Date(endDate).getTime())) {
         return res.status(400).json({
           success: false,
-          message: `Invalid endDate format: ${endDate}. Please use YYYY-MM-DD format.`
+          message: `Invalid endDate format: ${endDate}. Please use YYYY-MM-DD format.`,
         });
       }
-      
-      console.log(`[EXPORT] Export requested with date filter - StartDate: ${startDate}, EndDate: ${endDate}`);
+
+      console.log(
+        `[EXPORT] Export requested with date filter - StartDate: ${startDate}, EndDate: ${endDate}`
+      );
     }
-    
+
     // ========== RESELLER AND CENTER FILTER LOGIC ==========
     let targetCenterIds = [];
-    
-    // Case 1: If centerIds provided directly
+
     if (centerIds) {
-      const centerIdArray = Array.isArray(centerIds) ? centerIds : centerIds.split(',');
+      const centerIdArray = Array.isArray(centerIds)
+        ? centerIds
+        : centerIds.split(",");
+
       targetCenterIds = centerIdArray;
-      console.log(`Using specific center IDs: ${targetCenterIds.join(', ')}`);
-    }
-    // Case 2: If single centerId provided
-    else if (centerId) {
+      console.log(`Using specific center IDs: ${targetCenterIds.join(", ")}`);
+    } else if (centerId) {
       targetCenterIds = [centerId];
       console.log(`Using single center ID: ${centerId}`);
-    }
-    // Case 3: If resellerId provided, get all centers under that reseller
-    else if (resellerId) {
-      const centersUnderReseller = await Center.find({ 
+    } else if (resellerId) {
+      const centersUnderReseller = await Center.find({
         reseller: resellerId,
-        status: "Enable"
+        status: "Enable",
       }).select("_id");
-      
+
       if (centersUnderReseller.length === 0) {
         return res.status(404).json({
           success: false,
           message: `No active centers found under reseller ID: ${resellerId}`,
         });
       }
-      
-      targetCenterIds = centersUnderReseller.map(c => c._id.toString());
-      console.log(`Found ${targetCenterIds.length} centers under reseller ${resellerId}: ${targetCenterIds.join(', ')}`);
-    }
-    // Case 4: Use user's own center
-    else {
+
+      targetCenterIds = centersUnderReseller.map((c) => c._id.toString());
+
+      console.log(
+        `Found ${targetCenterIds.length} centers under reseller ${resellerId}: ${targetCenterIds.join(", ")}`
+      );
+    } else {
       const user = await User.findById(req.user._id).populate("center");
+
       if (user && user.center) {
         targetCenterIds = [user.center._id.toString()];
         console.log(`Using user's own center: ${user.center._id}`);
       }
     }
-    
+
     // Remove duplicates
     targetCenterIds = [...new Set(targetCenterIds)];
-    
+
     // ========== BUILD FILTER ==========
     const filter = {};
-    
-    // Apply center filter if we have target centers
+
     if (targetCenterIds.length > 0) {
       filter.center = { $in: targetCenterIds };
-      console.log(`Filtering by centers: ${targetCenterIds.join(', ')}`);
+      console.log(`Filtering by centers: ${targetCenterIds.join(", ")}`);
     }
-    
-    // Usage Type filter
-    if (usageType && usageType !== 'all') {
+
+    if (usageType && usageType !== "all") {
       filter.usageType = usageType;
       console.log(`Filter by usageType: ${usageType}`);
     }
-    
-    // Status filter
-    if (status && status !== 'all') {
+
+    if (status && status !== "all") {
       filter.status = status;
       console.log(`Filter by status: ${status}`);
     }
-    
+
     // Date range filter
     if (startDate || endDate) {
       filter.date = {};
-      
+
       if (startDate) {
         const startDateTime = new Date(startDate);
         startDateTime.setUTCHours(0, 0, 0, 0);
         filter.date.$gte = startDateTime;
+
         console.log(`Start date filter: ${filter.date.$gte.toISOString()}`);
       }
-      
+
       if (endDate) {
         const endDateTime = new Date(endDate);
         endDateTime.setUTCHours(23, 59, 59, 999);
         filter.date.$lte = endDateTime;
+
         console.log(`End date filter: ${filter.date.$lte.toISOString()}`);
       }
     }
-    
+
     // Search filter
-    if (search && search !== '') {
+    if (search && search !== "") {
       filter.$or = [
         { remark: { $regex: search, $options: "i" } },
-        { usageType: { $regex: search, $options: "i" } }
+        { usageType: { $regex: search, $options: "i" } },
       ];
+
       console.log(`Search filter: ${search}`);
     }
 
-    console.log('========== FINAL MONGODB FILTER ==========');
-    console.log('Final filter:', JSON.stringify(filter, null, 2));
+    console.log("========== FINAL MONGODB FILTER ==========");
+    console.log("Final filter:", JSON.stringify(filter, null, 2));
 
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.max(1, parseInt(limit, 10) || 100);
     const skip = (pageNum - 1) * limitNum;
 
     const sortOptions = {};
-    sortOptions[sortBy === 'date' ? 'date' : 'createdAt'] = sortOrder === 'desc' ? -1 : 1;
-    
+    sortOptions[sortBy === "date" ? "date" : "createdAt"] =
+      sortOrder === "desc" ? -1 : 1;
+
     // ========== FETCH DATA ==========
-    let stockUsages, total;
-    
+    let stockUsages;
+    let total;
+
     const query = StockUsage.find(filter)
-      .populate("center", "centerName centerCode centerType")
+      // Populate center and its associated reseller
+      .populate({
+        path: "center",
+        select: "centerName centerCode centerType reseller",
+        populate: {
+          path: "reseller",
+          select: "businessName name",
+        },
+      })
       .populate("customer", "name username mobile")
       .populate("fromBuilding", "buildingName displayName")
       .populate("toBuilding", "buildingName displayName")
@@ -1867,91 +1898,138 @@ export const getStockUsageByCenter = async (req, res) => {
         select: "productTitle productCode productCategory trackSerialNumber",
       })
       .sort(sortOptions);
-    
+
     if (isExport === "true" || isExport === true) {
       stockUsages = await query.lean();
       total = stockUsages.length;
+
       console.log(`[EXPORT] Exporting ${total} stock usage records`);
     } else {
       total = await StockUsage.countDocuments(filter);
       stockUsages = await query.skip(skip).limit(limitNum).lean();
+
       console.log(`Found ${stockUsages.length} records out of ${total} total`);
     }
 
-    // Process and format the data
+    // ========== PROCESS AND FORMAT DATA ==========
     const formattedData = [];
     let totalUsageSum = 0;
     let totalDamageSum = 0;
+
     const usageTypeMap = new Map();
 
     for (const usage of stockUsages) {
       let itemsToProcess = usage.items || [];
-      
+
       // Apply product filter at item level
-      if (productId && productId !== 'all') {
-        const productIdsArray = productId.split(',');
-        itemsToProcess = itemsToProcess.filter(item => {
-          const itemProductId = item.product?._id ? item.product._id.toString() : item.product?.toString();
-          return productIdsArray.some(pid => itemProductId === pid);
+      if (productId && productId !== "all") {
+        const productIdsArray = productId.split(",");
+
+        itemsToProcess = itemsToProcess.filter((item) => {
+          const itemProductId = item.product?._id
+            ? item.product._id.toString()
+            : item.product?.toString();
+
+          return productIdsArray.some((pid) => itemProductId === pid);
         });
-      } else if (product && product !== 'all') {
-        const productIdsArray = product.split(',');
-        itemsToProcess = itemsToProcess.filter(item => {
-          const itemProductId = item.product?._id ? item.product._id.toString() : item.product?.toString();
-          return productIdsArray.some(pid => itemProductId === pid);
+      } else if (product && product !== "all") {
+        const productIdsArray = product.split(",");
+
+        itemsToProcess = itemsToProcess.filter((item) => {
+          const itemProductId = item.product?._id
+            ? item.product._id.toString()
+            : item.product?.toString();
+
+          return productIdsArray.some((pid) => itemProductId === pid);
         });
       }
 
       for (const [itemIndex, item] of itemsToProcess.entries()) {
         let damageQty = 0;
-        if (usage.usageType === "Damage" && usage.status === "completed") {
+
+        if (
+          usage.usageType === "Damage" &&
+          usage.status === "completed"
+        ) {
           damageQty = item.quantity || 0;
         }
-        
+
         totalUsageSum += item.quantity || 0;
         totalDamageSum += damageQty;
-        
-        // Track by usage type for summary
+
+        // Track summary by usage type
         if (!usageTypeMap.has(usage.usageType)) {
-          usageTypeMap.set(usage.usageType, { totalUsage: 0, totalDamage: 0, count: 0 });
+          usageTypeMap.set(usage.usageType, {
+            totalUsage: 0,
+            totalDamage: 0,
+            count: 0,
+          });
         }
+
         const typeStats = usageTypeMap.get(usage.usageType);
         typeStats.totalUsage += item.quantity || 0;
         typeStats.totalDamage += damageQty;
         typeStats.count += 1;
 
+        // Resolve entity name
         let entityName = "N/A";
+
         switch (usage.usageType) {
           case "Customer":
             entityName = usage.customer?.name || "Unknown Customer";
             break;
+
           case "Building":
-            entityName = usage.fromBuilding?.buildingName || "Unknown Building";
+            entityName =
+              usage.fromBuilding?.buildingName || "Unknown Building";
             break;
+
           case "Building to Building":
-            entityName = `${usage.fromBuilding?.buildingName || "Unknown"} → ${
-              usage.toBuilding?.buildingName || "Unknown"
-            }`;
+            entityName = `${
+              usage.fromBuilding?.buildingName || "Unknown"
+            } → ${usage.toBuilding?.buildingName || "Unknown"}`;
             break;
+
           case "Control Room":
-            entityName = usage.fromControlRoom?.buildingName || "Unknown Control Room";
+            entityName =
+              usage.fromControlRoom?.buildingName || "Unknown Control Room";
             break;
+
           default:
-            entityName = usage.usageType;
+            entityName = usage.usageType || "N/A";
         }
-        
+
+        // Serial number handling
         const tracksSerial = item.product?.trackSerialNumber === "Yes";
         let serialNumbers = [];
-        
-        if (tracksSerial && item.serialNumbers && item.serialNumbers.length > 0) {
+
+        if (
+          tracksSerial &&
+          item.serialNumbers &&
+          item.serialNumbers.length > 0
+        ) {
           serialNumbers = item.serialNumbers;
         }
 
+        // Resolve center and parent branch
+        const centerDoc = usage.center || null;
+        const resellerDoc = centerDoc?.reseller || null;
+
+        const parentBranchName =
+          resellerDoc && typeof resellerDoc === "object"
+            ? resellerDoc.businessName ||
+              resellerDoc.name ||
+              "N/A"
+            : resellerDoc?.toString() || "N/A";
+
         formattedData.push({
           _id: `${usage._id}_${itemIndex}`,
-          Date: usage.date ? new Date(usage.date).toISOString().split('T')[0] : "N/A",
+          Date: usage.date
+            ? new Date(usage.date).toISOString().split("T")[0]
+            : "N/A",
           Type: usage.usageType || "N/A",
-          Center: usage.center?.centerName || "Unknown Center",
+          Center: centerDoc?.centerName || "Unknown Center",
+          "Parent Branch": parentBranchName,
           Product: item.product?.productTitle || "Unknown Product",
           ProductCode: item.product?.productCode || "N/A",
           "Old Stock": item.oldStock || 0,
@@ -1962,166 +2040,217 @@ export const getStockUsageByCenter = async (req, res) => {
           Remark: usage.remark || "",
           Status: usage.status || "N/A",
           "Track Serial Number": item.product?.trackSerialNumber || "No",
-          "Serial Numbers": serialNumbers.length > 0 ? serialNumbers.join(', ') : "N/A",
+          "Serial Numbers":
+            serialNumbers.length > 0 ? serialNumbers.join(", ") : "N/A",
           "Serial Count": serialNumbers.length,
         });
       }
     }
 
-    console.log(`Total Usage Sum: ${totalUsageSum}, Total Damage Sum: ${totalDamageSum}`);
-    console.log(`Unique centers in result: ${[...new Set(formattedData.map(d => d.Center))].join(', ')}`);
+    console.log(
+      `Total Usage Sum: ${totalUsageSum}, Total Damage Sum: ${totalDamageSum}`
+    );
 
-    // Convert usage type map to array
-    const byUsageType = Array.from(usageTypeMap.entries()).map(([type, stats]) => ({
-      _id: type,
-      totalUsage: stats.totalUsage,
-      totalDamage: stats.totalDamage,
-      count: stats.count
-    }));
+    console.log(
+      `Unique centers in result: ${[
+        ...new Set(formattedData.map((d) => d.Center)),
+      ].join(", ")}`
+    );
 
-    // Get center info for response
+    // ========== USAGE TYPE SUMMARY ==========
+    const byUsageType = Array.from(usageTypeMap.entries()).map(
+      ([type, stats]) => ({
+        _id: type,
+        totalUsage: stats.totalUsage,
+        totalDamage: stats.totalDamage,
+        count: stats.count,
+      })
+    );
+
+    // ========== CENTER INFO ==========
     let centerInfo = null;
+
     if (targetCenterIds.length === 1) {
-      centerInfo = await Center.findById(targetCenterIds[0]).select("centerName centerCode centerType");
+      centerInfo = await Center.findById(targetCenterIds[0])
+        .select("centerName centerCode centerType reseller")
+        .populate("reseller", "businessName name")
+        .lean();
     }
 
     // ========== EXCEL EXPORT HANDLING ==========
     if (isExport === "true" || isExport === true) {
       try {
-        console.log(`[EXPORT] Generating Excel file with ${formattedData.length} records`);
-        
-        // Prepare data for Excel main sheet
-        const excelData = formattedData.map(item => ({
-          'Date': item.Date,
-          'Type': item.Type,
-          'Center': item.Center,
-          'Product': item.Product,
-          'Product Code': item.ProductCode,
-          'Old Stock': item['Old Stock'],
-          'Quantity': item.Quantity,
-          'Damage Quantity': item['Damage Quantity'],
-          'New Stock': item['New Stock'],
-          'Entity': item.Entity,
-          'Remark': item.Remark,
-          'Status': item.Status,
-          'Track Serial Number': item['Track Serial Number'],
-          'Serial Numbers': item['Serial Numbers'],
-          'Serial Count': item['Serial Count'],
+        console.log(
+          `[EXPORT] Generating Excel file with ${formattedData.length} records`
+        );
+
+        // Main sheet data
+        const excelData = formattedData.map((item) => ({
+          Date: item.Date,
+          Type: item.Type,
+          Center: item.Center,
+          "Parent Branch": item["Parent Branch"],
+          Product: item.Product,
+          "Product Code": item.ProductCode,
+          "Old Stock": item["Old Stock"],
+          Quantity: item.Quantity,
+          "Damage Quantity": item["Damage Quantity"],
+          "New Stock": item["New Stock"],
+          Entity: item.Entity,
+          Remark: item.Remark,
+          Status: item.Status,
+          "Track Serial Number": item["Track Serial Number"],
+          "Serial Numbers": item["Serial Numbers"],
+          "Serial Count": item["Serial Count"],
         }));
-        
-        // Summary sheet data
-        const summaryData = [{
-          'Report Generated': new Date().toLocaleString(),
-          'Date Range': `${startDate || 'All'} to ${endDate || 'All'}`,
-          'Reseller ID': resellerId || 'All',
-          'Center IDs': targetCenterIds.join(', '),
-          'Total Records': total,
-          'Total Items Used': totalUsageSum,
-          'Total Damaged Items': totalDamageSum,
-          'Unique Transactions': formattedData.length,
-        }];
-        
-        // Usage Type Summary
-        const usageTypeSummary = byUsageType.map(type => ({
-          'Usage Type': type._id,
-          'Total Usage Quantity': type.totalUsage,
-          'Total Damage Quantity': type.totalDamage,
-          'Number of Transactions': type.count,
+
+        // Summary sheet
+        const summaryData = [
+          {
+            "Report Generated": new Date().toLocaleString(),
+            "Date Range": `${startDate || "All"} to ${endDate || "All"}`,
+            "Reseller ID": resellerId || "All",
+            "Center IDs": targetCenterIds.join(", "),
+            "Total Records": total,
+            "Total Items Used": totalUsageSum,
+            "Total Damaged Items": totalDamageSum,
+            "Unique Transactions": formattedData.length,
+          },
+        ];
+
+        // Usage type summary
+        const usageTypeSummary = byUsageType.map((type) => ({
+          "Usage Type": type._id,
+          "Total Usage Quantity": type.totalUsage,
+          "Total Damage Quantity": type.totalDamage,
+          "Number of Transactions": type.count,
         }));
-        
-        // Filters applied sheet
-        const filtersData = [{
-          'Filter Name': 'Applied Value',
-          'Start Date': startDate || 'Not Applied',
-          'End Date': endDate || 'Not Applied',
-          'Reseller ID': resellerId || 'Not Applied',
-          'Center IDs': targetCenterIds.join(', ') || 'All Centers',
-          'Usage Type': usageType || 'All',
-          'Status': status || 'All',
-          'Product ID': productId || product || 'All',
-          'Search Term': search || 'None',
-          'Sort By': sortBy,
-          'Sort Order': sortOrder,
-        }];
-        
+
+        // Applied filters sheet
+        const filtersData = [
+          {
+            "Filter Name": "Applied Value",
+            "Start Date": startDate || "Not Applied",
+            "End Date": endDate || "Not Applied",
+            "Reseller ID": resellerId || "Not Applied",
+            "Center IDs": targetCenterIds.join(", ") || "All Centers",
+            "Usage Type": usageType || "All",
+            Status: status || "All",
+            "Product ID": productId || product || "All",
+            "Search Term": search || "None",
+            "Sort By": sortBy,
+            "Sort Order": sortOrder,
+          },
+        ];
+
         // Create workbook
         const workbook = XLSX.utils.book_new();
-        
+
         // Main data sheet
         const mainSheet = XLSX.utils.json_to_sheet(excelData);
-        
-        // Set column widths
-        mainSheet['!cols'] = [
+
+        mainSheet["!cols"] = [
           { wch: 12 }, // Date
           { wch: 15 }, // Type
-          { wch: 25 }, // Center
+          { wch: 30 }, // Center
+          { wch: 35 }, // Parent Branch
           { wch: 35 }, // Product
           { wch: 15 }, // Product Code
           { wch: 12 }, // Old Stock
           { wch: 10 }, // Quantity
-          { wch: 12 }, // Damage Quantity
+          { wch: 15 }, // Damage Quantity
           { wch: 12 }, // New Stock
           { wch: 30 }, // Entity
           { wch: 40 }, // Remark
           { wch: 12 }, // Status
-          { wch: 15 }, // Track Serial Number
+          { wch: 18 }, // Track Serial Number
           { wch: 40 }, // Serial Numbers
           { wch: 12 }, // Serial Count
         ];
-        
-        XLSX.utils.book_append_sheet(workbook, mainSheet, 'Stock Transactions');
-        
-        // Summary sheet
+
+        XLSX.utils.book_append_sheet(
+          workbook,
+          mainSheet,
+          "Stock Transactions"
+        );
+
         const summarySheet = XLSX.utils.json_to_sheet(summaryData);
-        XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
-        
-        // Usage Type Summary sheet
+        XLSX.utils.book_append_sheet(workbook, summarySheet, "Summary");
+
         if (usageTypeSummary.length > 0) {
-          const usageTypeSheet = XLSX.utils.json_to_sheet(usageTypeSummary);
-          XLSX.utils.book_append_sheet(workbook, usageTypeSheet, 'Usage Type Summary');
+          const usageTypeSheet =
+            XLSX.utils.json_to_sheet(usageTypeSummary);
+
+          XLSX.utils.book_append_sheet(
+            workbook,
+            usageTypeSheet,
+            "Usage Type Summary"
+          );
         }
-        
-        // Filters sheet
+
         const filtersSheet = XLSX.utils.json_to_sheet(filtersData);
-        XLSX.utils.book_append_sheet(workbook, filtersSheet, 'Applied Filters');
-        
-        // Generate Excel file
-        const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
-        
-        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', `attachment; filename=stock_usage_report_${new Date().toISOString().split('T')[0]}.xlsx`);
-        res.setHeader('Content-Length', excelBuffer.length);
-        
+        XLSX.utils.book_append_sheet(
+          workbook,
+          filtersSheet,
+          "Applied Filters"
+        );
+
+        const excelBuffer = XLSX.write(workbook, {
+          type: "buffer",
+          bookType: "xlsx",
+        });
+
+        res.setHeader(
+          "Content-Type",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename=stock_usage_report_${new Date()
+            .toISOString()
+            .split("T")[0]}.xlsx`
+        );
+
+        res.setHeader("Content-Length", excelBuffer.length);
+
         return res.send(excelBuffer);
-        
       } catch (exportError) {
         console.error("[EXPORT ERROR]", exportError);
+
         return res.status(500).json({
           success: false,
           message: "Error generating Excel export",
-          error: exportError.message
+          error: exportError.message,
         });
       }
     }
 
     // ========== NON-EXPORT RESPONSE ==========
-    console.log('========== END getStockUsageByCenter - SUCCESS ==========');
-    
-    res.status(200).json({
+    console.log("========== END getStockUsageByCenter - SUCCESS ==========");
+
+    return res.status(200).json({
       success: true,
       message: "Stock usage by center retrieved successfully",
       data: formattedData,
-      center: centerInfo ? {
-        id: centerInfo._id,
-        name: centerInfo.centerName,
-        code: centerInfo.centerCode,
-        type: centerInfo.centerType,
-      } : null,
+      center: centerInfo
+        ? {
+            id: centerInfo._id,
+            name: centerInfo.centerName,
+            code: centerInfo.centerCode,
+            type: centerInfo.centerType,
+            parentBranch:
+              centerInfo.reseller?.businessName ||
+              centerInfo.reseller?.name ||
+              centerInfo.reseller?.toString() ||
+              "N/A",
+          }
+        : null,
       summary: {
         totalRecords: total,
         totalUsage: totalUsageSum,
         totalDamage: totalDamageSum,
-        byUsageType: byUsageType,
+        byUsageType,
       },
       permissions: {
         canViewAllCenters: permissions.available_stock_all_center,
@@ -2130,12 +2259,12 @@ export const getStockUsageByCenter = async (req, res) => {
           ? "all_centers"
           : "own_center",
       },
-      pagination: !(isExport === "true" || isExport === true) ? {
+      pagination: {
         total,
         page: pageNum,
         limit: limitNum,
         totalPages: Math.ceil(total / limitNum),
-      } : undefined,
+      },
       filters: {
         centers: targetCenterIds,
         resellerId: resellerId || null,
@@ -2145,12 +2274,13 @@ export const getStockUsageByCenter = async (req, res) => {
         startDate: startDate || "all",
         endDate: endDate || "all",
         search: search || "",
-      }
+      },
     });
   } catch (error) {
     console.error("========== ERROR in getStockUsageByCenter ==========");
     console.error("Error details:", error);
     console.error("Error stack:", error.stack);
-    handleControllerError(error, res);
+
+    return handleControllerError(error, res);
   }
 };

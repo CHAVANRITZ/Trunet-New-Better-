@@ -29,6 +29,7 @@ const generateCenterCode = async (businessName) => {
 };
 
 // Create a reseller and its associated Outlet.
+
 export const createReseller = async (resellerData) => {
     const session = await mongoose.startSession();
 
@@ -37,32 +38,35 @@ export const createReseller = async (resellerData) => {
         let createdCenter;
 
         await session.withTransaction(async () => {
-            // Create the reseller first so its ID can be used
-            // to find or create the correct warehouse.
+            // 1. Create the Reseller.
             const [reseller] = await Reseller.create(
                 [resellerData],
                 { session }
             );
 
-            // Find an enabled warehouse belonging to this reseller.
-            // This also supports legacy data where the warehouse
-            // was created before the Outlet.
+            // 2. Use the existing enabled Warehouse.
+            // This intentionally allows sharing across Resellers.
             const warehouse = await Warehouse.findOne({
-                reseller: reseller._id,
                 status: "Enable",
-            }).session(session);
+            })
+                .sort({ createdAt: 1, _id: 1 })
+                .session(session);
 
             if (!warehouse) {
-                throw new Error(
-                    `No enabled warehouse found for reseller "${reseller.businessName}". ` +
-                    "Create or assign a warehouse for this reseller first."
+                const error = new Error(
+                    "No enabled warehouse found. Create or enable a warehouse first."
                 );
+                error.statusCode = 400;
+                throw error;
             }
 
+            // 3. Generate a unique Outlet code.
             const centerCode = await generateCenterCode(
                 reseller.businessName
             );
 
+            // 4. Create the Outlet linked to the new Reseller
+            // and the existing shared Warehouse.
             const centerData = {
                 reseller: reseller._id,
                 warehouse: warehouse._id,
@@ -95,12 +99,11 @@ export const createReseller = async (resellerData) => {
             reseller: createdReseller,
             center: createdCenter,
         };
-    } catch (error) {
-        throw error;
     } finally {
         await session.endSession();
     }
 };
+
 
 // Get resellers with search, filtering, sorting and pagination.
 export const getResellers = async ({

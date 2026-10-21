@@ -35,6 +35,7 @@
     import damageReturnRoutes from "./routes/damageReturnRoutes.js";
     import { errorMiddleware } from "./middlewares/errorMiddleware.js";
     import getAllDataRoutes from "./routes/getAllDataRoutes.js";
+    import damageRoutes from "./routes/damageReturnRoutes.js";
     const app = express();
 
     // Global middleware
@@ -60,7 +61,6 @@
     app.use("/api/v1/vendor", vendorRoutes);
     app.use("/api/v1/role", roleRoutes);
     app.use("/api/v1/resellers", resellerRoutes);
-    // Compatibility with existing frontend reseller-stock endpoints
     app.use("/api/v1/resellerStock", resellerRoutes);
     app.use("/api/v1/centers", centerRoutes);
     app.use("/api/v1/areas", areaRoutes);
@@ -77,8 +77,8 @@
     app.use("/api/v1/shiftingrequest", shiftingRequestRoutes);
     app.use("/api/v1", usageSummaryRoutes);
     app.use("/api/v1/invoices", invoiceRoutes);
+    app.use("/api/v1/invoice", invoiceRoutes);
     app.use("/api/v1", getAllDataRoutes);
-    // Package Duration and Faulty Stock
     app.use("/api/v1/packageDuration", packageDurationRoutes);
     app.use("/api/v1/faulty-stock", faultyStockRoutes);
     app.use("/api/v1/repaired-cost", repairCostRoutes);
@@ -87,10 +87,10 @@
     app.use("/api/v1/reportsubmission", reportSubmissionRoutes);
     app.use("/api/v1/available-reports", availableReportRoutes);
     app.use("/api/v1/availableStock", availableReportRoutes);
-    // Sakshi's Center Stock Import and Center Returns
     app.use("/api/v1/center-stock", centerStockImportRoutes);
     app.use("/api/v1/center-returns", centerReturnRoutes);
     app.use("/api/v1/damage-returns", damageReturnRoutes);
+    app.use("/api/v1/damage", damageReturnRoutes);
     // Error handling must come after all routes
     app.use(errorMiddleware);
 
