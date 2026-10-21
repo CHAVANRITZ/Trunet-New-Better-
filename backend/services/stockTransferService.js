@@ -5457,6 +5457,7 @@ const getCurrentProductStock = async ({
  * `originalOutlet` is used as the relationship between the original
  * warehouse/outlet stock and the center where the stock currently resides.
  */
+
 const getDistributedCenterStock = async ({
     warehouseId,
     productId,
@@ -5464,24 +5465,18 @@ const getDistributedCenterStock = async ({
     return CenterStock.aggregate([
         {
             $match: {
-                "serialNumbers.originalOutlet":
-                    toObjectId(warehouseId),
-
-                product:
-                    toObjectId(productId),
+                "serialNumbers.originalOutlet": toObjectId(warehouseId),
+                product: toObjectId(productId),
             },
         },
 
         {
-            $unwind:
-                "$serialNumbers",
+            $unwind: "$serialNumbers",
         },
 
         {
             $match: {
-                "serialNumbers.originalOutlet":
-                    toObjectId(warehouseId),
-
+                "serialNumbers.originalOutlet": toObjectId(warehouseId),
                 "serialNumbers.status": {
                     $in: [
                         "available",
@@ -5549,6 +5544,36 @@ const getDistributedCenterStock = async ({
                     },
                 },
 
+                damagedQuantity: {
+                    $sum: {
+                        $cond: [
+                            {
+                                $eq: [
+                                    "$serialNumbers.status",
+                                    "damaged",
+                                ],
+                            },
+                            1,
+                            0,
+                        ],
+                    },
+                },
+
+                damagePendingQuantity: {
+                    $sum: {
+                        $cond: [
+                            {
+                                $eq: [
+                                    "$serialNumbers.status",
+                                    "damage_pending",
+                                ],
+                            },
+                            1,
+                            0,
+                        ],
+                    },
+                },
+
                 serials: {
                     $push: "$serialNumbers",
                 },
@@ -5567,8 +5592,7 @@ const getDistributedCenterStock = async ({
         {
             $unwind: {
                 path: "$center",
-                preserveNullAndEmptyArrays:
-                    true,
+                preserveNullAndEmptyArrays: true,
             },
         },
 
@@ -5577,22 +5601,21 @@ const getDistributedCenterStock = async ({
                 _id: 0,
 
                 centerId: "$_id",
-
-                centerName:
-                    "$center.centerName",
-
-                centerCode:
-                    "$center.centerCode",
+                centerName: "$center.centerName",
+                centerCode: "$center.centerCode",
 
                 totalQuantity: 1,
                 availableQuantity: 1,
                 inTransitQuantity: 1,
                 transferredQuantity: 1,
+                damagedQuantity: 1,
+                damagePendingQuantity: 1,
                 serials: 1,
             },
         },
     ]);
 };
+
 
 /**
  * Retrieve historical stock purchase information.
@@ -6271,6 +6294,137 @@ export const getWarehouseProductSummary =
             ],
         };
     };
+
+   
+/**
+ * Get all product stock summaries for the authenticated user's outlet.
+ * Used by report submission's original-outlet endpoint.
+ */
+export const getOriginalOutletProductSummary = async ({
+    user,
+    accessContext,
+}) => {
+    const context = normalizeAccessContext(accessContext);
+
+    if (!context.canViewAll && !context.canViewOwn) {
+        throw new StockTransferServiceError(
+            "Access denied. You do not have permission to view outlet stock summaries.",
+            {
+                statusCode: 403,
+                code: "WAREHOUSE_SUMMARY_ACCESS_DENIED",
+            }
+        );
+    }
+
+    const authenticatedUser = await User.findById(
+        getUserId(user)
+    ).populate("center");
+
+    if (!authenticatedUser) {
+        throw new StockTransferServiceError(
+            "User not found.",
+            {
+                statusCode: 404,
+                code: "USER_NOT_FOUND",
+            }
+        );
+    }
+
+    if (!authenticatedUser.center) {
+        throw new StockTransferServiceError(
+            "User center information not found.",
+            {
+                statusCode: 400,
+                code: "USER_CENTER_NOT_FOUND",
+            }
+        );
+    }
+
+    const userCenter = authenticatedUser.center;
+
+    // Do not silently expose an arbitrary outlet's inventory.
+    if (userCenter.centerType !== "Outlet") {
+        throw new StockTransferServiceError(
+            "The authenticated user must belong to an Outlet to retrieve this summary.",
+            {
+                statusCode: 400,
+                code: "USER_CENTER_NOT_OUTLET",
+            }
+        );
+    }
+
+    const outletId = userCenter._id;
+
+    const outletStocks = await OutletStock.find({
+        outlet: outletId,
+    })
+        .select("product totalQuantity availableQuantity inTransitQuantity consumedQuantity")
+        .lean();
+
+    const summary = await Promise.all(
+        outletStocks.map(async (stock) => {
+            const product = await Product.findById(
+                stock.product
+            )
+                .select("productTitle productCode trackSerialNumber")
+                .lean();
+
+            if (!product) {
+                return null;
+            }
+
+            const distributedCenters = await getDistributedCenterStock({
+                warehouseId: outletId,
+                productId: stock.product,
+            });
+
+            const damaged = distributedCenters.reduce(
+                (total, center) => total + (center.damagedQuantity || 0),
+                0
+            );
+
+            return {
+                productId: String(product._id),
+                product: {
+                    _id: product._id,
+                    productTitle: product.productTitle,
+                    productCode: product.productCode,
+                    trackSerialNumber: product.trackSerialNumber,
+                },
+                currentStock: {
+                    warehouse: {
+                        available: stock.availableQuantity || 0,
+                        total: stock.totalQuantity || 0,
+                        inTransit: stock.inTransitQuantity || 0,
+                        consumed: stock.consumedQuantity || 0,
+                    },
+                    distributedCenters: {
+                        damaged,
+                    },
+                },
+            };
+        })
+    );
+
+    return {
+        warehouse: {
+            _id: outletId,
+            name: userCenter.centerName,
+            code: userCenter.centerCode,
+            type: userCenter.centerType,
+        },
+        center: null,
+        userCenter: {
+            _id: outletId,
+            centerName: userCenter.centerName,
+            centerCode: userCenter.centerCode,
+            centerType: userCenter.centerType,
+        },
+        summary: summary.filter(Boolean),
+        generatedAt: new Date(),
+        dataSources: ["OutletStock", "CenterStock"],
+    };
+};
 
 /**
  * Get product distribution across centers.

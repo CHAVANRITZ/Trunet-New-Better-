@@ -22,6 +22,7 @@ import {
     completeIncompleteStockTransfer,
     updateApprovedQuantities,
     getWarehouseProductSummary,
+    getOriginalOutletProductSummary,
 } from "../controllers/stockTransferController.js";
 
 import {
@@ -107,6 +108,7 @@ router.get(
     getMostRecentTransferNumber
 );
 
+
 router.get(
     "/summary/original-outlet",
     authMiddleware,
@@ -116,8 +118,9 @@ router.get(
         "stock_transfer_all_center"
     ),
     attachAuthorizationContext(MODULE),
-    getWarehouseProductSummary
+    getOriginalOutletProductSummary
 );
+
 
 router.get(
     "/stats",

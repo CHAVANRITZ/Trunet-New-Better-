@@ -1,5 +1,6 @@
 import stockTransferService, {
     StockTransferServiceError,
+    getOriginalOutletProductSummary as getOriginalOutletProductSummaryService,
 } from "../services/stockTransferService.js";
 
 /**
@@ -824,6 +825,37 @@ export const getWarehouseProductSummary = async (req, res) => {
         );
     }
 };
+
+
+/**
+ * Get all product summaries for the authenticated user's original outlet.
+ */
+
+/**
+ * Get all product summaries for the authenticated user's original outlet.
+ */
+export const getOriginalOutletProductSummary = async (req, res) => {
+    try {
+        const result = await getOriginalOutletProductSummaryService({
+            user: req.user,
+            accessContext: req.authorizationContext,
+        });
+
+        return sendSuccess(
+            res,
+            200,
+            "Original outlet product summary retrieved successfully",
+            result.data || result
+        );
+    } catch (error) {
+        return sendError(
+            res,
+            error,
+            "Error retrieving original outlet product summary"
+        );
+    }
+};
+
 
 /**
  * Get product distribution across centers.
