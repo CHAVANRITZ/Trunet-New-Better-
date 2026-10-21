@@ -7,6 +7,7 @@ import {
     approveRaisePOController,
     rejectRaisePOController,
     changeRejectedToPendingController,
+    getNextVoucherNoController,
 } from "../controllers/raisePOController.js";
 
 import { authMiddleware } from "../middlewares/authMiddleware.js";
@@ -29,7 +30,11 @@ router.post(
     validationMiddleware,
     asyncHandler(createRaisePOController)
 );
-
+router.get(
+    "/next-voucher",
+    authMiddleware,
+    asyncHandler(getNextVoucherNoController)
+);
 router.get(
     "/",
     authMiddleware,

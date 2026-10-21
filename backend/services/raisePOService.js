@@ -302,7 +302,9 @@ const generateVoucherNo = async () => {
         "Unable to generate a unique voucher number. Please contact support."
     );
 };
-
+export const getNextVoucherNo = async () => {
+    return generateVoucherNo();
+};
 /* -------------------------------------------------------------------------- */
 /*                                  Populate                                  */
 /* -------------------------------------------------------------------------- */

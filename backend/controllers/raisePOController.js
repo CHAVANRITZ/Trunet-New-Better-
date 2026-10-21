@@ -6,6 +6,7 @@ import {
     approveRaisePO,
     rejectRaisePO,
     deletePO,
+    getNextVoucherNo,
 } from "../services/raisePOService.js";
 
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -105,6 +106,17 @@ export const rejectRaisePOController = asyncHandler(
         });
     }
 );
+
+export const getNextVoucherNoController = async (req, res) => {
+    const voucherNo = await getNextVoucherNo();
+
+    return res.status(200).json({
+        success: true,
+        voucherNo,
+        data: { voucherNo },
+        message: "Voucher number generated successfully",
+    });
+};
 
 /**
  * Delete Raise PO.
