@@ -41,9 +41,13 @@ import Product from "../models/Product.js";
 // ---------------------------------------------------------------------------
 // Column definitions
 // ---------------------------------------------------------------------------
-const INFLOW_FIELDS = ["purchase", "transferReceive", "return"];
-
+// Only these three columns increase closing stock
+const INFLOW_FIELDS = [
+  "purchase",
+  "transferReceive",
+];
 const OUTFLOW_FIELDS = [
+  "return",
   "distributed",
   "transferGiven",
   "usage",
@@ -59,11 +63,17 @@ const OUTFLOW_FIELDS = [
   "stolenField",
 ];
 
-// Shown in the report but they do not change available stock.
-const INFO_FIELDS = ["replaceReturn", "replaceDamage"];
+// Informational columns don't affect closing stock
+const INFO_FIELDS = [
+  "replaceReturn",
+  "replaceDamage",
+];
 
-const MOVEMENT_FIELDS = [...INFLOW_FIELDS, ...OUTFLOW_FIELDS, ...INFO_FIELDS];
-
+const MOVEMENT_FIELDS = [
+  ...INFLOW_FIELDS,
+  ...OUTFLOW_FIELDS,
+  ...INFO_FIELDS,
+];
 // ---------------------------------------------------------------------------
 // Timezone handling (default IST, +05:30). Override with
 // REPORT_TZ_OFFSET_MINUTES; empty / invalid values fall back to IST.
@@ -180,6 +190,7 @@ const getDateRange = (startDate, endDate, month, year) => {
 // ---------------------------------------------------------------------------
 // Access control: which centers may this user see?
 // ---------------------------------------------------------------------------
+
 const getTargetCenters = async (requestedCenterId, user) => {
   if (!user) {
     throw new Error("Authentication required");
@@ -200,15 +211,21 @@ const getTargetCenters = async (requestedCenterId, user) => {
 
   const centerFields = "centerName centerCode centerType";
 
+  // Only Super Admin can request all centers.
   if (requestedCenterId === "all") {
     if (!isSuperAdmin) {
       throw new Error(
-        "Access denied: all-center usage summary requires explicit authorization"
+        "Access denied: all-center usage summary requires Super Admin access"
       );
     }
-    return Center.find({}).select(centerFields).lean();
+
+    return Center.find({})
+      .select(centerFields)
+      .lean();
   }
 
+  // Every non-Super Admin is restricted to their authorized center,
+  // regardless of whether they have view-own or view-all permission.
   if (!isSuperAdmin) {
     if (!assignedCenter) {
       throw new Error("User is not associated with a center");
@@ -216,8 +233,18 @@ const getTargetCenters = async (requestedCenterId, user) => {
 
     const assignedCenterId = String(assignedCenter);
 
-    if (requestedCenterId && String(requestedCenterId) !== assignedCenterId) {
-      throw new Error("Access denied to the requested center");
+    if (!mongoose.Types.ObjectId.isValid(assignedCenterId)) {
+      throw new Error("Invalid authorized center ID");
+    }
+
+    if (requestedCenterId) {
+      if (!mongoose.Types.ObjectId.isValid(requestedCenterId)) {
+        throw new Error("Invalid center ID");
+      }
+
+      if (String(requestedCenterId) !== assignedCenterId) {
+        throw new Error("Access denied to the requested center");
+      }
     }
 
     const center = await Center.findById(assignedCenterId)
@@ -227,6 +254,7 @@ const getTargetCenters = async (requestedCenterId, user) => {
     return center ? [center] : [];
   }
 
+  // Preserve existing Super Admin behavior for a specific center.
   if (requestedCenterId) {
     if (!mongoose.Types.ObjectId.isValid(requestedCenterId)) {
       throw new Error("Invalid center ID");
@@ -239,8 +267,12 @@ const getTargetCenters = async (requestedCenterId, user) => {
     return center ? [center] : [];
   }
 
-  return Center.find({}).select(centerFields).lean();
+  // Preserve existing Super Admin behavior when no center is specified.
+  return Center.find({})
+    .select(centerFields)
+    .lean();
 };
+
 
 // ---------------------------------------------------------------------------
 // Usage type -> report column
@@ -697,6 +729,38 @@ const getBaseline = async (centerId, start, productId) => {
   return { baseline, after: endOfDayTZOf(snapshot.date) };
 };
 
+const getPeriodClosingSnapshot = async (centerId, start, end) => {
+  // Only use a physical closing snapshot when the report ends
+  // at the end of a calendar day in the configured report timezone.
+  const endShifted = new Date(end.getTime() + OFFSET_MS);
+  const finalDayStart = startOfDayTZ(
+    endShifted.getUTCFullYear(),
+    endShifted.getUTCMonth() + 1,
+    endShifted.getUTCDate()
+  );
+  const finalDayEnd = endOfDayTZ(
+    endShifted.getUTCFullYear(),
+    endShifted.getUTCMonth() + 1,
+    endShifted.getUTCDate()
+  );
+
+  if (end.getTime() < finalDayEnd.getTime() - 1) {
+    return null;
+  }
+
+  const snapshot = await StockClosing.findOne({
+    status: "Approved",
+    date: { $gte: finalDayStart, $lte: finalDayEnd },
+    $or: [{ center: centerId }, { closingCenter: centerId }],
+  })
+    .sort({ date: -1, createdAt: -1, _id: -1 })
+    .select("date products totalProductQty")
+    .lean();
+
+  return snapshot || null;
+};
+
+
 const tag = (list, source) => list.map((event) => ({ ...event, source }));
 
 const buildCenterSummary = async (center, dateRange, productId, debug = false) => {
@@ -741,6 +805,51 @@ const buildCenterSummary = async (center, dateRange, productId, debug = false) =
     productFilter: productId || null,
     floorOpening,
   });
+ const closingSnapshot = await getPeriodClosingSnapshot(
+  centerId,
+  dateRange.startDate,
+  dateRange.endDate
+);
+
+
+if (closingSnapshot) {
+  const snapshotProducts = new Map(
+    (closingSnapshot.products || [])
+      .filter(
+        (item) =>
+          !productId ||
+          String(item.product) === String(productId)
+      )
+      .map((item) => [
+        String(item.product),
+        toNumber(item.productQty),
+      ])
+  );
+
+  // Reset closing for all rows because this snapshot
+  // is the authoritative closing for the selected date.
+  for (const row of rows) {
+    row.closing = 0;
+    row.closingDate = closingSnapshot.date;
+    row.closingSource = "approved_snapshot";
+  }
+
+  // Apply snapshot quantities.
+  for (const [pid, quantity] of snapshotProducts) {
+    let row = rows.find(
+      (item) => String(item.productId) === pid
+    );
+
+    if (!row) {
+      row = createEmptyRow(null, pid);
+      rows.push(row);
+    }
+
+    row.closing = quantity;
+    row.closingDate = closingSnapshot.date;
+    row.closingSource = "approved_snapshot";
+  }
+}
 
   const debugInfo =
     debug && productId
@@ -794,21 +903,33 @@ const buildCenterSummary = async (center, dateRange, productId, debug = false) =
 const getTotalQuantity = (item) =>
   MOVEMENT_FIELDS.reduce((sum, key) => sum + (Number(item[key]) || 0), 0);
 
+
 const generateSummaryStats = (rows) => ({
   totalProducts: rows.length,
+
+  // Legacy-compatible quantity total across movement columns.
   totalTransactions: rows.reduce(
-    (count, row) =>
-      count + MOVEMENT_FIELDS.filter((key) => (Number(row[key]) || 0) !== 0).length,
+    (sum, row) => sum + getTotalQuantity(row),
     0
   ),
-  totalQuantity: rows.reduce((sum, row) => sum + getTotalQuantity(row), 0),
+
+  totalQuantity: rows.reduce(
+    (sum, row) => sum + getTotalQuantity(row),
+    0
+  ),
+
   totals: {
     opening: rows.reduce((sum, row) => sum + row.opening, 0),
     closing: rows.reduce((sum, row) => sum + row.closing, 0),
-    openingAdjustment: rows.reduce((sum, row) => sum + (row.openingAdjustment || 0), 0),
+    openingAdjustment: rows.reduce(
+      (sum, row) => sum + (row.openingAdjustment || 0),
+      0
+    ),
   },
+
   centers: [...new Set(rows.map((row) => row.center?.name).filter(Boolean))],
 });
+
 
 const CLIENT_ERRORS_400 = [
   "Invalid center ID",

@@ -7,9 +7,15 @@
  * @returns {boolean} Whether the user is a super admin
  */
 export const isSuperAdmin = (user) => {
-    return (
-        user?.isSuperAdmin === true ||
-        user?.fullUser?.isSuperAdmin === true ||
-        user?.role?.isSuperAdmin === true
-    );
+  const roleTitle =
+    typeof user?.role?.roleTitle === "string"
+      ? user.role.roleTitle.trim().toLowerCase()
+      : "";
+
+  return (
+    user?.isSuperAdmin === true ||
+    user?.fullUser?.isSuperAdmin === true ||
+    user?.role?.isSuperAdmin === true ||
+    roleTitle === "superadmin"
+  );
 };
