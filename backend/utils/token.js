@@ -1,3 +1,4 @@
+
 import jwt from "jsonwebtoken";
 
 import { env } from "../config/env.js";
@@ -5,22 +6,12 @@ import { ApiError } from "./ApiError.js";
 
 /**
  * Converts a JWT duration string into milliseconds.
- *
- * Supported formats:
- * - seconds: 30s
- * - minutes: 15m
- * - hours: 1h
- * - days: 7d
- * - weeks: 1w
- *
- * Keeping this conversion in the token utility prevents other
- * layers from duplicating JWT expiration configuration logic.
- *
- * @param {string} duration - JWT duration.
- * @returns {number} Duration in milliseconds.
+ * Supported formats: 30s, 15m, 1h, 7d, 1w.
  */
 export function durationToMilliseconds(duration) {
-    const match = /^(\d+)\s*(s|m|h|d|w)$/.exec(duration);
+    const match = /^(\d+)\s*(s|m|h|d|w)$/.exec(
+        String(duration || "")
+    );
 
     if (!match) {
         throw new ApiError(
@@ -30,7 +21,6 @@ export function durationToMilliseconds(duration) {
     }
 
     const value = Number(match[1]);
-    const unit = match[2];
 
     const multipliers = {
         s: 1000,
@@ -40,20 +30,11 @@ export function durationToMilliseconds(duration) {
         w: 7 * 24 * 60 * 60 * 1000
     };
 
-    return value * multipliers[unit];
+    return value * multipliers[match[2]];
 }
 
 /**
- * Creates a short-lived JWT access token.
- *
- * The access token identifies the authenticated user when they
- * access protected API endpoints.
- *
- * Only the minimum identity information required by authentication
- * middleware should be placed inside the token payload.
- *
- * @param {Object} payload - Token payload.
- * @returns {string} Signed access token.
+ * Generates a regular access token.
  */
 export function generateAccessToken(payload) {
     if (!env.JWT_SECRET) {
@@ -69,13 +50,38 @@ export function generateAccessToken(payload) {
 }
 
 /**
- * Creates a long-lived JWT refresh token.
- *
- * The refresh token is persisted separately as a hashed session
- * record so individual sessions can be revoked.
- *
- * @param {Object} payload - Token payload.
- * @returns {string} Signed refresh token.
+ * Generates a restricted token for center selection.
+ * It must not grant access to normal protected endpoints.
+ */
+export function generateCenterSelectionToken(payload) {
+    if (!env.JWT_SECRET) {
+        throw new ApiError(
+            500,
+            "JWT access token configuration is missing."
+        );
+    }
+
+    if (!payload?.sub) {
+        throw new ApiError(
+            500,
+            "Center-selection token requires a user ID."
+        );
+    }
+
+    return jwt.sign(
+        {
+            ...payload,
+            step: "center_selection"
+        },
+        env.JWT_SECRET,
+        {
+            expiresIn: "15m"
+        }
+    );
+}
+
+/**
+ * Generates a refresh token.
  */
 export function generateRefreshToken(payload) {
     if (!env.REFRESH_TOKEN_SECRET) {
@@ -91,10 +97,7 @@ export function generateRefreshToken(payload) {
 }
 
 /**
- * Verifies an access token and returns its decoded payload.
- *
- * @param {string} token - JWT access token.
- * @returns {Object} Decoded token payload.
+ * Verifies a regular access token.
  */
 export function verifyAccessToken(token) {
     if (!env.JWT_SECRET) {
@@ -115,14 +118,8 @@ export function verifyAccessToken(token) {
 }
 
 /**
- * Verifies a refresh token and returns its decoded payload.
- *
- * JWT verification confirms the token was signed by Trunet and
- * has not expired. The refresh-token database record must still
- * be checked separately because a valid JWT may have been revoked.
- *
- * @param {string} token - JWT refresh token.
- * @returns {Object} Decoded token payload.
+ * Verifies a refresh token.
+ * The caller must additionally check its database session record.
  */
 export function verifyRefreshToken(token) {
     if (!env.REFRESH_TOKEN_SECRET) {

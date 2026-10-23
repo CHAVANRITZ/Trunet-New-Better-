@@ -1,8 +1,11 @@
+
 import User from "../models/User.js";
 import {
     login,
     refreshToken,
-    logout
+    logout,
+    selectCenter,
+    switchCenter
 } from "../services/authService.js";
 import Role from "../models/Role.js";
 import Center from "../models/Center.js";
@@ -32,7 +35,7 @@ function normalizeIdArray(values) {
 }
 
 /**
- * Authenticates a user using username and password.
+ * POST /api/v1/auth/login
  */
 export async function loginController(req, res) {
     const result = await login({
@@ -41,18 +44,64 @@ export async function loginController(req, res) {
         request: req
     });
 
-    return sendSuccess(res, {
-        statusCode: 200,
-        message: "Login successful.",
+    const needsCenter = Boolean(result.requiresCenterSelection);
+
+    return res.status(200).json({
+        success: true,
+        message: needsCenter
+            ? "Please select a center to continue."
+            : "Login successful.",
+        requiresCenterSelection: needsCenter,
+        token: result.accessToken,
         data: result
     });
 }
 
 /**
- * Returns the currently authenticated user's profile.
+ * POST /api/v1/auth/select-center
+ */
+export async function selectCenterController(req, res) {
+    const result = await selectCenter({
+        authorizationHeader: req.headers.authorization,
+        centerId: req.body?.centerId
+    });
+
+    return res.status(200).json({
+        success: true,
+        message: "Center selected successfully.",
+        token: result.accessToken,
+        data: result
+    });
+}
+
+/**
+ * POST /api/v1/auth/switch-center
+ */
+export async function switchCenterController(req, res) {
+    const result = await switchCenter({
+        userId: req.user.id,
+        centerId: req.body?.centerId
+    });
+
+    return res.status(200).json({
+        success: true,
+        message: "Center switched successfully.",
+        token: result.accessToken,
+        data: result
+    });
+}
+
+/**
+ * GET /api/v1/auth/me
  */
 export async function getCurrentUser(req, res) {
-    const user = await User.findById(req.user.id).populate("role");
+    const user = await User.findById(req.user.id)
+        .populate("role")
+        .populate("center", "centerName centerCode centerType")
+        .populate(
+            "accessibleCenters",
+            "centerName centerCode centerType status"
+        );
 
     if (!user) {
         throw new ApiError(401, "Authenticated user no longer exists.");
@@ -69,7 +118,7 @@ export async function getCurrentUser(req, res) {
 }
 
 /**
- * Refreshes the access token.
+ * POST /api/v1/auth/refresh
  */
 export async function refreshTokenController(req, res) {
     const result = await refreshToken(req.body.refreshToken);
@@ -82,7 +131,7 @@ export async function refreshTokenController(req, res) {
 }
 
 /**
- * Logs out the current authentication session.
+ * POST /api/v1/auth/logout
  */
 export async function logoutController(req, res) {
     await logout(req.body.refreshToken);
@@ -94,7 +143,7 @@ export async function logoutController(req, res) {
 }
 
 /**
- * Returns a paginated list of users.
+ * GET /api/v1/auth
  */
 export async function getAllUsers(req, res) {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -139,7 +188,6 @@ export async function getAllUsers(req, res) {
             .skip(skip)
             .limit(limit)
             .lean(),
-
         User.countDocuments(filter)
     ]);
 
@@ -160,8 +208,7 @@ export async function getAllUsers(req, res) {
 }
 
 /**
- * Creates a user.
- * Only a Super Admin can assign the Super Admin role.
+ * POST /api/v1/auth/register
  */
 export async function createUserController(req, res) {
     const {
@@ -186,10 +233,7 @@ export async function createUserController(req, res) {
         .toLowerCase();
 
     if (!normalizedUsername || !normalizedEmail) {
-        throw new ApiError(
-            400,
-            "Username and email are required."
-        );
+        throw new ApiError(400, "Username and email are required.");
     }
 
     const existingUser = await User.findOne({
@@ -200,32 +244,22 @@ export async function createUserController(req, res) {
     });
 
     if (existingUser) {
-        throw new ApiError(
-            409,
-            "Username or email already exists."
-        );
+        throw new ApiError(409, "Username or email already exists.");
     }
 
     const selectedRole = await Role.findById(role);
 
     if (!selectedRole) {
-        throw new ApiError(
-            400,
-            "Selected role does not exist."
-        );
+        throw new ApiError(400, "Selected role does not exist.");
     }
 
-    if (
-        selectedRole.isSuperAdmin &&
-        !isSuperAdmin(req.user)
-    ) {
+    if (selectedRole.isSuperAdmin && !isSuperAdmin(req.user)) {
         throw new ApiError(
             403,
             "You cannot assign the Super Admin role through this endpoint."
         );
     }
 
-    // Support the existing frontend's "centers" field.
     const submittedCenters =
         centers !== undefined
             ? centers
@@ -236,10 +270,7 @@ export async function createUserController(req, res) {
                     : [];
 
     if (!Array.isArray(submittedCenters)) {
-        throw new ApiError(
-            400,
-            "Centers must be provided as an array."
-        );
+        throw new ApiError(400, "Centers must be provided as an array.");
     }
 
     const centerIds = [
@@ -247,9 +278,7 @@ export async function createUserController(req, res) {
             submittedCenters
                 .map(value => {
                     if (value && typeof value === "object") {
-                        return value._id
-                            ? String(value._id)
-                            : null;
+                        return value._id ? String(value._id) : null;
                     }
 
                     return value ? String(value) : null;
@@ -271,13 +300,8 @@ export async function createUserController(req, res) {
         }
     }
 
-    // If a separate primary center was submitted, validate it.
     const primaryCenterId = center
-        ? (
-            typeof center === "object"
-                ? String(center._id)
-                : String(center)
-        )
+        ? normalizeId(center)
         : centerIds[0] || null;
 
     if (primaryCenterId) {
@@ -294,10 +318,7 @@ export async function createUserController(req, res) {
     }
 
     if (!password) {
-        throw new ApiError(
-            400,
-            "Password is required."
-        );
+        throw new ApiError(400, "Password is required.");
     }
 
     const hashedPassword = await hashPassword(password);
@@ -317,10 +338,7 @@ export async function createUserController(req, res) {
     const createdUser = await User.findById(user._id)
         .select("-password -loginAttempts -lockUntil")
         .populate("role")
-        .populate(
-            "center",
-            "centerName centerCode centerType"
-        )
+        .populate("center", "centerName centerCode centerType")
         .populate(
             "accessibleCenters",
             "centerName centerCode centerType status"
@@ -335,8 +353,7 @@ export async function createUserController(req, res) {
 }
 
 /**
- * GET /api/v1/auth/:id
- * Retrieves a user for the edit form.
+ * GET /api/v1/auth/user/:id and GET /api/v1/auth/:id
  */
 export async function getUserById(req, res) {
     const user = await User.findById(req.params.id)
@@ -361,8 +378,7 @@ export async function getUserById(req, res) {
 }
 
 /**
- * PUT /api/v1/auth/:id
- * Updates an existing user.
+ * PUT /api/v1/auth/user/:id and PUT /api/v1/auth/:id
  */
 export async function updateUserController(req, res) {
     const user = await User.findById(req.params.id);
@@ -415,13 +431,7 @@ export async function updateUserController(req, res) {
     }
 
     if (role !== undefined && role !== null && role !== "") {
-        const roleId = normalizeId(role);
-
-        if (!roleId) {
-            throw new ApiError(400, "Invalid role.");
-        }
-
-        const selectedRole = await Role.findById(roleId);
+        const selectedRole = await Role.findById(normalizeId(role));
 
         if (!selectedRole) {
             throw new ApiError(400, "Selected role does not exist.");
@@ -440,12 +450,11 @@ export async function updateUserController(req, res) {
     if (center !== undefined) {
         const centerId = normalizeId(center);
 
-        if (centerId) {
-            const centerExists = await Center.exists({ _id: centerId });
-
-            if (!centerExists) {
-                throw new ApiError(400, "Selected center does not exist.");
-            }
+        if (
+            centerId &&
+            !(await Center.exists({ _id: centerId }))
+        ) {
+            throw new ApiError(400, "Selected center does not exist.");
         }
 
         user.center = centerId;
@@ -516,10 +525,7 @@ export async function updateUserController(req, res) {
 }
 
 /**
- * DELETE /api/v1/auth/:id
- * Permanently deletes a user.
- * Super Admin accounts can only be deleted by another Super Admin,
- * and the last Super Admin can never be deleted.
+ * DELETE /api/v1/auth/user/:id and DELETE /api/v1/auth/:id
  */
 export async function deleteUserController(req, res) {
     const { id } = req.params;
@@ -537,7 +543,7 @@ export async function deleteUserController(req, res) {
     const targetIsSuperAdmin = Boolean(
         user.isSuperAdmin ||
         user.role?.isSuperAdmin ||
-        String(user.role?.roleTitle || "").toLowerCase() === "superadmin"
+        String(user.role?.roleTitle || "").trim().toLowerCase() === "superadmin"
     );
 
     if (targetIsSuperAdmin) {
@@ -548,9 +554,9 @@ export async function deleteUserController(req, res) {
             );
         }
 
-        const superRoleIds = await Role.find({ isSuperAdmin: true }).distinct(
-            "_id"
-        );
+        const superRoleIds = await Role.find({
+            isSuperAdmin: true
+        }).distinct("_id");
 
         const remaining = await User.countDocuments({
             _id: { $ne: user._id },
@@ -561,7 +567,10 @@ export async function deleteUserController(req, res) {
         });
 
         if (remaining === 0) {
-            throw new ApiError(400, "You cannot delete the last Super Admin.");
+            throw new ApiError(
+                400,
+                "You cannot delete the last Super Admin."
+            );
         }
     }
 

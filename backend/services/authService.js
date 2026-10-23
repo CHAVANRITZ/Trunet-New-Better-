@@ -1,449 +1,451 @@
 
 import crypto from "crypto";
+import mongoose from "mongoose";
 
 import User from "../models/User.js";
+import Role from "../models/Role.js";
+import Center from "../models/Center.js";
 import RefreshToken from "../models/RefreshToken.js";
 import { env } from "../config/env.js";
 import { ApiError } from "../utils/ApiError.js";
-
 import { comparePassword } from "../utils/password.js";
 
 import {
     durationToMilliseconds,
     generateAccessToken,
+    generateCenterSelectionToken,
     generateRefreshToken,
+    verifyAccessToken,
     verifyRefreshToken
 } from "../utils/token.js";
 
-import {
-    recordLoginHistory
-} from "./loginHistoryService.js";
+import { recordLoginHistory } from "./loginHistoryService.js";
 
-/**
- * Maximum number of consecutive failed login attempts
- * before the account is temporarily locked.
- */
 const MAX_LOGIN_ATTEMPTS = 5;
-
-/**
- * Duration of the temporary account lock.
- */
 const LOCK_DURATION_MS = 15 * 60 * 1000;
 
-/**
- * Creates a SHA-256 hash of a refresh token.
- *
- * Only the hash is stored in MongoDB.
- *
- * @param {string} token - Raw refresh token.
- * @returns {string} SHA-256 token hash.
- */
 function hashRefreshToken(token) {
-    return crypto
-        .createHash("sha256")
-        .update(token)
-        .digest("hex");
+    return crypto.createHash("sha256").update(token).digest("hex");
 }
 
-/**
- * Calculates the expiration date for a refresh-token session.
- *
- * @returns {Date} Refresh-token expiration timestamp.
- */
 function getRefreshTokenExpiry() {
-    const duration = durationToMilliseconds(
-        env.REFRESH_TOKEN_EXPIRES_IN
+    return new Date(
+        Date.now() +
+        durationToMilliseconds(env.REFRESH_TOKEN_EXPIRES_IN)
     );
-
-    return new Date(Date.now() + duration);
 }
 
-/**
- * Removes authentication-sensitive fields before
- * returning user information to the client.
- *
- * @param {Object} user - Mongoose user document.
- * @returns {Object} Safe user representation.
- */
 function sanitizeUser(user) {
-    const userObject = user.toObject();
-
-    delete userObject.password;
-    delete userObject.loginAttempts;
-    delete userObject.lockUntil;
-
-    return userObject;
+    const result = user.toObject();
+    delete result.password;
+    delete result.loginAttempts;
+    delete result.lockUntil;
+    return result;
 }
 
 /**
- * Authenticates a user using username and password.
- *
- * Authentication rules handled here:
- * - User must exist.
- * - User account must be enabled.
- * - Temporarily locked accounts cannot log in.
- * - Password must match.
- * - Failed attempts are tracked.
- * - Successful login resets failed attempts.
- * - Last login time is recorded.
- * - Login history is recorded.
- * - Access and refresh tokens are issued.
- *
- * @param {Object} credentials - Login credentials.
- * @param {string} credentials.username - Username.
- * @param {string} credentials.password - Plain-text password.
- * @param {Object} credentials.request - Express request object.
- * @returns {Promise<Object>} Authentication result.
+ * A user with the "center" role is never treated as a Super Admin
+ * merely because the user document has a stale isSuperAdmin flag.
  */
-export async function login({
-    username,
-    password,
-    request
-}) {
-    /*
-     * Validate username.
-     */
-    if (!username || typeof username !== "string") {
-        throw new ApiError(
-            400,
-            "Username is required."
-        );
-    }
+async function isUserSuperAdmin(user) {
+    const roleId = user.role?._id ?? user.role;
 
-    /*
-     * Validate password.
-     */
-    if (!password || typeof password !== "string") {
-        throw new ApiError(
-            400,
-            "Password is required."
-        );
-    }
+    const role =
+        typeof user.role === "object" && user.role?.roleTitle
+            ? user.role
+            : roleId
+                ? await Role.findById(roleId).lean()
+                : null;
 
-    /*
-     * Normalize username before querying the database.
-     */
-    const normalizedUsername = username
+    const title = String(role?.roleTitle || "")
         .trim()
         .toLowerCase();
 
-    /*
-     * Password is excluded from normal User queries,
-     * so explicitly select it for authentication.
-     */
-    const user = await User.findOne({
-        username: normalizedUsername
-    })
-        .select("+password")
-        .populate("role");
-
-    /*
-     * Do not reveal whether the username exists.
-     */
-    if (!user) {
-        throw new ApiError(
-            401,
-            "Invalid credentials."
-        );
+    if (title === "center") {
+        return false;
     }
 
-    /*
-     * Disabled accounts cannot authenticate.
-     */
-    if (user.status !== "Enable") {
-        throw new ApiError(
-            403,
-            "User account is disabled."
-        );
+    return (
+        role?.isSuperAdmin === true ||
+        title === "superadmin" ||
+        user.isSuperAdmin === true
+    );
+}
+
+function getAssignedCenterIds(user) {
+    const ids = [
+        user.center?._id ?? user.center,
+        ...(user.accessibleCenters || []).map(
+            item => item?._id ?? item
+        )
+    ]
+        .filter(Boolean)
+        .map(String);
+
+    return [...new Set(ids)];
+}
+
+/**
+ * All ordinary users with at least one enabled assigned center
+ * must select a center before accessing protected APIs.
+ */
+async function requiresCenterSelection(user) {
+    const ids = getAssignedCenterIds(user);
+
+    if (ids.length === 0) {
+        return false;
     }
 
-    /*
-     * Check whether a previous series of failed attempts
-     * has temporarily locked the account.
-     */
-    if (
-        user.lockUntil &&
-        user.lockUntil > new Date()
-    ) {
-        throw new ApiError(
-            423,
-            "Account temporarily locked. Please try again later."
-        );
-    }
+    return (
+        await Center.countDocuments({
+            _id: { $in: ids },
+            status: "Enable"
+        })
+    ) > 0;
+}
 
-    /*
-     * Clear an expired account lock before authentication.
-     */
-    if (
-        user.lockUntil &&
-        user.lockUntil <= new Date()
-    ) {
-        user.lockUntil = null;
-        user.loginAttempts = 0;
-    }
+async function buildUserPayload(user) {
+    const payload = sanitizeUser(user);
+    const ids = getAssignedCenterIds(user);
 
-    /*
-     * Compare the supplied password with the stored hash.
-     */
-    const passwordValid = await comparePassword(
-        password,
-        user.password
+    const centers = ids.length
+        ? await Center.find({
+            _id: { $in: ids },
+            status: "Enable"
+        })
+            .select("centerName centerCode centerType status")
+            .lean()
+        : [];
+
+    const byId = new Map(
+        centers.map(center => [String(center._id), center])
     );
 
-    /*
-     * Handle an incorrect password.
-     */
-    if (!passwordValid) {
-        user.loginAttempts =
-            (user.loginAttempts || 0) + 1;
+    payload.center = user.center
+        ? byId.get(String(user.center?._id ?? user.center)) || null
+        : null;
 
-        /*
-         * Lock the account after the maximum number
-         * of consecutive failed attempts.
-         */
-        if (
-            user.loginAttempts >=
-            MAX_LOGIN_ATTEMPTS
-        ) {
-            user.lockUntil = new Date(
-                Date.now() + LOCK_DURATION_MS
-            );
-        }
+    payload.accessibleCenters = (
+        user.accessibleCenters || []
+    )
+        .map(item => byId.get(String(item?._id ?? item)))
+        .filter(Boolean);
 
-        await user.save();
+    return payload;
+}
 
-        /*
-         * Keep the response generic to avoid revealing
-         * authentication details.
-         */
-        throw new ApiError(
-            401,
-            "Invalid credentials."
-        );
-    }
+async function createSessionTokens(user, centerId = null) {
+    const roleId = user.role
+        ? String(user.role._id ?? user.role)
+        : undefined;
 
-    /*
-     * Successful authentication clears previous
-     * failed-login state and records the login time.
-     */
-    user.loginAttempts = 0;
-    user.lockUntil = null;
-    user.lastLogin = new Date();
-
-    await user.save();
-
-    /*
-     * Record successful login information.
-     *
-     * The LoginHistory service handles:
-     * - browser detection
-     * - client IP detection
-     * - LoginHistory database update
-     *
-     * This is intentionally executed only after
-     * successful authentication.
-     */
-    await recordLoginHistory(
-        user,
-        request
-    );
-
-    /*
-     * Generate the access token using the authenticated
-     * user's database identity and role reference.
-     */
     const accessToken = generateAccessToken({
         sub: user._id.toString(),
-        role: user.role?._id?.toString()
+        role: roleId,
+        ...(centerId ? { centerId: String(centerId) } : {})
     });
 
-    /*
-     * Generate a refresh token for the authentication session.
-     */
     const refreshToken = generateRefreshToken({
-        sub: user._id.toString()
+        sub: user._id.toString(),
+        ...(centerId ? { centerId: String(centerId) } : {})
     });
 
-    /*
-     * Store only the hash of the refresh token.
-     */
     await RefreshToken.create({
         user: user._id,
         tokenHash: hashRefreshToken(refreshToken),
         expiresAt: getRefreshTokenExpiry()
     });
 
+    return { accessToken, refreshToken };
+}
+
+function assertUsable(user) {
+    if (!user) {
+        throw new ApiError(401, "User no longer exists.");
+    }
+
+    if (user.status !== "Enable") {
+        throw new ApiError(403, "User account is disabled.");
+    }
+
+    if (!user.role) {
+        throw new ApiError(403, "User role is not configured.");
+    }
+}
+
+/**
+ * Authenticate and return either:
+ * 1. A restricted center-selection token, or
+ * 2. A normal access token and refresh token.
+ */
+export async function login({ username, password, request }) {
+    if (!username || typeof username !== "string") {
+        throw new ApiError(400, "Username is required.");
+    }
+
+    if (!password || typeof password !== "string") {
+        throw new ApiError(400, "Password is required.");
+    }
+
+    const normalizedUsername = username.trim().toLowerCase();
+
+    const user = await User.findOne({
+        username: normalizedUsername
+    })
+        .select("+password")
+        .populate("role");
+
+    if (!user) {
+        throw new ApiError(401, "Invalid credentials.");
+    }
+
+    if (user.status !== "Enable") {
+        throw new ApiError(403, "User account is disabled.");
+    }
+
+    if (user.lockUntil && user.lockUntil > new Date()) {
+        throw new ApiError(
+            423,
+            "Account temporarily locked. Please try again later."
+        );
+    }
+
+    if (user.lockUntil && user.lockUntil <= new Date()) {
+        user.lockUntil = null;
+        user.loginAttempts = 0;
+    }
+
+    const passwordValid = await comparePassword(
+        password,
+        user.password
+    );
+
+    if (!passwordValid) {
+        user.loginAttempts = (user.loginAttempts || 0) + 1;
+
+        if (user.loginAttempts >= MAX_LOGIN_ATTEMPTS) {
+            user.lockUntil = new Date(
+                Date.now() + LOCK_DURATION_MS
+            );
+        }
+
+        await user.save();
+        throw new ApiError(401, "Invalid credentials.");
+    }
+
+    user.loginAttempts = 0;
+    user.lockUntil = null;
+    user.lastLogin = new Date();
+
+    await user.save();
+    await recordLoginHistory(user, request);
+
+    const userPayload = await buildUserPayload(user);
+    const centerSelectionRequired =
+        await requiresCenterSelection(user);
+
+    /*
+     * IMPORTANT:
+     * Center selection is determined by assigned active centers,
+     * not by the user-level isSuperAdmin flag.
+     */
+    if (centerSelectionRequired) {
+        return {
+            requiresCenterSelection: true,
+            user: userPayload,
+            accessToken: generateCenterSelectionToken({
+                sub: user._id.toString()
+            })
+        };
+    }
+
+    const { accessToken, refreshToken } =
+        await createSessionTokens(user);
+
     return {
-        user: sanitizeUser(user),
+        requiresCenterSelection: false,
+        user: userPayload,
         accessToken,
         refreshToken
     };
 }
 
 /**
- * Refreshes an authenticated session using a valid
- * refresh token.
- *
- * Refresh-token rotation is used so that the previous
- * refresh token cannot be reused after successful rotation.
- *
- * @param {string} token - Raw refresh token.
- * @returns {Promise<Object>} New access and refresh tokens.
+ * Validate a center selection and update the user's current center.
  */
-export async function refreshToken(token) {
+async function applyCenterChoice(user, centerId) {
     if (
-        !token ||
-        typeof token !== "string"
+        typeof centerId !== "string" ||
+        !mongoose.Types.ObjectId.isValid(centerId)
+    ) {
+        throw new ApiError(400, "A valid centerId is required.");
+    }
+
+    const normalizedCenterId = String(centerId);
+
+    const center = await Center.findOne({
+        _id: normalizedCenterId,
+        status: "Enable"
+    }).select("_id");
+
+    if (!center) {
+        throw new ApiError(404, "Center not found or is disabled.");
+    }
+
+    const assignedIds = getAssignedCenterIds(user);
+    const isAdmin = await isUserSuperAdmin(user);
+
+    if (
+        !isAdmin &&
+        !assignedIds.includes(center._id.toString())
     ) {
         throw new ApiError(
-            401,
-            "Refresh token is required."
+            403,
+            "You do not have access to this center."
         );
     }
 
-    /*
-     * Verify JWT signature and expiration.
-     */
+    await User.updateOne(
+        { _id: user._id },
+        { $set: { center: center._id } }
+    );
+
+    return User.findById(user._id).populate("role");
+}
+
+/**
+ * Exchange the short-lived center-selection token for a real session.
+ * POST /auth/select-center
+ */
+export async function selectCenter({
+    authorizationHeader,
+    centerId
+}) {
+    const [scheme, token] = (authorizationHeader || "").split(" ");
+
+    if (scheme !== "Bearer" || !token) {
+        throw new ApiError(401, "Invalid authorization header.");
+    }
+
+    const decoded = verifyAccessToken(token);
+
+    if (decoded.step !== "center_selection" || !decoded.sub) {
+        throw new ApiError(
+            403,
+            "This token cannot be used to select a center."
+        );
+    }
+
+    const user = await User.findById(decoded.sub).populate("role");
+    assertUsable(user);
+
+    const updatedUser = await applyCenterChoice(user, centerId);
+
+    const { accessToken, refreshToken } =
+        await createSessionTokens(updatedUser, centerId);
+
+    return {
+        user: await buildUserPayload(updatedUser),
+        accessToken,
+        refreshToken
+    };
+}
+
+/**
+ * Switch center for an already authenticated user.
+ */
+export async function switchCenter({ userId, centerId }) {
+    const user = await User.findById(userId).populate("role");
+    assertUsable(user);
+
+    const updatedUser = await applyCenterChoice(user, centerId);
+
+    const accessToken = generateAccessToken({
+        sub: updatedUser._id.toString(),
+        role: String(updatedUser.role._id ?? updatedUser.role),
+        centerId: String(centerId)
+    });
+
+    return {
+        user: await buildUserPayload(updatedUser),
+        accessToken
+    };
+}
+
+/**
+ * Rotate refresh tokens while preserving the selected center.
+ */
+export async function refreshToken(token) {
+    if (!token || typeof token !== "string") {
+        throw new ApiError(401, "Refresh token is required.");
+    }
+
     const decodedToken = verifyRefreshToken(token);
 
     if (!decodedToken.sub) {
-        throw new ApiError(
-            401,
-            "Invalid refresh token."
-        );
+        throw new ApiError(401, "Invalid refresh token.");
     }
 
-    /*
-     * Hash the supplied refresh token because only
-     * the hash is stored in MongoDB.
-     */
-    const tokenHash = hashRefreshToken(token);
-
-    /*
-     * Find the corresponding persisted refresh session
-     * and load the current user and database-backed role.
-     */
     const storedToken = await RefreshToken.findOne({
-        tokenHash
+        tokenHash: hashRefreshToken(token)
     }).populate({
         path: "user",
-        populate: {
-            path: "role"
-        }
+        populate: { path: "role" }
     });
 
-    /*
-     * A valid JWT must also have a corresponding
-     * active database session.
-     */
     if (!storedToken) {
-        throw new ApiError(
-            401,
-            "Invalid refresh token."
-        );
+        throw new ApiError(401, "Invalid refresh token.");
     }
 
-    /*
-     * Prevent reuse of an already revoked token.
-     */
     if (storedToken.revokedAt) {
-        throw new ApiError(
-            401,
-            "Refresh token has been revoked."
-        );
+        throw new ApiError(401, "Refresh token has been revoked.");
     }
 
-    /*
-     * Check database expiration as an additional safeguard.
-     */
-    if (
-        storedToken.expiresAt <= new Date()
-    ) {
-        throw new ApiError(
-            401,
-            "Refresh token has expired."
-        );
+    if (storedToken.expiresAt <= new Date()) {
+        throw new ApiError(401, "Refresh token has expired.");
     }
 
     const user = storedToken.user;
+    assertUsable(user);
 
-    /*
-     * The associated user must still exist.
-     */
-    if (!user) {
-        throw new ApiError(
-            401,
-            "Authenticated user no longer exists."
-        );
+    if (user._id.toString() !== decodedToken.sub) {
+        throw new ApiError(401, "Invalid refresh token.");
     }
 
-    /*
-     * The current account status is checked before
-     * issuing another access token.
-     */
-    if (user.status !== "Enable") {
+    const centerId = decodedToken.centerId
+        ? String(decodedToken.centerId)
+        : null;
+
+    if (centerId) {
+        const center = await Center.exists({
+            _id: centerId,
+            status: "Enable"
+        });
+
+        const assignedIds = getAssignedCenterIds(user);
+        const isAdmin = await isUserSuperAdmin(user);
+
+        if (
+            !center ||
+            (!isAdmin && !assignedIds.includes(centerId))
+        ) {
+            throw new ApiError(
+                403,
+                "Selected center is no longer available to this user."
+            );
+        }
+    } else if (await requiresCenterSelection(user)) {
         throw new ApiError(
             403,
-            "User account is disabled."
+            "A center must be selected before refreshing this session."
         );
     }
 
-    /*
-     * A user must still have a configured database-backed role.
-     */
-    if (!user.role) {
-        throw new ApiError(
-            403,
-            "User role is not configured."
-        );
-    }
-
-    /*
-     * Ensure the refresh token belongs to the same
-     * user identified by its JWT payload.
-     */
-    if (
-        user._id.toString() !==
-        decodedToken.sub
-    ) {
-        throw new ApiError(
-            401,
-            "Invalid refresh token."
-        );
-    }
-
-    /*
-     * Revoke the old refresh token before issuing
-     * its replacement.
-     */
     storedToken.revokedAt = new Date();
-
     await storedToken.save();
 
-    /*
-     * Generate a new access token using the user's
-     * current database-backed role.
-     */
-    const accessToken = generateAccessToken({
-        sub: user._id.toString(),
-        role: user.role._id.toString()
-    });
-
-    /*
-     * Generate a completely new refresh token.
-     */
-    const newRefreshToken = generateRefreshToken({
-        sub: user._id.toString()
-    });
-
-    /*
-     * Store only the hash of the new refresh token.
-     */
-    await RefreshToken.create({
-        user: user._id,
-        tokenHash: hashRefreshToken(newRefreshToken),
-        expiresAt: getRefreshTokenExpiry()
-    });
+    const { accessToken, refreshToken: newRefreshToken } =
+        await createSessionTokens(user, centerId);
 
     return {
         accessToken,
@@ -452,544 +454,25 @@ export async function refreshToken(token) {
 }
 
 /**
- * Logs out a refresh-token session.
- *
- * The refresh token itself identifies the session
- * that should be revoked.
- *
- * @param {string} token - Raw refresh token.
- * @returns {Promise<void>}
+ * Revoke a refresh-token session during logout.
  */
 export async function logout(token) {
-    if (
-        !token ||
-        typeof token !== "string"
-    ) {
-        throw new ApiError(
-            401,
-            "Refresh token is required."
-        );
+    if (!token || typeof token !== "string") {
+        throw new ApiError(401, "Refresh token is required.");
     }
 
-    /*
-     * Verify that the refresh token was issued by
-     * the application and has not naturally expired.
-     */
     verifyRefreshToken(token);
 
-    /*
-     * Hash the supplied token because MongoDB stores
-     * only the token hash.
-     */
-    const tokenHash = hashRefreshToken(token);
-
-    /*
-     * Find the persisted authentication session.
-     */
     const storedToken = await RefreshToken.findOne({
-        tokenHash
+        tokenHash: hashRefreshToken(token)
     });
 
     if (!storedToken) {
-        throw new ApiError(
-            401,
-            "Invalid refresh token."
-        );
+        throw new ApiError(401, "Invalid refresh token.");
     }
 
-    /*
-     * Revoke the session if it has not already been revoked.
-     */
     if (!storedToken.revokedAt) {
         storedToken.revokedAt = new Date();
-
         await storedToken.save();
     }
 }
-
-
-
-
-// old code new mdhe login history add keli ahe fkt
-// import crypto from "crypto";
-
-// import User from "../models/User.js";
-// import RefreshToken from "../models/RefreshToken.js";
-// import { env } from "../config/env.js";
-// import { ApiError } from "../utils/ApiError.js";
-
-// import { comparePassword } from "../utils/password.js";
-
-// import {
-//     durationToMilliseconds,
-//     generateAccessToken,
-//     generateRefreshToken,
-//     verifyRefreshToken
-// } from "../utils/token.js";
-
-// /**
-//  * Maximum number of consecutive failed login attempts
-//  * before the account is temporarily locked.
-//  */
-// const MAX_LOGIN_ATTEMPTS = 5;
-
-// /**
-//  * Duration of the temporary account lock.
-//  */
-// const LOCK_DURATION_MS = 15 * 60 * 1000;
-
-// /**
-//  * Creates a SHA-256 hash of a refresh token.
-//  *
-//  * Only the hash is stored in MongoDB.
-//  *
-//  * @param {string} token - Raw refresh token.
-//  * @returns {string} SHA-256 token hash.
-//  */
-// function hashRefreshToken(token) {
-//     return crypto
-//         .createHash("sha256")
-//         .update(token)
-//         .digest("hex");
-// }
-
-// /**
-//  * Calculates the expiration date for a refresh-token session.
-//  *
-//  * @returns {Date} Refresh-token expiration timestamp.
-//  */
-// function getRefreshTokenExpiry() {
-//     const duration = durationToMilliseconds(
-//         env.REFRESH_TOKEN_EXPIRES_IN
-//     );
-
-//     return new Date(Date.now() + duration);
-// }
-
-// /**
-//  * Removes authentication-sensitive fields before
-//  * returning user information to the client.
-//  *
-//  * @param {Object} user - Mongoose user document.
-//  * @returns {Object} Safe user representation.
-//  */
-// function sanitizeUser(user) {
-//     const userObject = user.toObject();
-
-//     delete userObject.password;
-//     delete userObject.loginAttempts;
-//     delete userObject.lockUntil;
-
-//     return userObject;
-// }
-
-// /**
-//  * Authenticates a user using username and password.
-//  *
-//  * Authentication rules handled here:
-//  * - User must exist.
-//  * - User account must be enabled.
-//  * - Temporarily locked accounts cannot log in.
-//  * - Password must match.
-//  * - Failed attempts are tracked.
-//  * - Successful login resets failed attempts.
-//  * - Last login time is recorded.
-//  * - Access and refresh tokens are issued.
-//  *
-//  * @param {Object} credentials - Login credentials.
-//  * @param {string} credentials.username - Username.
-//  * @param {string} credentials.password - Plain-text password.
-//  * @returns {Promise<Object>} Authentication result.
-//  */
-// export async function login({ username, password }) {
-//     /*
-//      * Validate username.
-//      */
-//     if (!username || typeof username !== "string") {
-//         throw new ApiError(
-//             400,
-//             "Username is required."
-//         );
-//     }
-
-//     /*
-//      * Validate password.
-//      */
-//     if (!password || typeof password !== "string") {
-//         throw new ApiError(
-//             400,
-//             "Password is required."
-//         );
-//     }
-
-//     /*
-//      * Normalize username before querying the database.
-//      */
-//     const normalizedUsername = username
-//         .trim()
-//         .toLowerCase();
-
-//     /*
-//      * Password is excluded from normal User queries,
-//      * so explicitly select it for authentication.
-//      */
-//     const user = await User.findOne({
-//         username: normalizedUsername
-//     })
-//         .select("+password")
-//         .populate("role");
-
-//     /*
-//      * Do not reveal whether the username exists.
-//      */
-//     if (!user) {
-//         throw new ApiError(
-//             401,
-//             "Invalid credentials."
-//         );
-//     }
-
-//     /*
-//      * Disabled accounts cannot authenticate.
-//      */
-//     if (user.status !== "Enable") {
-//         throw new ApiError(
-//             403,
-//             "User account is disabled."
-//         );
-//     }
-
-//     /*
-//      * Check whether a previous series of failed attempts
-//      * has temporarily locked the account.
-//      */
-//     if (
-//         user.lockUntil &&
-//         user.lockUntil > new Date()
-//     ) {
-//         throw new ApiError(
-//             423,
-//             "Account temporarily locked. Please try again later."
-//         );
-//     }
-
-//     /*
-//      * Clear an expired account lock before authentication.
-//      */
-//     if (
-//         user.lockUntil &&
-//         user.lockUntil <= new Date()
-//     ) {
-//         user.lockUntil = null;
-//         user.loginAttempts = 0;
-//     }
-
-//     /*
-//      * Compare the supplied password with the stored hash.
-//      */
-//     const passwordValid = await comparePassword(
-//         password,
-//         user.password
-//     );
-
-//     /*
-//      * Handle an incorrect password.
-//      */
-//     if (!passwordValid) {
-//         user.loginAttempts =
-//             (user.loginAttempts || 0) + 1;
-
-//         /*
-//          * Lock the account after the maximum number
-//          * of consecutive failed attempts.
-//          */
-//         if (
-//             user.loginAttempts >=
-//             MAX_LOGIN_ATTEMPTS
-//         ) {
-//             user.lockUntil = new Date(
-//                 Date.now() + LOCK_DURATION_MS
-//             );
-//         }
-
-//         await user.save();
-
-//         /*
-//          * Keep the response generic to avoid revealing
-//          * authentication details.
-//          */
-//         throw new ApiError(
-//             401,
-//             "Invalid credentials."
-//         );
-//     }
-
-//     /*
-//      * Successful authentication clears previous
-//      * failed-login state and records the login time.
-//      */
-//     user.loginAttempts = 0;
-//     user.lockUntil = null;
-//     user.lastLogin = new Date();
-
-//     await user.save();
-
-//     /*
-//      * Generate the access token using the authenticated
-//      * user's database identity and role reference.
-//      */
-//     const accessToken = generateAccessToken({
-//         sub: user._id.toString(),
-//         role: user.role?._id?.toString()
-//     });
-
-//     /*
-//      * Generate a refresh token for the authentication session.
-//      */
-//     const refreshToken = generateRefreshToken({
-//         sub: user._id.toString()
-//     });
-
-//     /*
-//      * Store only the hash of the refresh token.
-//      */
-//     await RefreshToken.create({
-//         user: user._id,
-//         tokenHash: hashRefreshToken(refreshToken),
-//         expiresAt: getRefreshTokenExpiry()
-//     });
-
-//     return {
-//         user: sanitizeUser(user),
-//         accessToken,
-//         refreshToken
-//     };
-// }
-
-// /**
-//  * Refreshes an authenticated session using a valid
-//  * refresh token.
-//  *
-//  * Refresh-token rotation is used so that the previous
-//  * refresh token cannot be reused after successful rotation.
-//  *
-//  * @param {string} token - Raw refresh token.
-//  * @returns {Promise<Object>} New access and refresh tokens.
-//  */
-// export async function refreshToken(token) {
-//     if (
-//         !token ||
-//         typeof token !== "string"
-//     ) {
-//         throw new ApiError(
-//             401,
-//             "Refresh token is required."
-//         );
-//     }
-
-//     /*
-//      * Verify JWT signature and expiration.
-//      */
-//     const decodedToken = verifyRefreshToken(token);
-
-//     if (!decodedToken.sub) {
-//         throw new ApiError(
-//             401,
-//             "Invalid refresh token."
-//         );
-//     }
-
-//     /*
-//      * Hash the supplied refresh token because only
-//      * the hash is stored in MongoDB.
-//      */
-//     const tokenHash = hashRefreshToken(token);
-
-//     /*
-//      * Find the corresponding persisted refresh session
-//      * and load the current user and database-backed role.
-//      */
-//     const storedToken = await RefreshToken.findOne({
-//         tokenHash
-//     }).populate({
-//         path: "user",
-//         populate: {
-//             path: "role"
-//         }
-//     });
-
-//     /*
-//      * A valid JWT must also have a corresponding
-//      * active database session.
-//      */
-//     if (!storedToken) {
-//         throw new ApiError(
-//             401,
-//             "Invalid refresh token."
-//         );
-//     }
-
-//     /*
-//      * Prevent reuse of an already revoked token.
-//      */
-//     if (storedToken.revokedAt) {
-//         throw new ApiError(
-//             401,
-//             "Refresh token has been revoked."
-//         );
-//     }
-
-//     /*
-//      * Check database expiration as an additional safeguard.
-//      */
-//     if (
-//         storedToken.expiresAt <= new Date()
-//     ) {
-//         throw new ApiError(
-//             401,
-//             "Refresh token has expired."
-//         );
-//     }
-
-//     const user = storedToken.user;
-
-//     /*
-//      * The associated user must still exist.
-//      */
-//     if (!user) {
-//         throw new ApiError(
-//             401,
-//             "Authenticated user no longer exists."
-//         );
-//     }
-
-//     /*
-//      * The current account status is checked before
-//      * issuing another access token.
-//      */
-//     if (user.status !== "Enable") {
-//         throw new ApiError(
-//             403,
-//             "User account is disabled."
-//         );
-//     }
-
-//     /*
-//      * A user must still have a configured database-backed role.
-//      */
-//     if (!user.role) {
-//         throw new ApiError(
-//             403,
-//             "User role is not configured."
-//         );
-//     }
-
-//     /*
-//      * Ensure the refresh token belongs to the same
-//      * user identified by its JWT payload.
-//      */
-//     if (
-//         user._id.toString() !==
-//         decodedToken.sub
-//     ) {
-//         throw new ApiError(
-//             401,
-//             "Invalid refresh token."
-//         );
-//     }
-
-//     /*
-//      * Revoke the old refresh token before issuing
-//      * its replacement.
-//      */
-//     storedToken.revokedAt = new Date();
-
-//     await storedToken.save();
-
-//     /*
-//      * Generate a new access token using the user's
-//      * current database-backed role.
-//      */
-//     const accessToken = generateAccessToken({
-//         sub: user._id.toString(),
-//         role: user.role._id.toString()
-//     });
-
-//     /*
-//      * Generate a completely new refresh token.
-//      */
-//     const newRefreshToken = generateRefreshToken({
-//         sub: user._id.toString()
-//     });
-
-//     /*
-//      * Store only the hash of the new refresh token.
-//      */
-//     await RefreshToken.create({
-//         user: user._id,
-//         tokenHash: hashRefreshToken(newRefreshToken),
-//         expiresAt: getRefreshTokenExpiry()
-//     });
-
-//     return {
-//         accessToken,
-//         refreshToken: newRefreshToken
-//     };
-// }
-
-// /**
-//  * Logs out a refresh-token session.
-//  *
-//  * The refresh token itself identifies the session
-//  * that should be revoked.
-//  *
-//  * @param {string} token - Raw refresh token.
-//  * @returns {Promise<void>}
-//  */
-// export async function logout(token) {
-//     if (
-//         !token ||
-//         typeof token !== "string"
-//     ) {
-//         throw new ApiError(
-//             401,
-//             "Refresh token is required."
-//         );
-//     }
-
-//     /*
-//      * Verify that the refresh token was issued by
-//      * the application and has not naturally expired.
-//      */
-//     verifyRefreshToken(token);
-
-//     /*
-//      * Hash the supplied token because MongoDB stores
-//      * only the token hash.
-//      */
-//     const tokenHash = hashRefreshToken(token);
-
-//     /*
-//      * Find the persisted authentication session.
-//      */
-//     const storedToken = await RefreshToken.findOne({
-//         tokenHash
-//     });
-
-//     if (!storedToken) {
-//         throw new ApiError(
-//             401,
-//             "Invalid refresh token."
-//         );
-//     }
-
-//     /*
-//      * Revoke the session if it has not already been revoked.
-//      */
-//     if (!storedToken.revokedAt) {
-//         storedToken.revokedAt = new Date();
-
-//         await storedToken.save();
-//     }
-// }
-

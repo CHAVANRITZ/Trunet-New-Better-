@@ -1,7 +1,10 @@
+
 import express from "express";
 
 import {
     loginController,
+    selectCenterController,
+    switchCenterController,
     getCurrentUser,
     refreshTokenController,
     logoutController,
@@ -34,6 +37,23 @@ router.post(
     loginValidator,
     validationMiddleware,
     asyncHandler(loginController)
+);
+
+// POST /api/v1/auth/select-center
+// Uses the short-lived center-selection token.
+// Do not apply the normal authMiddleware here because that middleware
+// intentionally rejects center-selection tokens on protected routes.
+router.post(
+    "/select-center",
+    asyncHandler(selectCenterController)
+);
+
+// POST /api/v1/auth/switch-center
+// Requires an existing authenticated session.
+router.post(
+    "/switch-center",
+    asyncHandler(authMiddleware),
+    asyncHandler(switchCenterController)
 );
 
 // POST /api/v1/auth/refresh
@@ -83,7 +103,8 @@ router.get(
     requirePermission("User", "view_user"),
     asyncHandler(getAllUsers)
 );
-// Backward-compatible user routes used by the existing frontend
+
+// Backward-compatible user routes used by the existing frontend.
 
 // GET /api/v1/auth/user/:id
 router.get(
@@ -108,6 +129,7 @@ router.put(
     requirePermission("User", "update_user"),
     asyncHandler(updateUserController)
 );
+
 // DELETE /api/v1/auth/:id
 router.delete(
     "/:id",
