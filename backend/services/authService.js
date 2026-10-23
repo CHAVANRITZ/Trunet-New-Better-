@@ -289,30 +289,34 @@ export async function login({
 /**
  * True when the user is a Super Admin (user flag, role flag or role title).
  */
-async function isUserSuperAdmin(user) {
-    if (user.isSuperAdmin === true) {
-        return true;
-    }
 
+async function isUserSuperAdmin(user) {
     const roleId = user.role?._id ?? user.role;
 
-    if (!roleId) {
+    const role =
+        typeof user.role === "object" && user.role?.roleTitle
+            ? user.role
+            : roleId
+                ? await Role.findById(roleId).lean()
+                : null;
+
+    const title = String(role?.roleTitle || "")
+        .trim()
+        .toLowerCase();
+
+    // A center-role user must not become Super Admin
+    // because of a stale user-level flag.
+    if (title === "center") {
         return false;
     }
 
-    const role = await Role.collection.findOne({ _id: roleId });
-
-    if (!role) {
-        return false;
-    }
-
-    const title =
-        typeof role.roleTitle === "string"
-            ? role.roleTitle.trim().toLowerCase()
-            : "";
-
-    return role.isSuperAdmin === true || title === "superadmin";
+    return (
+        role?.isSuperAdmin === true ||
+        title === "superadmin" ||
+        user.isSuperAdmin === true
+    );
 }
+
 
 /**
  * RULE: a non-Super-Admin user who has accessibleCenters
@@ -320,7 +324,7 @@ async function isUserSuperAdmin(user) {
  * Change this one function if the rule should be different.
  */
 async function requiresCenterSelection(user) {
-    if (!user.accessibleCenters || user.accessibleCenters.length === 0) {
+    if (await isUserSuperAdmin(user)) {
         return false;
     }
 
