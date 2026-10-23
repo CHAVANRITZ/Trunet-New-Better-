@@ -1,7 +1,11 @@
 
 import crypto from "crypto";
 
+import mongoose from "mongoose";
+
 import User from "../models/User.js";
+import Role from "../models/Role.js";
+import Center from "../models/Center.js";
 import RefreshToken from "../models/RefreshToken.js";
 import { env } from "../config/env.js";
 import { ApiError } from "../utils/ApiError.js";
@@ -11,7 +15,9 @@ import { comparePassword } from "../utils/password.js";
 import {
     durationToMilliseconds,
     generateAccessToken,
+    generateCenterSelectionToken,
     generateRefreshToken,
+    verifyAccessToken,
     verifyRefreshToken
 } from "../utils/token.js";
 
@@ -248,35 +254,254 @@ export async function login({
         request
     );
 
-    /*
-     * Generate the access token using the authenticated
-     * user's database identity and role reference.
-     */
-    const accessToken = generateAccessToken({
-        sub: user._id.toString(),
-        role: user.role?._id?.toString()
-    });
+    const userPayload = await buildUserPayload(user);
 
     /*
-     * Generate a refresh token for the authentication session.
+     * Users who can work in several centers must pick one first.
+     * They get a short-lived center-selection token only; the real
+     * access token is issued by POST /auth/select-center.
      */
+    if (await requiresCenterSelection(user)) {
+        return {
+            requiresCenterSelection: true,
+            user: userPayload,
+            accessToken: generateCenterSelectionToken({
+                sub: user._id.toString()
+            })
+        };
+    }
+
+    const { accessToken, refreshToken } =
+        await createSessionTokens(user);
+
+    return {
+        requiresCenterSelection: false,
+        user: userPayload,
+        accessToken,
+        refreshToken
+    };
+}
+
+// ---------------------------------------------------------------
+// Center selection helpers
+// ---------------------------------------------------------------
+
+/**
+ * True when the user is a Super Admin (user flag, role flag or role title).
+ */
+async function isUserSuperAdmin(user) {
+    if (user.isSuperAdmin === true) {
+        return true;
+    }
+
+    const roleId = user.role?._id ?? user.role;
+
+    if (!roleId) {
+        return false;
+    }
+
+    const role = await Role.collection.findOne({ _id: roleId });
+
+    if (!role) {
+        return false;
+    }
+
+    const title =
+        typeof role.roleTitle === "string"
+            ? role.roleTitle.trim().toLowerCase()
+            : "";
+
+    return role.isSuperAdmin === true || title === "superadmin";
+}
+
+/**
+ * RULE: a non-Super-Admin user who has accessibleCenters
+ * must choose a center after logging in.
+ * Change this one function if the rule should be different.
+ */
+async function requiresCenterSelection(user) {
+    if (!user.accessibleCenters || user.accessibleCenters.length === 0) {
+        return false;
+    }
+
+    return !(await isUserSuperAdmin(user));
+}
+
+/**
+ * Safe user object for the client, with center and
+ * accessibleCenters expanded to { _id, centerName, centerCode }.
+ */
+async function buildUserPayload(user) {
+    const payload = sanitizeUser(user);
+
+    const ids = [
+        ...new Set(
+            [user.center, ...(user.accessibleCenters || [])]
+                .filter(Boolean)
+                .map((id) => String(id._id ?? id))
+        )
+    ];
+
+    if (ids.length === 0) {
+        return payload;
+    }
+
+    const centers = await Center.find({ _id: { $in: ids } })
+        .select("centerName centerCode")
+        .lean();
+
+    const byId = new Map(
+        centers.map((center) => [String(center._id), center])
+    );
+
+    payload.center = user.center
+        ? byId.get(String(user.center._id ?? user.center)) || null
+        : null;
+
+    payload.accessibleCenters = (user.accessibleCenters || [])
+        .map((id) => byId.get(String(id._id ?? id)))
+        .filter(Boolean);
+
+    return payload;
+}
+
+/**
+ * Creates an access token (optionally bound to a center)
+ * and a stored refresh-token session.
+ */
+async function createSessionTokens(user, centerId = null) {
+    const roleId = user.role
+        ? String(user.role._id ?? user.role)
+        : undefined;
+
+    const accessToken = generateAccessToken({
+        sub: user._id.toString(),
+        role: roleId,
+        ...(centerId ? { centerId: String(centerId) } : {})
+    });
+
     const refreshToken = generateRefreshToken({
         sub: user._id.toString()
     });
 
-    /*
-     * Store only the hash of the refresh token.
-     */
     await RefreshToken.create({
         user: user._id,
         tokenHash: hashRefreshToken(refreshToken),
         expiresAt: getRefreshTokenExpiry()
     });
 
+    return { accessToken, refreshToken };
+}
+
+/**
+ * Validates the chosen center and stores it as the user's current center.
+ * Returns the updated user document.
+ */
+async function applyCenterChoice(user, centerId) {
+    if (
+        typeof centerId !== "string" ||
+        !mongoose.Types.ObjectId.isValid(centerId)
+    ) {
+        throw new ApiError(400, "A valid centerId is required.");
+    }
+
+    const allowedIds = [
+        user.center,
+        ...(user.accessibleCenters || [])
+    ]
+        .filter(Boolean)
+        .map(String);
+
+    const allowed =
+        allowedIds.includes(centerId) ||
+        (await isUserSuperAdmin(user));
+
+    if (!allowed) {
+        throw new ApiError(
+            403,
+            "You do not have access to this center."
+        );
+    }
+
+    if (!(await Center.exists({ _id: centerId }))) {
+        throw new ApiError(404, "Center not found.");
+    }
+
+    await User.updateOne(
+        { _id: user._id },
+        { $set: { center: centerId } }
+    );
+
+    return User.findById(user._id);
+}
+
+function assertUsable(user) {
+    if (!user) {
+        throw new ApiError(401, "User no longer exists.");
+    }
+
+    if (user.status !== "Enable") {
+        throw new ApiError(403, "User account is disabled.");
+    }
+
+    if (!user.role) {
+        throw new ApiError(403, "User role is not configured.");
+    }
+}
+
+/**
+ * Step 2 of login: exchange the center-selection token
+ * plus a centerId for a real access token.
+ */
+export async function selectCenter({ authorizationHeader, centerId }) {
+    const [scheme, token] = (authorizationHeader || "").split(" ");
+
+    if (scheme !== "Bearer" || !token) {
+        throw new ApiError(401, "Invalid authorization header.");
+    }
+
+    const decoded = verifyAccessToken(token);
+
+    if (decoded.step !== "center_selection") {
+        throw new ApiError(
+            403,
+            "This token cannot be used to select a center."
+        );
+    }
+
+    const user = await User.findById(decoded.sub);
+    assertUsable(user);
+
+    const updated = await applyCenterChoice(user, centerId);
+
+    const { accessToken, refreshToken } =
+        await createSessionTokens(updated, centerId);
+
     return {
-        user: sanitizeUser(user),
+        user: await buildUserPayload(updated),
         accessToken,
         refreshToken
+    };
+}
+
+/**
+ * Switch center while already logged in (normal access token).
+ */
+export async function switchCenter({ userId, centerId }) {
+    const user = await User.findById(userId);
+    assertUsable(user);
+
+    const updated = await applyCenterChoice(user, centerId);
+
+    const accessToken = generateAccessToken({
+        sub: updated._id.toString(),
+        role: String(updated.role._id ?? updated.role),
+        centerId: String(centerId)
+    });
+
+    return {
+        user: await buildUserPayload(updated),
+        accessToken
     };
 }
 

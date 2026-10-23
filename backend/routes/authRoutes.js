@@ -2,6 +2,8 @@ import express from "express";
 
 import {
     loginController,
+    selectCenterController,
+    switchCenterController,
     getCurrentUser,
     refreshTokenController,
     logoutController,
@@ -34,6 +36,19 @@ router.post(
     loginValidator,
     validationMiddleware,
     asyncHandler(loginController)
+);
+
+// POST /api/v1/auth/select-center  (center-selection token from login)
+router.post(
+    "/select-center",
+    asyncHandler(selectCenterController)
+);
+
+// POST /api/v1/auth/switch-center  (normal access token)
+router.post(
+    "/switch-center",
+    asyncHandler(authMiddleware),
+    asyncHandler(switchCenterController)
 );
 
 // POST /api/v1/auth/refresh

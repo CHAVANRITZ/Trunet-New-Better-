@@ -69,6 +69,31 @@ export function generateAccessToken(payload) {
 }
 
 /**
+ * Creates a short-lived token that is issued after a correct
+ * username/password when the user still has to pick a center.
+ *
+ * It carries step = "center_selection", so authMiddleware refuses it
+ * on every protected route. Only POST /auth/select-center accepts it.
+ *
+ * @param {Object} payload - Token payload (needs sub).
+ * @returns {string} Signed center-selection token.
+ */
+export function generateCenterSelectionToken(payload) {
+    if (!env.JWT_SECRET) {
+        throw new ApiError(
+            500,
+            "JWT access token configuration is missing."
+        );
+    }
+
+    return jwt.sign(
+        { ...payload, step: "center_selection" },
+        env.JWT_SECRET,
+        { expiresIn: "15m" }
+    );
+}
+
+/**
  * Creates a long-lived JWT refresh token.
  *
  * The refresh token is persisted separately as a hashed session

@@ -2,7 +2,9 @@ import User from "../models/User.js";
 import {
     login,
     refreshToken,
-    logout
+    logout,
+    selectCenter,
+    switchCenter
 } from "../services/authService.js";
 import Role from "../models/Role.js";
 import Center from "../models/Center.js";
@@ -41,9 +43,53 @@ export async function loginController(req, res) {
         request: req
     });
 
-    return sendSuccess(res, {
-        statusCode: 200,
-        message: "Login successful.",
+    const needsCenter = Boolean(result.requiresCenterSelection);
+
+    // `token` and `requiresCenterSelection` are top level because the
+    // frontend reads them there; the same token is also in data.accessToken.
+    return res.status(200).json({
+        success: true,
+        message: needsCenter
+            ? "Please select a center to continue."
+            : "Login successful.",
+        requiresCenterSelection: needsCenter,
+        token: result.accessToken,
+        data: result
+    });
+}
+
+/**
+ * POST /auth/select-center
+ * Uses the center-selection token returned by login.
+ */
+export async function selectCenterController(req, res) {
+    const result = await selectCenter({
+        authorizationHeader: req.headers.authorization,
+        centerId: req.body?.centerId
+    });
+
+    return res.status(200).json({
+        success: true,
+        message: "Center selected successfully.",
+        token: result.accessToken,
+        data: result
+    });
+}
+
+/**
+ * POST /auth/switch-center
+ * Uses the normal access token (authMiddleware runs first).
+ */
+export async function switchCenterController(req, res) {
+    const result = await switchCenter({
+        userId: req.user.id,
+        centerId: req.body?.centerId
+    });
+
+    return res.status(200).json({
+        success: true,
+        message: "Center switched successfully.",
+        token: result.accessToken,
         data: result
     });
 }
