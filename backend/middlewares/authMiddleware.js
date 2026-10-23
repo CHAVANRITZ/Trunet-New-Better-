@@ -77,14 +77,21 @@ export async function authMiddleware(req, res, next) {
             );
         }
 
-        // Center-selection tokens cannot access protected endpoints.
-        if (decodedToken.step === "center_selection") {
-            return res.status(403).json({
-                success: false,
-                message: "Please select a center first.",
-                requiresCenterSelection: true
-            });
-        }
+// Center-selection tokens may access only the center-selection endpoint.
+// Center-selection tokens can access only the existing selection endpoint.
+if (decodedToken.step === "center_selection") {
+    const isSelectCenterEndpoint =
+        req.method === "POST" &&
+        req.path.replace(/\/+$/, "") === "/select-center";
+
+    if (!isSelectCenterEndpoint) {
+        return res.status(403).json({
+            success: false,
+            message: "Please select a center first.",
+            requiresCenterSelection: true
+        });
+    }
+}
 
         // Load the latest user record from MongoDB.
         const user = await User.findById(decodedToken.sub);
