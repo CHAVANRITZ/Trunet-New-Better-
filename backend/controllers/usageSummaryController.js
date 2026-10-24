@@ -267,10 +267,15 @@ const getTargetCenters = async (requestedCenterId, user) => {
     return center ? [center] : [];
   }
 
-  // Preserve existing Super Admin behavior when no center is specified.
-  return Center.find({})
+  // Same as legacy: no centerId -> the user's own center (not all centers).
+  const ownCenterId = user.center?._id || user.center;
+  if (!ownCenterId) return [];
+
+  const ownCenter = await Center.findById(ownCenterId)
     .select(centerFields)
     .lean();
+
+  return ownCenter ? [ownCenter] : [];
 };
 
 
@@ -588,12 +593,9 @@ const fetchUsageEvents = async (centerId, productId, lower, upper) => {
   const rows = await StockUsage.aggregate([
     {
       $match: {
-        center: centerId,
-        $or: [
-          { status: "completed" },
-          // Damage Return reserves stock while pending.
-          { status: "pending", usageType: "Damage Return" },
-        ],
+        // Same as legacy: usages where this center is the source OR the toCenter
+        $or: [{ center: centerId }, { toCenter: centerId }],
+        status: { $in: ["completed", "pending"] },
         ...dateWindow("date", lower, upper),
       },
     },
@@ -704,11 +706,11 @@ const fetchInfoEvents = async (centerId, productId, lower, upper) => {
   ];
 };
 
-// Latest approved physical closing strictly before the report start.
+// Latest submitted/verified physical closing strictly before the report start.
 // Treated as the stock at the END of that (IST) day.
 const getBaseline = async (centerId, start, productId) => {
   const snapshot = await StockClosing.findOne({
-    status: "Approved",
+    status: { $in: ["Submitted", "Verified"] },
     date: { $lt: start },
     $or: [{ center: centerId }, { closingCenter: centerId }],
   })
@@ -749,7 +751,7 @@ const getPeriodClosingSnapshot = async (centerId, start, end) => {
   }
 
   const snapshot = await StockClosing.findOne({
-    status: "Approved",
+    status: { $in: ["Submitted", "Verified"] },
     date: { $gte: finalDayStart, $lte: finalDayEnd },
     $or: [{ center: centerId }, { closingCenter: centerId }],
   })
@@ -831,7 +833,7 @@ if (closingSnapshot) {
   for (const row of rows) {
     row.closing = 0;
     row.closingDate = closingSnapshot.date;
-    row.closingSource = "approved_snapshot";
+    row.closingSource = "submitted_snapshot";
   }
 
   // Apply snapshot quantities.
@@ -847,7 +849,7 @@ if (closingSnapshot) {
 
     row.closing = quantity;
     row.closingDate = closingSnapshot.date;
-    row.closingSource = "approved_snapshot";
+    row.closingSource = "submitted_snapshot";
   }
 }
 

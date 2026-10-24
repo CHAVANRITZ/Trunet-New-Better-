@@ -261,6 +261,8 @@ export async function login({
      * They get a short-lived center-selection token only; the real
      * access token is issued by POST /auth/select-center.
      */
+
+
     if (await requiresCenterSelection(user)) {
         return {
             requiresCenterSelection: true,
@@ -323,19 +325,43 @@ async function isUserSuperAdmin(user) {
  * must choose a center after logging in.
  * Change this one function if the rule should be different.
  */
+
 async function requiresCenterSelection(user) {
     if (await isUserSuperAdmin(user)) {
         return false;
     }
 
-    return !(await isUserSuperAdmin(user));
+    const assignedCenterIds = [
+        user.center?._id ?? user.center,
+        ...(user.accessibleCenters || []).map(
+            center => center?._id ?? center
+        )
+    ]
+        .filter(Boolean)
+        .map(String);
+
+    const uniqueCenterIds = [...new Set(assignedCenterIds)];
+
+    if (uniqueCenterIds.length === 0) {
+        return false;
+    }
+
+const activeCenterCount = await Center.countDocuments({
+    _id: { $in: uniqueCenterIds },
+    status: "Enable"
+});
+
+
+
+return activeCenterCount > 0;
 }
+
 
 /**
  * Safe user object for the client, with center and
  * accessibleCenters expanded to { _id, centerName, centerCode }.
  */
-async function buildUserPayload(user) {
+export async function buildUserPayload(user) {
     const payload = sanitizeUser(user);
 
     const ids = [
@@ -427,9 +453,14 @@ async function applyCenterChoice(user, centerId) {
         );
     }
 
-    if (!(await Center.exists({ _id: centerId }))) {
-        throw new ApiError(404, "Center not found.");
-    }
+const center = await Center.findOne({
+    _id: centerId,
+    status: "Enable"
+}).select("_id");
+
+if (!center) {
+    throw new ApiError(404, "Center not found or is disabled.");
+}
 
     await User.updateOne(
         { _id: user._id },
@@ -491,23 +522,23 @@ export async function selectCenter({ authorizationHeader, centerId }) {
 /**
  * Switch center while already logged in (normal access token).
  */
+
 export async function switchCenter({ userId, centerId }) {
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).populate("role");
     assertUsable(user);
 
     const updated = await applyCenterChoice(user, centerId);
 
-    const accessToken = generateAccessToken({
-        sub: updated._id.toString(),
-        role: String(updated.role._id ?? updated.role),
-        centerId: String(centerId)
-    });
+    const { accessToken, refreshToken } =
+        await createSessionTokens(updated, centerId);
 
     return {
         user: await buildUserPayload(updated),
-        accessToken
+        accessToken,
+        refreshToken
     };
 }
+
 
 /**
  * Refreshes an authenticated session using a valid

@@ -4,7 +4,8 @@ import {
     refreshToken,
     logout,
     selectCenter,
-    switchCenter
+    switchCenter,
+    buildUserPayload
 } from "../services/authService.js";
 import Role from "../models/Role.js";
 import Center from "../models/Center.js";
@@ -97,6 +98,8 @@ export async function switchCenterController(req, res) {
 /**
  * Returns the currently authenticated user's profile.
  */
+
+
 export async function getCurrentUser(req, res) {
     const user = await User.findById(req.user.id).populate("role");
 
@@ -108,11 +111,15 @@ export async function getCurrentUser(req, res) {
         throw new ApiError(403, "User account is disabled.");
     }
 
+    const userPayload = await buildUserPayload(user);
+
     return sendSuccess(res, {
         message: "Current user retrieved successfully.",
-        data: { user }
+        data: { user: userPayload }
     });
 }
+
+
 
 /**
  * Refreshes the access token.
@@ -567,6 +574,7 @@ export async function updateUserController(req, res) {
  * Super Admin accounts can only be deleted by another Super Admin,
  * and the last Super Admin can never be deleted.
  */
+
 export async function deleteUserController(req, res) {
     const { id } = req.params;
 
@@ -594,9 +602,9 @@ export async function deleteUserController(req, res) {
             );
         }
 
-        const superRoleIds = await Role.find({ isSuperAdmin: true }).distinct(
-            "_id"
-        );
+        const superRoleIds = await Role.find({
+            isSuperAdmin: true
+        }).distinct("_id");
 
         const remaining = await User.countDocuments({
             _id: { $ne: user._id },
@@ -607,7 +615,10 @@ export async function deleteUserController(req, res) {
         });
 
         if (remaining === 0) {
-            throw new ApiError(400, "You cannot delete the last Super Admin.");
+            throw new ApiError(
+                400,
+                "You cannot delete the last Super Admin."
+            );
         }
     }
 
