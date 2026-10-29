@@ -5,7 +5,8 @@ import {
     refreshToken,
     logout,
     selectCenter,
-    switchCenter
+    switchCenter,
+    buildUserPayload,
 } from "../services/authService.js";
 import Role from "../models/Role.js";
 import Center from "../models/Center.js";
@@ -41,11 +42,13 @@ export async function loginController(req, res) {
     const result = await login({
         username: req.body.username,
         password: req.body.password,
-        request: req
+        request: req,
     });
 
     const needsCenter = Boolean(result.requiresCenterSelection);
 
+    // The frontend reads token and requiresCenterSelection
+    // from the top-level response.
     return res.status(200).json({
         success: true,
         message: needsCenter
@@ -53,41 +56,43 @@ export async function loginController(req, res) {
             : "Login successful.",
         requiresCenterSelection: needsCenter,
         token: result.accessToken,
-        data: result
+        data: result,
     });
 }
 
 /**
  * POST /api/v1/auth/select-center
+ * Uses the center-selection token returned by login.
  */
 export async function selectCenterController(req, res) {
     const result = await selectCenter({
         authorizationHeader: req.headers.authorization,
-        centerId: req.body?.centerId
+        centerId: req.body?.centerId,
     });
 
     return res.status(200).json({
         success: true,
         message: "Center selected successfully.",
         token: result.accessToken,
-        data: result
+        data: result,
     });
 }
 
 /**
  * POST /api/v1/auth/switch-center
+ * Uses the normal access token.
  */
 export async function switchCenterController(req, res) {
     const result = await switchCenter({
         userId: req.user.id,
-        centerId: req.body?.centerId
+        centerId: req.body?.centerId,
     });
 
     return res.status(200).json({
         success: true,
         message: "Center switched successfully.",
         token: result.accessToken,
-        data: result
+        data: result,
     });
 }
 
@@ -111,9 +116,11 @@ export async function getCurrentUser(req, res) {
         throw new ApiError(403, "User account is disabled.");
     }
 
+    const userPayload = await buildUserPayload(user);
+
     return sendSuccess(res, {
         message: "Current user retrieved successfully.",
-        data: { user }
+        data: { user: userPayload },
     });
 }
 
@@ -126,7 +133,7 @@ export async function refreshTokenController(req, res) {
     return sendSuccess(res, {
         statusCode: 200,
         message: "Token refreshed successfully.",
-        data: result
+        data: result,
     });
 }
 
@@ -138,7 +145,7 @@ export async function logoutController(req, res) {
 
     return sendSuccess(res, {
         statusCode: 200,
-        message: "Logout successful."
+        message: "Logout successful.",
     });
 }
 
@@ -171,7 +178,7 @@ export async function getAllUsers(req, res) {
             { fullName: { $regex: escapedSearch, $options: "i" } },
             { username: { $regex: escapedSearch, $options: "i" } },
             { email: { $regex: escapedSearch, $options: "i" } },
-            { mobile: { $regex: escapedSearch, $options: "i" } }
+            { mobile: { $regex: escapedSearch, $options: "i" } },
         ];
     }
 
@@ -188,7 +195,7 @@ export async function getAllUsers(req, res) {
             .skip(skip)
             .limit(limit)
             .lean(),
-        User.countDocuments(filter)
+        User.countDocuments(filter),
     ]);
 
     return sendSuccess(res, {
@@ -201,9 +208,9 @@ export async function getAllUsers(req, res) {
                 total,
                 totalPages: Math.ceil(total / limit),
                 hasNext: page < Math.ceil(total / limit),
-                hasPrev: page > 1
-            }
-        }
+                hasPrev: page > 1,
+            },
+        },
     });
 }
 
@@ -221,7 +228,7 @@ export async function createUserController(req, res) {
         centers,
         accessibleCenters,
         status,
-        password
+        password,
     } = req.body;
 
     const normalizedUsername = String(username || "")
@@ -239,8 +246,8 @@ export async function createUserController(req, res) {
     const existingUser = await User.findOne({
         $or: [
             { username: normalizedUsername },
-            { email: normalizedEmail }
-        ]
+            { email: normalizedEmail },
+        ],
     });
 
     if (existingUser) {
@@ -276,7 +283,7 @@ export async function createUserController(req, res) {
     const centerIds = [
         ...new Set(
             submittedCenters
-                .map(value => {
+                .map((value) => {
                     if (value && typeof value === "object") {
                         return value._id ? String(value._id) : null;
                     }
@@ -284,12 +291,12 @@ export async function createUserController(req, res) {
                     return value ? String(value) : null;
                 })
                 .filter(Boolean)
-        )
+        ),
     ];
 
     if (centerIds.length > 0) {
         const matchingCount = await Center.countDocuments({
-            _id: { $in: centerIds }
+            _id: { $in: centerIds },
         });
 
         if (matchingCount !== centerIds.length) {
@@ -306,7 +313,7 @@ export async function createUserController(req, res) {
 
     if (primaryCenterId) {
         const primaryExists = await Center.exists({
-            _id: primaryCenterId
+            _id: primaryCenterId,
         });
 
         if (!primaryExists) {
@@ -332,7 +339,7 @@ export async function createUserController(req, res) {
         center: primaryCenterId,
         accessibleCenters: centerIds,
         status: status || "Enable",
-        password: hashedPassword
+        password: hashedPassword,
     });
 
     const createdUser = await User.findById(user._id)
@@ -348,7 +355,7 @@ export async function createUserController(req, res) {
     return sendSuccess(res, {
         statusCode: 201,
         message: "User created successfully.",
-        data: { user: createdUser }
+        data: { user: createdUser },
     });
 }
 
@@ -373,7 +380,7 @@ export async function getUserById(req, res) {
     return sendSuccess(res, {
         statusCode: 200,
         message: "User retrieved successfully.",
-        data: { user }
+        data: { user },
     });
 }
 
@@ -396,7 +403,7 @@ export async function updateUserController(req, res) {
         center,
         accessibleCenters,
         status,
-        password
+        password,
     } = req.body;
 
     const normalizedUsername =
@@ -418,8 +425,8 @@ export async function updateUserController(req, res) {
             _id: { $ne: user._id },
             $or: [
                 { username: normalizedUsername },
-                { email: normalizedEmail }
-            ]
+                { email: normalizedEmail },
+            ],
         });
 
         if (duplicate) {
@@ -465,7 +472,7 @@ export async function updateUserController(req, res) {
 
         if (centerIds.length > 0) {
             const matchingCount = await Center.countDocuments({
-                _id: { $in: centerIds }
+                _id: { $in: centerIds },
             });
 
             if (matchingCount !== centerIds.length) {
@@ -520,7 +527,7 @@ export async function updateUserController(req, res) {
     return sendSuccess(res, {
         statusCode: 200,
         message: "User updated successfully.",
-        data: { user: updatedUser }
+        data: { user: updatedUser },
     });
 }
 
@@ -543,7 +550,8 @@ export async function deleteUserController(req, res) {
     const targetIsSuperAdmin = Boolean(
         user.isSuperAdmin ||
         user.role?.isSuperAdmin ||
-        String(user.role?.roleTitle || "").trim().toLowerCase() === "superadmin"
+        String(user.role?.roleTitle || "").trim().toLowerCase() ===
+            "superadmin"
     );
 
     if (targetIsSuperAdmin) {
@@ -555,15 +563,15 @@ export async function deleteUserController(req, res) {
         }
 
         const superRoleIds = await Role.find({
-            isSuperAdmin: true
+            isSuperAdmin: true,
         }).distinct("_id");
 
         const remaining = await User.countDocuments({
             _id: { $ne: user._id },
             $or: [
                 { role: { $in: superRoleIds } },
-                { isSuperAdmin: true }
-            ]
+                { isSuperAdmin: true },
+            ],
         });
 
         if (remaining === 0) {
@@ -579,6 +587,6 @@ export async function deleteUserController(req, res) {
     return sendSuccess(res, {
         statusCode: 200,
         message: "User deleted successfully.",
-        data: {}
+        data: {},
     });
 }

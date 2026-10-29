@@ -1,4 +1,3 @@
-
 import jwt from "jsonwebtoken";
 
 import { env } from "../config/env.js";
@@ -51,7 +50,13 @@ export function generateAccessToken(payload) {
 
 /**
  * Generates a restricted token for center selection.
- * It must not grant access to normal protected endpoints.
+ *
+ * This short-lived token is issued after successful login when
+ * the user must select a center. The step claim allows the
+ * authentication middleware to distinguish it from a regular
+ * access token.
+ *
+ * Only the center-selection endpoint should accept this token.
  */
 export function generateCenterSelectionToken(payload) {
     if (!env.JWT_SECRET) {
@@ -82,6 +87,9 @@ export function generateCenterSelectionToken(payload) {
 
 /**
  * Generates a refresh token.
+ *
+ * Refresh tokens should be persisted as hashed session records
+ * so individual sessions can be revoked.
  */
 export function generateRefreshToken(payload) {
     if (!env.REFRESH_TOKEN_SECRET) {

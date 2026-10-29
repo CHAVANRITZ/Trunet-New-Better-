@@ -1,4 +1,3 @@
-
 import express from "express";
 
 import {
@@ -41,8 +40,8 @@ router.post(
 
 // POST /api/v1/auth/select-center
 // Uses the short-lived center-selection token.
-// Do not apply the normal authMiddleware here because that middleware
-// intentionally rejects center-selection tokens on protected routes.
+// Do not apply authMiddleware here because it rejects
+// center-selection tokens on protected routes.
 router.post(
     "/select-center",
     asyncHandler(selectCenterController)
