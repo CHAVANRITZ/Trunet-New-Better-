@@ -55,7 +55,11 @@ const stockClosingSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "StockClosing",
     },
-    products: [productItemSchema],
+    products: {
+      type: [productItemSchema],
+      default: [], // Allow empty array
+      // REMOVED: required validation
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -84,7 +88,6 @@ const stockClosingSchema = new mongoose.Schema(
       trim: true,
       maxlength: [500, "Approved remark cannot exceed 500 characters"],
     },
-    // NEW FIELDS: Track which month/year this report belongs to
     reportMonth: {
       type: Number,
       min: 1,
@@ -92,7 +95,7 @@ const stockClosingSchema = new mongoose.Schema(
       required: [true, "Report month is required"],
       default: function() {
         const date = this.date || new Date();
-        return date.getMonth() + 1; // 1-12 (January = 1)
+        return date.getMonth() + 1;
       }
     },
     reportYear: {
@@ -116,7 +119,6 @@ stockClosingSchema.index({ "products.product": 1 });
 stockClosingSchema.index({ stockClosingForOtherCenter: 1 });
 stockClosingSchema.index({ closingCenter: 1 });
 stockClosingSchema.index({ linkedStockClosing: 1 });
-// NEW: Indexes for month/year queries
 stockClosingSchema.index({ reportMonth: 1, reportYear: 1 });
 stockClosingSchema.index({ closingCenter: 1, reportMonth: 1, reportYear: 1 });
 
@@ -125,30 +127,35 @@ stockClosingSchema.virtual("totalQty").get(function () {
   return this.totalProductQty + this.totalDamageQty;
 });
 
-// Pre-save middleware
+// ========== UPDATED PRE-SAVE MIDDLEWARE ==========
 stockClosingSchema.pre("save", function (next) {
-  if (!this.products || this.products.length === 0) {
-    return next(new Error("At least one product is required"));
-  }
-
-  for (const product of this.products) {
-    if (product.damageQty > product.productQty) {
-      return next(
-        new Error(
-          `Damage quantity cannot exceed product quantity for product ${product.product}`
-        )
-      );
+  // REMOVED: Products validation - now optional
+  
+  // Only calculate totals if products exist
+  if (this.products && this.products.length > 0) {
+    for (const product of this.products) {
+      if (product.damageQty > product.productQty) {
+        return next(
+          new Error(
+            `Damage quantity cannot exceed product quantity for product ${product.product}`
+          )
+        );
+      }
     }
-  }
 
-  this.totalProductQty = this.products.reduce(
-    (total, product) => total + product.productQty,
-    0
-  );
-  this.totalDamageQty = this.products.reduce(
-    (total, product) => total + product.damageQty,
-    0
-  );
+    this.totalProductQty = this.products.reduce(
+      (total, product) => total + product.productQty,
+      0
+    );
+    this.totalDamageQty = this.products.reduce(
+      (total, product) => total + product.damageQty,
+      0
+    );
+  } else {
+    // If no products, set totals to 0
+    this.totalProductQty = 0;
+    this.totalDamageQty = 0;
+  }
 
   // Auto-set reportMonth and reportYear if not provided
   if (!this.reportMonth || !this.reportYear) {
@@ -193,7 +200,6 @@ stockClosingSchema.statics.findByClosingCenter = function (
   );
 };
 
-// NEW: Static method to find reports for a specific month
 stockClosingSchema.statics.findByMonthAndYear = function (month, year, centerId = null) {
   const query = {
     reportMonth: month,
@@ -210,7 +216,6 @@ stockClosingSchema.statics.findByMonthAndYear = function (month, year, centerId 
   );
 };
 
-// NEW: Static method to check if a center has submitted for a specific month
 stockClosingSchema.statics.hasSubmittedForMonth = async function (centerId, month, year) {
   const count = await this.countDocuments({
     closingCenter: centerId,
@@ -230,14 +235,12 @@ stockClosingSchema.methods.getClosingCenter = function () {
   return this.closingCenter;
 };
 
-// NEW: Get the month name
 stockClosingSchema.methods.getMonthName = function () {
   const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
                       'July', 'August', 'September', 'October', 'November', 'December'];
   return monthNames[this.reportMonth - 1];
 };
 
-// NEW: Get formatted report period
 stockClosingSchema.methods.getReportPeriod = function () {
   const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

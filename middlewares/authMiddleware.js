@@ -438,22 +438,96 @@ export const authorizeAccess = (module, ...actions) => {
       modulePermissions.permissions.includes(action)
     );
 
-    // if (!hasPermission) {
-    //   return res.status(403).json({
-    //     success: false,
-    //     message: `Access denied. Required one of: ${actions.join(
-    //       ", "
-    //     )} for ${module} module.`,
-    //   });
-    // }
-
     if (!hasPermission) {
       return res.status(403).json({
         success: false,
         message: `Access denied. You need at least one of these permissions: ${actions.join(", ")} for the ${module} module.`,
       });
     }
-    
+
     next();
   };
+};
+
+
+// ONLY AFTER authorizeAccess is completely closed
+export const protectCenterSelection = async (req, res, next) => {
+  try {
+    let token;
+
+    if (
+      req.headers.authorization &&
+      req.headers.authorization.startsWith("Bearer")
+    ) {
+      token = req.headers.authorization.split(" ")[1];
+    }
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: "You are not logged in. Please log in to get access.",
+      });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // This middleware is ONLY for the center-selection token
+    if (decoded.step !== "center_selection") {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid center selection token.",
+      });
+    }
+
+    const currentUser = await User.findById(decoded.id)
+      .populate({
+        path: "role",
+        select: "roleTitle permissions isSuperAdmin",
+      })
+      .populate({
+        path: "accessibleCenters",
+        select: "centerName centerCode",
+      });
+
+    if (!currentUser) {
+      return res.status(401).json({
+        success: false,
+        message: "The user belonging to this token no longer exists.",
+      });
+    }
+
+    if (currentUser.status === "Disable" && !isSuperAdmin(currentUser)) {
+      return res.status(401).json({
+        success: false,
+        message:
+          "Your account has been disabled. Please contact administrator.",
+      });
+    }
+
+    // switchCenter() needs req.user.id
+    req.user = currentUser;
+
+    next();
+  } catch (error) {
+    console.error("Center selection middleware error:", error);
+
+    if (error.name === "JsonWebTokenError") {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid token. Please log in again.",
+      });
+    }
+
+    if (error.name === "TokenExpiredError") {
+      return res.status(401).json({
+        success: false,
+        message: "Your token has expired. Please log in again.",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
 };

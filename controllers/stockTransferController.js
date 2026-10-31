@@ -1324,6 +1324,11 @@ export const completeStockTransfer = async (req, res) => {
     const { id } = req.params;
     const { productReceipts } = req.body;
 
+    // DEBUG: raw payload as received by Express
+    console.log(`[DEBUG] RAW req.body:`, JSON.stringify(req.body, null, 2));
+    console.log(`[DEBUG] RAW productReceipts:`, JSON.stringify(productReceipts, null, 2));
+    console.log(`[DEBUG] Content-Type header:`, req.headers["content-type"]);
+
     const stockTransfer = await StockTransfer.findById(id)
       .populate("fromCenter", "_id centerName centerCode")
       .populate("toCenter", "_id centerName centerCode")
@@ -1361,19 +1366,37 @@ export const completeStockTransfer = async (req, res) => {
 
     // Validate received quantities
     if (productReceipts && productReceipts.length > 0) {
+      console.log(`[DEBUG] Processing ${productReceipts.length} product receipt(s)`);
+
       for (const receipt of productReceipts) {
+        // DEBUG: exact shape/type of each incoming receipt
+        console.log(`[DEBUG] Receipt for productId=${receipt.productId}:`, {
+          receivedQuantity: receipt.receivedQuantity,
+          receivedQuantityType: typeof receipt.receivedQuantity,
+          receivedRemark: receipt.receivedRemark,
+          fullReceipt: receipt,
+        });
+
         const productItem = stockTransfer.products.find(
           (p) => p.product._id.toString() === receipt.productId.toString()
         );
 
         if (!productItem) {
+          console.log(`[DEBUG] Product ${receipt.productId} NOT FOUND in transfer.products`);
           return res.status(400).json({
             success: false,
             message: `Product ${receipt.productId} not found in transfer`,
           });
         }
 
+        console.log(`[DEBUG] Matched productItem:`, {
+          productId: productItem.product._id.toString(),
+          approvedQuantity: productItem.approvedQuantity,
+          currentReceivedQuantity: productItem.receivedQuantity,
+        });
+
         if (receipt.receivedQuantity > productItem.approvedQuantity) {
+          console.log(`[DEBUG] REJECTED: receivedQuantity (${receipt.receivedQuantity}) > approvedQuantity (${productItem.approvedQuantity})`);
           return res.status(400).json({
             success: false,
             message: `Received quantity (${receipt.receivedQuantity}) cannot exceed approved quantity (${productItem.approvedQuantity}) for product`,
@@ -1383,8 +1406,11 @@ export const completeStockTransfer = async (req, res) => {
         // Update product with received quantities
         productItem.receivedQuantity = receipt.receivedQuantity;
         productItem.receivedRemark = receipt.receivedRemark || "";
+
+        console.log(`[DEBUG] Set productItem.receivedQuantity =`, productItem.receivedQuantity);
       }
     } else {
+      console.log(`[DEBUG] No productReceipts provided (or empty array) — falling back to approvedQuantity for all products`);
       // If no productReceipts provided, use approved quantities
       stockTransfer.products.forEach((productItem) => {
         productItem.receivedQuantity = productItem.approvedQuantity || 0;
@@ -1394,6 +1420,13 @@ export const completeStockTransfer = async (req, res) => {
     // CRITICAL FIX: Don't manually update CenterStock here
     // Let the model's completeTransfer method handle all stock updates
     
+    console.log(`[DEBUG] Products array right before completeTransfer:`,
+      stockTransfer.products.map(p => ({
+        productId: p.product._id.toString(),
+        approvedQuantity: p.approvedQuantity,
+        receivedQuantity: p.receivedQuantity,
+      }))
+    );
     console.log(`[DEBUG] Calling completeTransfer on model...`);
     
     // This will handle all stock updates internally
@@ -1421,7 +1454,8 @@ export const completeStockTransfer = async (req, res) => {
       data: populatedTransfer,
     });
   } catch (error) {
-    console.error("Error completing stock transfer:", error);
+    console.error("[DEBUG] Error completing stock transfer:", error);
+    console.error("[DEBUG] Error stack:", error.stack);
 
     if (error.message.includes("Received quantity cannot exceed")) {
       return res.status(400).json({
@@ -5070,3 +5104,4 @@ export const getProductDistribution = async (req, res) => {
     });
   }
 };
+

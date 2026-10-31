@@ -9,116 +9,32 @@ import Center from "../models/Center.js";
 import ReturnRecord from "../models/ReturnRecord.js";
 
 // ============================================================
-// Helper: Parse DD-MM-YYYY string into a proper Date object
-// (Fixes the bug where new Date("31-08-2026") returns Invalid Date
-// because JS assumes MM-DD-YYYY by default)
+// MOVEMENT FIELDS - Excludes opening and closing
 // ============================================================
-function parseDDMMYYYY(dateStr) {
-  if (!dateStr) return null;
+const MOVEMENT_FIELDS = [
+  'purchase', 'distributed', 'transferReceive', 'replaceReturn', 'usage',
+  'transferGiven', 'nc', 'convert', 'shifting', 'buildingUsage', 'buildingDamage',
+  'other', 'return', 'repair', 'damage', 'replaceDamage', 'stolenCenter', 'stolenField'
+];
 
-  const parts = dateStr.split("-");
-  if (parts.length !== 3) return null;
-
-  const [day, month, year] = parts.map(Number);
-
-  if (
-    !day || !month || !year ||
-    day < 1 || day > 31 ||
-    month < 1 || month > 12
-  ) {
-    return null;
-  }
-
-  const parsed = new Date(year, month - 1, day);
-
-  // Guard against JS auto-correcting invalid dates (e.g. 31-02-2026 -> March 3)
-  if (
-    parsed.getFullYear() !== year ||
-    parsed.getMonth() !== month - 1 ||
-    parsed.getDate() !== day
-  ) {
-    return null;
-  }
-
-  return parsed;
-}
-
-// ============================================================
-// Helper: Build a { startDate, endDate } range from query params
-// Priority: explicit startDate/endDate > month/year > current month
-// ============================================================
-function getDateRange(startDate, endDate, month, year) {
-  let start, end;
-
-  if (startDate && endDate) {
-    start = parseDDMMYYYY(startDate);
-    end = parseDDMMYYYY(endDate);
-
-    if (!start || !end) {
-      throw new Error(
-        `Invalid date format. Expected DD-MM-YYYY, got startDate="${startDate}", endDate="${endDate}"`
-      );
-    }
-
-    if (start > end) {
-      throw new Error("startDate cannot be after endDate");
-    }
-
-    // Include the entire end day (23:59:59.999), not just midnight
-    end.setHours(23, 59, 59, 999);
-  } else if (month && year) {
-    const m = parseInt(month);
-    const y = parseInt(year);
-
-    if (!m || m < 1 || m > 12 || !y) {
-      throw new Error(`Invalid month/year: month=${month}, year=${year}`);
-    }
-
-    start = new Date(y, m - 1, 1, 0, 0, 0, 0);
-    end = new Date(y, m, 0, 23, 59, 59, 999); // day 0 of next month = last day of this month
-  } else {
-    // Default: current month
-    const now = new Date();
-    start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-    end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-  }
-
-  return { startDate: start, endDate: end };
-}
-// ============================================================
-// Controller: getUsageSummary
-// ============================================================
 export const getUsageSummary = async (req, res) => {
   try {
-    const {
-      startDate,
-      endDate,
-      centerId,
-      productId,
+    const { 
+      startDate, 
+      endDate, 
+      centerId, 
+      productId, 
       month,
       year,
       page = 1,
       limit = 100
     } = req.query;
-
+    
     const user = req.user;
-
-    let dateRange;
-    try {
-      dateRange = getDateRange(startDate, endDate, month, year);
-    } catch (dateError) {
-      return res.status(400).json({
-        success: false,
-        message: dateError.message
-      });
-    }
-
-    console.log(
-      `Date filter resolved: ${dateRange.startDate.toISOString()} to ${dateRange.endDate.toISOString()}`
-    );
-
+    let dateRange = getDateRange(startDate, endDate, month, year);
+    
     let targetCenters = await getTargetCenters(centerId, user);
-
+    
     if (!targetCenters || targetCenters.length === 0) {
       return res.status(400).json({
         success: false,
@@ -129,10 +45,10 @@ export const getUsageSummary = async (req, res) => {
     console.log(`Processing data for ${targetCenters.length} centers, productId: ${productId}`);
 
     const allCenterData = [];
-
+    
     for (const center of targetCenters) {
       console.log(`Processing center: ${center.centerName} (${center._id})`);
-
+      
       const [
         stockRequests,
         stockTransfers,
@@ -140,7 +56,7 @@ export const getUsageSummary = async (req, res) => {
         damageReturns,
         replacementRecords,
         stockClosings,
-        returnRecords,
+        returnRecords, 
         openingStock
       ] = await Promise.all([
         getStockRequestData(center._id, dateRange, productId),
@@ -150,9 +66,9 @@ export const getUsageSummary = async (req, res) => {
         getReplacementRecordData(center._id, dateRange, productId),
         getStockClosingData(center._id, dateRange, productId),
         getReturnRecordData(center._id, dateRange, productId),
-        getOpeningStockData(center._id, dateRange.startDate, productId)
+        getOpeningStockData(center._id, dateRange.startDate, productId) 
       ]);
-
+      
       const usageSummary = processUsageSummary({
         stockRequests,
         stockTransfers,
@@ -171,25 +87,21 @@ export const getUsageSummary = async (req, res) => {
     const pageSize = parseInt(limit);
     const startIndex = (currentPage - 1) * pageSize;
     const endIndex = startIndex + pageSize;
-
+    
     const paginatedData = allCenterData.slice(startIndex, endIndex);
     const totalRecords = allCenterData.length;
     const totalPages = Math.ceil(totalRecords / pageSize);
 
     // Prepare filters response
-    // FIXED: month/year now derived from the ACTUAL resolved dateRange,
-    // instead of falling back to the literal string 'current' whenever
-    // the request used startDate/endDate instead of month/year.
     const filters = {
       dateRange: {
         startDate: dateRange.startDate,
         endDate: dateRange.endDate
       },
       productId,
-      month: dateRange.startDate.getMonth() + 1, // 1-12, derived from resolved range
-      year: dateRange.startDate.getFullYear()     // derived from resolved range
+      month: month || 'current',
+      year: year || new Date().getFullYear()
     };
-
     if (targetCenters.length === 1) {
       filters.center = {
         id: targetCenters[0]._id,
@@ -341,28 +253,73 @@ const getTargetCenters = async (requestedCenterId, user) => {
   }
 };
 
-// const getDateRange = (startDate, endDate, month, year) => {
-//   let start, end;
+// Helper: Parse DD-MM-YYYY string into a proper Date object
+function parseDDMMYYYY(dateStr) {
+  if (!dateStr) return null;
   
-//   if (startDate && endDate) {
-//     start = new Date(startDate);
-//     end = new Date(endDate);
-//   } else if (month) {
-//     const targetYear = year || new Date().getFullYear();
-//     const targetMonth = parseInt(month) - 1;
+  // Check if it's already a valid ISO date string like YYYY-MM-DD
+  const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) return d;
+  }
+  
+  // Try DD-MM-YYYY format (this is the format your API uses)
+  const parts = dateStr.split("-");
+  if (parts.length !== 3) return null;
+  
+  const [day, month, year] = parts.map(Number);
+  
+  if (!day || !month || !year || day < 1 || day > 31 || month < 1 || month > 12) {
+    return null;
+  }
+  
+  const parsed = new Date(year, month - 1, day);
+  
+  // Guard against JS auto-correcting invalid dates (e.g., 31-02-2026 -> March 3)
+  if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) {
+    return null;
+  }
+  
+  return parsed;
+}
+
+const getDateRange = (startDate, endDate, month, year) => {
+  let start, end;
+  
+  if (startDate && endDate) {
+    start = parseDDMMYYYY(startDate);
+    end = parseDDMMYYYY(endDate);
     
-//     start = new Date(targetYear, targetMonth, 1);
-//     end = new Date(targetYear, targetMonth + 1, 0, 23, 59, 59, 999);
-//   } else {
-//     const now = new Date();
-//     start = new Date(now.getFullYear(), now.getMonth(), 1);
-//     end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-//   }
+    if (!start || !end) {
+      throw new Error(`Invalid date format. Expected DD-MM-YYYY, got startDate="${startDate}", endDate="${endDate}"`);
+    }
+    
+    if (start > end) {
+      throw new Error("startDate cannot be after endDate");
+    }
+    
+    // Include the entire end day (23:59:59.999)
+    end.setHours(23, 59, 59, 999);
+  } else if (month && year) {
+    const m = parseInt(month);
+    const y = parseInt(year);
+    
+    if (!m || m < 1 || m > 12 || !y) {
+      throw new Error(`Invalid month/year: month=${month}, year=${year}`);
+    }
+    
+    start = new Date(y, m - 1, 1, 0, 0, 0, 0);
+    end = new Date(y, m, 0, 23, 59, 59, 999);
+  } else {
+    // Default: current month
+    const now = new Date();
+    start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+    end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  }
   
-//   start.setHours(0, 0, 0, 0);
-  
-//   return { startDate: start, endDate: end };
-// };
+  return { startDate: start, endDate: end };
+};
 
 const getStockRequestData = async (centerId, dateRange, productId) => {
   const matchStage = {
@@ -409,11 +366,6 @@ const getStockRequestData = async (centerId, dateRange, productId) => {
       }
     },
     {
-      $addFields: {
-        quantityValue: 0  // Set quantity to 0 using $addFields instead
-      }
-    },
-    {
       $project: {
         _id: 1,
         date: 1,
@@ -423,7 +375,19 @@ const getStockRequestData = async (centerId, dateRange, productId) => {
         warehouse: { $arrayElemAt: ["$warehouseInfo", 0] },
         product: "$products.product",
         productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
-        quantity: "$quantityValue",  // Use the field we set to 0
+        quantity: {
+          $cond: {
+            if: { $ifNull: ["$products.receivedQuantity", null] },
+            then: "$products.receivedQuantity",
+            else: {
+              $cond: {
+                if: { $ifNull: ["$products.approvedQuantity", null] },
+                then: "$products.approvedQuantity",
+                else: "$products.quantity"
+              }
+            }
+          }
+        },
         approvedQuantity: "$products.approvedQuantity",
         receivedQuantity: "$products.receivedQuantity",
         status: 1
@@ -524,8 +488,11 @@ const getStockTransferData = async (centerId, dateRange, productId) => {
 
 const getStockUsageData = async (centerId, dateRange, productId) => {
   const matchStage = {
-    center: new mongoose.Types.ObjectId(centerId),
-    status: "completed",
+    $or: [
+      { center: new mongoose.Types.ObjectId(centerId) },
+      { toCenter: new mongoose.Types.ObjectId(centerId) }
+    ],
+    status: { $in: ["completed", "pending"] },
     date: {
       $gte: dateRange.startDate,
       $lte: dateRange.endDate
@@ -535,7 +502,10 @@ const getStockUsageData = async (centerId, dateRange, productId) => {
     matchStage['items.product'] = new mongoose.Types.ObjectId(productId);
   }
 
-  const usageData = await StockUsage.aggregate([
+  console.log(`🔍 Querying StockUsage for center ${centerId} with date range: ${dateRange.startDate} to ${dateRange.endDate}`);
+  console.log(`🔍 MatchStage:`, JSON.stringify(matchStage, null, 2));
+
+const usageData = await StockUsage.aggregate([
     { $match: matchStage },
     { $unwind: "$items" },
     {
@@ -552,6 +522,25 @@ const getStockUsageData = async (centerId, dateRange, productId) => {
         localField: "center",
         foreignField: "_id",
         as: "centerInfo"
+      }
+    },
+    {
+      $lookup: {
+        from: "centers",
+        localField: "toCenter",
+        foreignField: "_id",
+        as: "toCenterInfo"
+      }
+    },
+    {
+      $addFields: {
+        centerData: {
+          $cond: {
+            if: { $eq: ["$center", new mongoose.Types.ObjectId(centerId)] },
+            then: { $arrayElemAt: ["$centerInfo", 0] },
+            else: { $arrayElemAt: ["$toCenterInfo", 0] }
+          }
+        }
       }
     },
     {
@@ -575,7 +564,7 @@ const getStockUsageData = async (centerId, dateRange, productId) => {
           }
         },
         connectionType: 1,
-        center: { $arrayElemAt: ["$centerInfo", 0] },
+        center: "$centerData",
         product: "$items.product",
         productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
         quantity: "$items.quantity",
@@ -584,12 +573,18 @@ const getStockUsageData = async (centerId, dateRange, productId) => {
         customer: 1,
         fromBuilding: 1,
         toBuilding: 1,
-        fromControlRoom: 1
+        fromControlRoom: 1,
+        isToCenter: { $eq: ["$toCenter", new mongoose.Types.ObjectId(centerId)] }
       }
     }
   ]);
 
-  return usageData.map(item => {
+  console.log(`📊 Found ${usageData.length} StockUsage records for center ${centerId}`);
+usageData.forEach((item, i) => {
+  console.log(`  ${i+1}. Type: ${item.usageType}, Product: ${item.productName || item.product}, Qty: ${item.quantity}, isToCenter: ${item.isToCenter}`);
+});
+
+return usageData.map(item => {
     if (item.usageType === "Customer" && item.connectionType) {
       switch (item.connectionType) {
         case "NC":
@@ -612,7 +607,10 @@ const getStockUsageData = async (centerId, dateRange, productId) => {
 
 const getDamageReturnData = async (centerId, dateRange, productId) => {
   const matchStage = {
-    center: new mongoose.Types.ObjectId(centerId),
+    $or: [
+      { center: new mongoose.Types.ObjectId(centerId) },
+      { toCenter: new mongoose.Types.ObjectId(centerId) }
+    ],
     status: { $in: ["approved", "pending", "replaced"] },
     date: {
       $gte: dateRange.startDate,
@@ -642,11 +640,30 @@ const getDamageReturnData = async (centerId, dateRange, productId) => {
       }
     },
     {
+      $lookup: {
+        from: "centers",
+        localField: "toCenter",
+        foreignField: "_id",
+        as: "toCenterInfo"
+      }
+    },
+    {
+      $addFields: {
+        centerData: {
+          $cond: {
+            if: { $eq: ["$center", new mongoose.Types.ObjectId(centerId)] },
+            then: { $arrayElemAt: ["$centerInfo", 0] },
+            else: { $arrayElemAt: ["$toCenterInfo", 0] }
+          }
+        }
+      }
+    },
+    {
       $project: {
         _id: 1,
         date: 1,
         type: "Replace Return",
-        center: { $arrayElemAt: ["$centerInfo", 0] },
+        center: "$centerData",
         product: 1,
         productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
         quantity: 1,
@@ -900,11 +917,14 @@ const getOpeningStockData = async (centerId, startDate, productId) => {
       }
     ]);
     
-    // 6. Get all damages BEFORE current month
+    // 6. Get all damages BEFORE current month (include both center and toCenter)
     const damages = await DamageReturn.aggregate([
       {
         $match: {
-          center: new mongoose.Types.ObjectId(centerId),
+          $or: [
+            { center: new mongoose.Types.ObjectId(centerId) },
+            { toCenter: new mongoose.Types.ObjectId(centerId) }
+          ],
           status: { $in: ["approved", "pending", "replaced"] },
           date: { $lt: currentStartDate }
         }
@@ -1182,8 +1202,14 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
 
   console.log(`Processing summary for center ${centerId}`);
   console.log(`Opening stock items: ${data.openingStock.length}`);
+  console.log(`StockRequests: ${data.stockRequests.length}`);
+  console.log(`StockTransfers: ${data.stockTransfers.length}`);
+  console.log(`StockUsages: ${data.stockUsages.length}`);
+  console.log(`DamageReturns: ${data.damageReturns.length}`);
+  console.log(`ReplacementRecords: ${data.replacementRecords.length}`);
+  console.log(`StockClosings: ${data.stockClosings.length}`);
+  console.log(`ReturnRecords: ${data.returnRecords.length}`);
   console.log(`Current month data items: ${allData.length}`);
-  console.log(`Return records found: ${data.returnRecords.length}`);
 
   // First, process opening stock
   data.openingStock.forEach(item => {
@@ -1222,7 +1248,7 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
 
     const quantity = item.quantity || item.qty || item.productQty || 0;
     
-    console.log(`Processing transaction for product: ${productIdFromItem}, Type: ${type}, Qty: ${quantity}`);
+    console.log(`Processing transaction for product: ${productIdFromItem}, Type: ${type}, Qty: ${quantity}, isToCenter: ${item.isToCenter}`);
 
     if (!groupedData[productIdFromItem]) {
       groupedData[productIdFromItem] = createEmptyProductSummary(
@@ -1404,21 +1430,10 @@ const generateSummaryStats = (usageSummary) => {
   const stats = {
     totalProducts: usageSummary.length,
     totalTransactions: usageSummary.reduce((sum, product) => {
-      // Filter out non-numeric values and the function
-      return sum + Object.entries(product)
-        .filter(([key, val]) => key !== 'calculateUsageAndClosing' && typeof val === 'number')
-        .reduce((s, [key, v]) => s + v, 0);
+      return sum + MOVEMENT_FIELDS.reduce((s, key) => s + (product[key] || 0), 0);
     }, 0),
     totalQuantity: usageSummary.reduce((sum, product) => {
-      // Exclude productName, center, productId, and the function
-      const quantities = { ...product };
-      delete quantities.productName;
-      delete quantities.center;
-      delete quantities.productId;
-      delete quantities.calculateUsageAndClosing;
-      return sum + Object.values(quantities)
-        .filter(val => typeof val === 'number')
-        .reduce((s, v) => s + v, 0);
+      return sum + MOVEMENT_FIELDS.reduce((s, key) => s + (product[key] || 0), 0);
     }, 0),
     centers: [...new Set(usageSummary.map(item => item.center?.name).filter(Boolean))]
   };
@@ -1426,9 +1441,6 @@ const generateSummaryStats = (usageSummary) => {
   return stats;
 };
 const getTotalQuantity = (item) => {
-  const quantities = { ...item };
-  delete quantities.product;
-  delete quantities.productName;
-  delete quantities.center;
-  return Object.values(quantities).reduce((sum, val) => sum + (typeof val === 'number' ? val : 0), 0);
+  return MOVEMENT_FIELDS.reduce((sum, key) => sum + (item[key] || 0), 0);
 };
+

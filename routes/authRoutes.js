@@ -15,7 +15,7 @@ import {
   switchCenter,
   refreshToken,
 } from "../controllers/authController.js";
-import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
+import { authorizeAccess, protect, protectCenterSelection } from "../middlewares/authMiddleware.js";
 import { verifyCenterSelectToken } from "../middlewares/centerSelectionMiddleware.js";
 import { bulkUploadUsersEnhanced, downloadSampleCSV } from "../controllers/bulkUsersController.js";
 
@@ -54,7 +54,11 @@ router.put(
   authorizeAccess(MODULE, "manage_user"),
   updateUser
 );
-router.post('/switch-center', protect, switchCenter);
+router.post(
+  '/switch-center',
+  protectCenterSelection,
+  switchCenter
+);
 router.delete(
   "/user/:id",
   protect,

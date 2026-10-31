@@ -6778,16 +6778,16 @@
 //         (p) => p.product.toString() === receipt.productId.toString()
 //       );
 
-//       if (!productItem) {
-//         await session.abortTransaction();
-//         session.endSession();
-//         return res.status(400).json({
-//           success: false,
-//           message: `Product with ID ${receipt.productId} not found in stock request`,
-//         });
-//       }
+      // if (!productItem) {
+      //   await session.abortTransaction();
+      //   session.endSession();
+      //   return res.status(400).json({
+      //     success: false,
+      //     message: `Product with ID ${receipt.productId} not found in stock request`,
+      //   });
+      // }
 
-//       const sourceBreakdown = productItem.sourceBreakdown || {
+      // const sourceBreakdown = productItem.sourceBreakdown || {
 //         fromReseller: { quantity: 0, serials: [] },
 //         fromOutlet: { quantity: 0, serials: [] },
 //         totalApproved: productItem.approvedQuantity || 0
@@ -7428,583 +7428,583 @@
 //   }
 // };
 // // export const updateApprovedQuantities = async (req, res) => {
-// //   try {
-// //     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
-// //       req,
-// //       ["manage_indent"]
-// //     );
+//   try {
+//     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
+//       req,
+//       ["manage_indent"]
+//     );
 
-// //     if (!hasAccess) {
-// //       return res.status(403).json({
-// //         success: false,
-// //         message: "Access denied. manage_indent permission required.",
-// //       });
-// //     }
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message: "Access denied. manage_indent permission required.",
+//       });
+//     }
 
-// //     const { id } = req.params;
-// //     const { productApprovals } = req.body;
+//     const { id } = req.params;
+//     const { productApprovals } = req.body;
 
-// //     const stockRequest = await StockRequest.findById(id);
-// //     if (!stockRequest) {
-// //       return res.status(404).json({
-// //         success: false,
-// //         message: "Stock request not found",
-// //       });
-// //     }
+//     const stockRequest = await StockRequest.findById(id);
+//     if (!stockRequest) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Stock request not found",
+//       });
+//     }
 
-// //     if (!checkCenterAccess(stockRequest, userCenter, permissions)) {
-// //       return res.status(403).json({
-// //         success: false,
-// //         message:
-// //           "Access denied. You can only update approved quantities for stock requests from your own center.",
-// //       });
-// //     }
+//     if (!checkCenterAccess(stockRequest, userCenter, permissions)) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. You can only update approved quantities for stock requests from your own center.",
+//       });
+//     }
 
-// //     const userId = req.user?.id;
-// //     if (!userId) {
-// //       return res.status(400).json({
-// //         success: false,
-// //         message: "User authentication required",
-// //       });
-// //     }
+//     const userId = req.user?.id;
+//     if (!userId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "User authentication required",
+//       });
+//     }
 
-// //     const OutletStock = mongoose.model("OutletStock");
-// //     const Product = mongoose.model("Product");
+//     const OutletStock = mongoose.model("OutletStock");
+//     const Product = mongoose.model("Product");
 
-// //     // Validate product approvals
-// //     for (const approval of productApprovals) {
-// //       if (!approval.productId) {
-// //         return res.status(400).json({
-// //           success: false,
-// //           message: "Product ID is required for each product approval",
-// //         });
-// //       }
+//     // Validate product approvals
+//     for (const approval of productApprovals) {
+//       if (!approval.productId) {
+//         return res.status(400).json({
+//           success: false,
+//           message: "Product ID is required for each product approval",
+//         });
+//       }
 
-// //       const productDoc = await Product.findById(approval.productId);
+//       const productDoc = await Product.findById(approval.productId);
       
-// //       // Skip validation if approved quantity is 0 (product is not being approved)
-// //       if (approval.approvedQuantity === 0) {
-// //         continue;
-// //       }
+//       // Skip validation if approved quantity is 0 (product is not being approved)
+//       if (approval.approvedQuantity === 0) {
+//         continue;
+//       }
 
-// //       const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
+//       const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
 
-// //       if (tracksSerialNumbers && approval.approvedSerials && approval.approvedSerials.length > 0) {
-// //         const productItem = stockRequest.products.find(
-// //           (p) => p.product.toString() === approval.productId.toString()
-// //         );
+//       if (tracksSerialNumbers && approval.approvedSerials && approval.approvedSerials.length > 0) {
+//         const productItem = stockRequest.products.find(
+//           (p) => p.product.toString() === approval.productId.toString()
+//         );
 
-// //         const outletStock = await OutletStock.findOne({
-// //           outlet: stockRequest.warehouse,
-// //           product: approval.productId,
-// //         });
+//         const outletStock = await OutletStock.findOne({
+//           outlet: stockRequest.warehouse,
+//           product: approval.productId,
+//         });
 
-// //         if (!outletStock) {
-// //           return res.status(400).json({
-// //             success: false,
-// //             message: `No stock found in outlet for product ${productDoc?.productTitle || approval.productId}`,
-// //           });
-// //         }
+//         if (!outletStock) {
+//           return res.status(400).json({
+//             success: false,
+//             message: `No stock found in outlet for product ${productDoc?.productTitle || approval.productId}`,
+//           });
+//         }
 
-// //         const availableSerials = [];
-// //         const unavailableSerials = [];
+//         const availableSerials = [];
+//         const unavailableSerials = [];
 
-// //         for (const serialNumber of approval.approvedSerials) {
-// //           const serial = outletStock.serialNumbers.find(
-// //             (sn) => sn.serialNumber === serialNumber
-// //           );
+//         for (const serialNumber of approval.approvedSerials) {
+//           const serial = outletStock.serialNumbers.find(
+//             (sn) => sn.serialNumber === serialNumber
+//           );
 
-// //           if (serial) {
-// //             if (serial.status === "available") {
-// //               availableSerials.push(serialNumber);
-// //             } else if (serial.status === "in_transit") {
-// //               const isAssignedToThisTransfer =
-// //                 productItem?.approvedSerials?.includes(serialNumber);
-// //               if (isAssignedToThisTransfer) {
-// //                 availableSerials.push(serialNumber);
-// //               } else {
-// //                 unavailableSerials.push(serialNumber);
-// //               }
-// //             } else {
-// //               unavailableSerials.push(serialNumber);
-// //             }
-// //           } else {
-// //             unavailableSerials.push(serialNumber);
-// //           }
-// //         }
+//           if (serial) {
+//             if (serial.status === "available") {
+//               availableSerials.push(serialNumber);
+//             } else if (serial.status === "in_transit") {
+//               const isAssignedToThisTransfer =
+//                 productItem?.approvedSerials?.includes(serialNumber);
+//               if (isAssignedToThisTransfer) {
+//                 availableSerials.push(serialNumber);
+//               } else {
+//                 unavailableSerials.push(serialNumber);
+//               }
+//             } else {
+//               unavailableSerials.push(serialNumber);
+//             }
+//           } else {
+//             unavailableSerials.push(serialNumber);
+//           }
+//         }
 
-// //         if (unavailableSerials.length > 0) {
-// //           return res.status(400).json({
-// //             success: false,
-// //             message: `Serial numbers not available: ${unavailableSerials.join(", ")}`,
-// //             productId: approval.productId,
-// //             productName: productDoc?.productTitle || "Unknown Product",
-// //           });
-// //         }
-// //       }
-// //     }
+//         if (unavailableSerials.length > 0) {
+//           return res.status(400).json({
+//             success: false,
+//             message: `Serial numbers not available: ${unavailableSerials.join(", ")}`,
+//             productId: approval.productId,
+//             productName: productDoc?.productTitle || "Unknown Product",
+//           });
+//         }
+//       }
+//     }
 
-// //     // Process each product approval
-// //     for (const approval of productApprovals) {
-// //       const productItem = stockRequest.products.find(
-// //         (p) => p.product.toString() === approval.productId.toString()
-// //       );
+//     // Process each product approval
+//     for (const approval of productApprovals) {
+//       const productItem = stockRequest.products.find(
+//         (p) => p.product.toString() === approval.productId.toString()
+//       );
 
-// //       if (!productItem) {
-// //         return res.status(400).json({
-// //           success: false,
-// //           message: `Product ${approval.productId} not found in stock request`,
-// //         });
-// //       }
+//       if (!productItem) {
+//         return res.status(400).json({
+//           success: false,
+//           message: `Product ${approval.productId} not found in stock request`,
+//         });
+//       }
 
-// //       const currentApprovedQuantity = productItem.approvedQuantity || 0;
-// //       const newApprovedQuantity = approval.approvedQuantity;
+//       const currentApprovedQuantity = productItem.approvedQuantity || 0;
+//       const newApprovedQuantity = approval.approvedQuantity;
 
-// //       // SKIP processing if approved quantity is 0
-// //       // This means the product is not being approved
-// //       if (newApprovedQuantity === 0) {
-// //         console.log(`[DEBUG] Skipping product ${approval.productId} - approved quantity is 0`);
-// //         // If there was previously approved quantity, we need to restore it
-// //         if (currentApprovedQuantity > 0) {
-// //           console.log(`[DEBUG] Restoring ${currentApprovedQuantity} units for product ${approval.productId}`);
+//       // SKIP processing if approved quantity is 0
+//       // This means the product is not being approved
+//       if (newApprovedQuantity === 0) {
+//         console.log(`[DEBUG] Skipping product ${approval.productId} - approved quantity is 0`);
+//         // If there was previously approved quantity, we need to restore it
+//         if (currentApprovedQuantity > 0) {
+//           console.log(`[DEBUG] Restoring ${currentApprovedQuantity} units for product ${approval.productId}`);
           
-// //           const outletStock = await OutletStock.findOne({
-// //             outlet: stockRequest.warehouse,
-// //             product: approval.productId,
-// //           });
+//           const outletStock = await OutletStock.findOne({
+//             outlet: stockRequest.warehouse,
+//             product: approval.productId,
+//           });
 
-// //           if (outletStock) {
-// //             const productDoc = await Product.findById(approval.productId);
-// //             const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
+//           if (outletStock) {
+//             const productDoc = await Product.findById(approval.productId);
+//             const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
 
-// //             if (tracksSerialNumbers) {
-// //               // Restore serial numbers for serialized product
-// //               const currentApprovedSerials = productItem.approvedSerials || [];
-// //               console.log(`[DEBUG] Restoring ${currentApprovedSerials.length} serials for product ${approval.productId}`);
+//             if (tracksSerialNumbers) {
+//               // Restore serial numbers for serialized product
+//               const currentApprovedSerials = productItem.approvedSerials || [];
+//               console.log(`[DEBUG] Restoring ${currentApprovedSerials.length} serials for product ${approval.productId}`);
               
-// //               let restoredCount = 0;
-// //               for (const serialNumber of currentApprovedSerials) {
-// //                 const serial = outletStock.serialNumbers.find(
-// //                   (sn) => sn.serialNumber === serialNumber
-// //                 );
+//               let restoredCount = 0;
+//               for (const serialNumber of currentApprovedSerials) {
+//                 const serial = outletStock.serialNumbers.find(
+//                   (sn) => sn.serialNumber === serialNumber
+//                 );
 
-// //                 if (serial && serial.status === "in_transit") {
-// //                   serial.status = "available";
-// //                   serial.currentLocation = stockRequest.warehouse;
-// //                   restoredCount++;
+//                 if (serial && serial.status === "in_transit") {
+//                   serial.status = "available";
+//                   serial.currentLocation = stockRequest.warehouse;
+//                   restoredCount++;
 
-// //                   // Remove the transfer history for this center
-// //                   serial.transferHistory = serial.transferHistory.filter(
-// //                     (history) =>
-// //                       !(
-// //                         history.toCenter?.toString() ===
-// //                         stockRequest.center.toString() &&
-// //                         history.transferType === "outlet_to_center"
-// //                       )
-// //                   );
+//                   // Remove the transfer history for this center
+//                   serial.transferHistory = serial.transferHistory.filter(
+//                     (history) =>
+//                       !(
+//                         history.toCenter?.toString() ===
+//                         stockRequest.center.toString() &&
+//                         history.transferType === "outlet_to_center"
+//                       )
+//                   );
 
-// //                   console.log(`[DEBUG] Restored serial ${serialNumber} to available`);
-// //                 }
-// //               }
+//                   console.log(`[DEBUG] Restored serial ${serialNumber} to available`);
+//                 }
+//               }
 
-// //               if (restoredCount > 0) {
-// //                 outletStock.availableQuantity += restoredCount;
-// //                 outletStock.inTransitQuantity -= restoredCount;
-// //                 await outletStock.save();
-// //                 console.log(`[DEBUG] Updated outlet: Available +${restoredCount}, InTransit -${restoredCount}`);
-// //               }
-// //             } else {
-// //               // Restore non-serialized product quantity
-// //               outletStock.availableQuantity += currentApprovedQuantity;
-// //               outletStock.inTransitQuantity -= currentApprovedQuantity;
-// //               await outletStock.save();
-// //               console.log(`[DEBUG] Restored ${currentApprovedQuantity} units to available stock`);
-// //             }
-// //           }
-// //         }
-// //         continue; // Skip to next product
-// //       }
+//               if (restoredCount > 0) {
+//                 outletStock.availableQuantity += restoredCount;
+//                 outletStock.inTransitQuantity -= restoredCount;
+//                 await outletStock.save();
+//                 console.log(`[DEBUG] Updated outlet: Available +${restoredCount}, InTransit -${restoredCount}`);
+//               }
+//             } else {
+//               // Restore non-serialized product quantity
+//               outletStock.availableQuantity += currentApprovedQuantity;
+//               outletStock.inTransitQuantity -= currentApprovedQuantity;
+//               await outletStock.save();
+//               console.log(`[DEBUG] Restored ${currentApprovedQuantity} units to available stock`);
+//             }
+//           }
+//         }
+//         continue; // Skip to next product
+//       }
 
-// //       const outletStock = await OutletStock.findOne({
-// //         outlet: stockRequest.warehouse,
-// //         product: approval.productId,
-// //       });
+//       const outletStock = await OutletStock.findOne({
+//         outlet: stockRequest.warehouse,
+//         product: approval.productId,
+//       });
 
-// //       if (!outletStock) {
-// //         return res.status(400).json({
-// //           success: false,
-// //           message: `No stock found in outlet for product ${approval.productId}`,
-// //         });
-// //       }
+//       if (!outletStock) {
+//         return res.status(400).json({
+//           success: false,
+//           message: `No stock found in outlet for product ${approval.productId}`,
+//         });
+//       }
 
-// //       console.log(`[DEBUG] Processing product: ${approval.productId}`);
-// //       console.log(`[DEBUG] Current approved: ${currentApprovedQuantity}, New approved: ${newApprovedQuantity}`);
-// //       console.log(`[DEBUG] Outlet stock before - Total: ${outletStock.totalQuantity}, Available: ${outletStock.availableQuantity}, InTransit: ${outletStock.inTransitQuantity}`);
+//       console.log(`[DEBUG] Processing product: ${approval.productId}`);
+//       console.log(`[DEBUG] Current approved: ${currentApprovedQuantity}, New approved: ${newApprovedQuantity}`);
+//       console.log(`[DEBUG] Outlet stock before - Total: ${outletStock.totalQuantity}, Available: ${outletStock.availableQuantity}, InTransit: ${outletStock.inTransitQuantity}`);
 
-// //       const productDoc = await Product.findById(approval.productId);
-// //       const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
+//       const productDoc = await Product.findById(approval.productId);
+//       const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
 
-// //       if (tracksSerialNumbers) {
-// //         // Handle serialized products
-// //         const currentApprovedSerials = productItem.approvedSerials || [];
-// //         const newApprovedSerials = approval.approvedSerials || [];
+//       if (tracksSerialNumbers) {
+//         // Handle serialized products
+//         const currentApprovedSerials = productItem.approvedSerials || [];
+//         const newApprovedSerials = approval.approvedSerials || [];
 
-// //         if (newApprovedQuantity < currentApprovedQuantity) {
-// //           console.log(`[DEBUG] Quantity reduced from ${currentApprovedQuantity} to ${newApprovedQuantity}`);
+//         if (newApprovedQuantity < currentApprovedQuantity) {
+//           console.log(`[DEBUG] Quantity reduced from ${currentApprovedQuantity} to ${newApprovedQuantity}`);
           
-// //           const quantityToRestore = currentApprovedQuantity - newApprovedQuantity;
-// //           let serialsToRestore = [];
+//           const quantityToRestore = currentApprovedQuantity - newApprovedQuantity;
+//           let serialsToRestore = [];
 
-// //           if (JSON.stringify(currentApprovedSerials) !== JSON.stringify(newApprovedSerials)) {
-// //             serialsToRestore = currentApprovedSerials.filter(
-// //               (serial) => !newApprovedSerials.includes(serial)
-// //             );
-// //             console.log(`[DEBUG] Restoring ${serialsToRestore.length} specific serials`);
-// //           } else {
-// //             serialsToRestore = currentApprovedSerials.slice(newApprovedQuantity);
-// //             console.log(`[DEBUG] Restoring last ${serialsToRestore.length} serials`);
-// //           }
+//           if (JSON.stringify(currentApprovedSerials) !== JSON.stringify(newApprovedSerials)) {
+//             serialsToRestore = currentApprovedSerials.filter(
+//               (serial) => !newApprovedSerials.includes(serial)
+//             );
+//             console.log(`[DEBUG] Restoring ${serialsToRestore.length} specific serials`);
+//           } else {
+//             serialsToRestore = currentApprovedSerials.slice(newApprovedQuantity);
+//             console.log(`[DEBUG] Restoring last ${serialsToRestore.length} serials`);
+//           }
 
-// //           let restoredCount = 0;
-// //           for (const serialNumber of serialsToRestore) {
-// //             const serial = outletStock.serialNumbers.find(
-// //               (sn) => sn.serialNumber === serialNumber
-// //             );
+//           let restoredCount = 0;
+//           for (const serialNumber of serialsToRestore) {
+//             const serial = outletStock.serialNumbers.find(
+//               (sn) => sn.serialNumber === serialNumber
+//             );
 
-// //             if (serial && serial.status === "in_transit") {
-// //               serial.status = "available";
-// //               serial.currentLocation = stockRequest.warehouse;
-// //               restoredCount++;
+//             if (serial && serial.status === "in_transit") {
+//               serial.status = "available";
+//               serial.currentLocation = stockRequest.warehouse;
+//               restoredCount++;
 
-// //               // Remove the transfer history for this center
-// //               serial.transferHistory = serial.transferHistory.filter(
-// //                 (history) =>
-// //                   !(
-// //                     history.toCenter?.toString() ===
-// //                     stockRequest.center.toString() &&
-// //                     history.transferType === "outlet_to_center"
-// //                   )
-// //               );
+//               // Remove the transfer history for this center
+//               serial.transferHistory = serial.transferHistory.filter(
+//                 (history) =>
+//                   !(
+//                     history.toCenter?.toString() ===
+//                     stockRequest.center.toString() &&
+//                     history.transferType === "outlet_to_center"
+//                   )
+//               );
 
-// //               console.log(`[DEBUG] Restored serial ${serialNumber} to available`);
-// //             }
-// //           }
+//               console.log(`[DEBUG] Restored serial ${serialNumber} to available`);
+//             }
+//           }
 
-// //           if (restoredCount > 0) {
-// //             outletStock.availableQuantity += restoredCount;
-// //             outletStock.inTransitQuantity -= restoredCount;
-// //             await outletStock.save();
-// //             console.log(`[DEBUG] Updated outlet: Available +${restoredCount}, InTransit -${restoredCount}`);
-// //           }
-// //         } else if (newApprovedQuantity > currentApprovedQuantity) {
-// //           console.log(`[DEBUG] Quantity increased from ${currentApprovedQuantity} to ${newApprovedQuantity}`);
+//           if (restoredCount > 0) {
+//             outletStock.availableQuantity += restoredCount;
+//             outletStock.inTransitQuantity -= restoredCount;
+//             await outletStock.save();
+//             console.log(`[DEBUG] Updated outlet: Available +${restoredCount}, InTransit -${restoredCount}`);
+//           }
+//         } else if (newApprovedQuantity > currentApprovedQuantity) {
+//           console.log(`[DEBUG] Quantity increased from ${currentApprovedQuantity} to ${newApprovedQuantity}`);
           
-// //           const quantityToAdd = newApprovedQuantity - currentApprovedQuantity;
+//           const quantityToAdd = newApprovedQuantity - currentApprovedQuantity;
           
-// //           if (newApprovedSerials.length < newApprovedQuantity) {
-// //             return res.status(400).json({
-// //               success: false,
-// //               message: `Need ${quantityToAdd} additional serial numbers for quantity increase`,
-// //               productId: approval.productId,
-// //               productName: productDoc?.productTitle || "Unknown Product",
-// //             });
-// //           }
+//           if (newApprovedSerials.length < newApprovedQuantity) {
+//             return res.status(400).json({
+//               success: false,
+//               message: `Need ${quantityToAdd} additional serial numbers for quantity increase`,
+//               productId: approval.productId,
+//               productName: productDoc?.productTitle || "Unknown Product",
+//             });
+//           }
 
-// //           const additionalSerials = newApprovedSerials.slice(currentApprovedQuantity);
+//           const additionalSerials = newApprovedSerials.slice(currentApprovedQuantity);
           
-// //           if (additionalSerials.length !== quantityToAdd) {
-// //             return res.status(400).json({
-// //               success: false,
-// //               message: `Need ${quantityToAdd} additional serial numbers but got ${additionalSerials.length}`,
-// //               productId: approval.productId,
-// //             });
-// //           }
+//           if (additionalSerials.length !== quantityToAdd) {
+//             return res.status(400).json({
+//               success: false,
+//               message: `Need ${quantityToAdd} additional serial numbers but got ${additionalSerials.length}`,
+//               productId: approval.productId,
+//             });
+//           }
 
-// //           let newlyMarkedInTransit = 0;
-// //           for (const serialNumber of additionalSerials) {
-// //             const serial = outletStock.serialNumbers.find(
-// //               (sn) => sn.serialNumber === serialNumber
-// //             );
+//           let newlyMarkedInTransit = 0;
+//           for (const serialNumber of additionalSerials) {
+//             const serial = outletStock.serialNumbers.find(
+//               (sn) => sn.serialNumber === serialNumber
+//             );
 
-// //             if (serial) {
-// //               if (serial.status === "available") {
-// //                 serial.status = "in_transit";
-// //                 serial.transferHistory.push({
-// //                   fromCenter: stockRequest.warehouse,
-// //                   toCenter: stockRequest.center,
-// //                   transferDate: new Date(),
-// //                   transferType: "outlet_to_center",
-// //                   remark: "Added during quantity increase",
-// //                 });
-// //                 newlyMarkedInTransit++;
-// //                 console.log(`[DEBUG] Marked serial ${serialNumber} as in_transit`);
-// //               } else if (serial.status === "in_transit") {
-// //                 const existingTransfer = serial.transferHistory.find(
-// //                   (history) =>
-// //                     history.toCenter?.toString() ===
-// //                     stockRequest.center.toString()
-// //                 );
+//             if (serial) {
+//               if (serial.status === "available") {
+//                 serial.status = "in_transit";
+//                 serial.transferHistory.push({
+//                   fromCenter: stockRequest.warehouse,
+//                   toCenter: stockRequest.center,
+//                   transferDate: new Date(),
+//                   transferType: "outlet_to_center",
+//                   remark: "Added during quantity increase",
+//                 });
+//                 newlyMarkedInTransit++;
+//                 console.log(`[DEBUG] Marked serial ${serialNumber} as in_transit`);
+//               } else if (serial.status === "in_transit") {
+//                 const existingTransfer = serial.transferHistory.find(
+//                   (history) =>
+//                     history.toCenter?.toString() ===
+//                     stockRequest.center.toString()
+//                 );
 
-// //                 if (!existingTransfer) {
-// //                   serial.transferHistory.push({
-// //                     fromCenter: stockRequest.warehouse,
-// //                     toCenter: stockRequest.center,
-// //                     transferDate: new Date(),
-// //                     transferType: "outlet_to_center",
-// //                     remark: "Added during quantity increase",
-// //                   });
-// //                 }
-// //                 newlyMarkedInTransit++;
-// //                 console.log(`[DEBUG] Serial ${serialNumber} already in_transit`);
-// //               }
-// //             } else {
-// //               return res.status(400).json({
-// //                 success: false,
-// //                 message: `Serial number ${serialNumber} not found in outlet stock`,
-// //                 productId: approval.productId,
-// //               });
-// //             }
-// //           }
+//                 if (!existingTransfer) {
+//                   serial.transferHistory.push({
+//                     fromCenter: stockRequest.warehouse,
+//                     toCenter: stockRequest.center,
+//                     transferDate: new Date(),
+//                     transferType: "outlet_to_center",
+//                     remark: "Added during quantity increase",
+//                   });
+//                 }
+//                 newlyMarkedInTransit++;
+//                 console.log(`[DEBUG] Serial ${serialNumber} already in_transit`);
+//               }
+//             } else {
+//               return res.status(400).json({
+//                 success: false,
+//                 message: `Serial number ${serialNumber} not found in outlet stock`,
+//                 productId: approval.productId,
+//               });
+//             }
+//           }
 
-// //           if (newlyMarkedInTransit > 0) {
-// //             outletStock.availableQuantity -= newlyMarkedInTransit;
-// //             outletStock.inTransitQuantity += newlyMarkedInTransit;
-// //             await outletStock.save();
-// //             console.log(`[DEBUG] Updated outlet: Available -${newlyMarkedInTransit}, InTransit +${newlyMarkedInTransit}`);
-// //           }
-// //         } else if (JSON.stringify(currentApprovedSerials) !== JSON.stringify(newApprovedSerials)) {
-// //           // Same quantity, different serials
-// //           console.log(`[DEBUG] Same quantity (${currentApprovedQuantity}), different serials`);
+//           if (newlyMarkedInTransit > 0) {
+//             outletStock.availableQuantity -= newlyMarkedInTransit;
+//             outletStock.inTransitQuantity += newlyMarkedInTransit;
+//             await outletStock.save();
+//             console.log(`[DEBUG] Updated outlet: Available -${newlyMarkedInTransit}, InTransit +${newlyMarkedInTransit}`);
+//           }
+//         } else if (JSON.stringify(currentApprovedSerials) !== JSON.stringify(newApprovedSerials)) {
+//           // Same quantity, different serials
+//           console.log(`[DEBUG] Same quantity (${currentApprovedQuantity}), different serials`);
           
-// //           const serialsToRemove = currentApprovedSerials.filter(
-// //             (serial) => !newApprovedSerials.includes(serial)
-// //           );
-// //           const serialsToAdd = newApprovedSerials.filter(
-// //             (serial) => !currentApprovedSerials.includes(serial)
-// //           );
+//           const serialsToRemove = currentApprovedSerials.filter(
+//             (serial) => !newApprovedSerials.includes(serial)
+//           );
+//           const serialsToAdd = newApprovedSerials.filter(
+//             (serial) => !currentApprovedSerials.includes(serial)
+//           );
 
-// //           console.log(`[DEBUG] Serials to remove: ${serialsToRemove.length}, to add: ${serialsToAdd.length}`);
+//           console.log(`[DEBUG] Serials to remove: ${serialsToRemove.length}, to add: ${serialsToAdd.length}`);
 
-// //           // Restore removed serials
-// //           let restoredCount = 0;
-// //           for (const serialNumber of serialsToRemove) {
-// //             const serial = outletStock.serialNumbers.find(
-// //               (sn) => sn.serialNumber === serialNumber
-// //             );
+//           // Restore removed serials
+//           let restoredCount = 0;
+//           for (const serialNumber of serialsToRemove) {
+//             const serial = outletStock.serialNumbers.find(
+//               (sn) => sn.serialNumber === serialNumber
+//             );
 
-// //             if (serial && serial.status === "in_transit") {
-// //               serial.status = "available";
-// //               serial.currentLocation = stockRequest.warehouse;
-// //               restoredCount++;
+//             if (serial && serial.status === "in_transit") {
+//               serial.status = "available";
+//               serial.currentLocation = stockRequest.warehouse;
+//               restoredCount++;
 
-// //               serial.transferHistory = serial.transferHistory.filter(
-// //                 (history) =>
-// //                   !(
-// //                     history.toCenter?.toString() ===
-// //                     stockRequest.center.toString() &&
-// //                     history.transferType === "outlet_to_center"
-// //                   )
-// //               );
-// //               console.log(`[DEBUG] Restored serial ${serialNumber}`);
-// //             }
-// //           }
+//               serial.transferHistory = serial.transferHistory.filter(
+//                 (history) =>
+//                   !(
+//                     history.toCenter?.toString() ===
+//                     stockRequest.center.toString() &&
+//                     history.transferType === "outlet_to_center"
+//                   )
+//               );
+//               console.log(`[DEBUG] Restored serial ${serialNumber}`);
+//             }
+//           }
 
-// //           // Mark new serials as in_transit
-// //           let addedCount = 0;
-// //           for (const serialNumber of serialsToAdd) {
-// //             const serial = outletStock.serialNumbers.find(
-// //               (sn) => sn.serialNumber === serialNumber
-// //             );
+//           // Mark new serials as in_transit
+//           let addedCount = 0;
+//           for (const serialNumber of serialsToAdd) {
+//             const serial = outletStock.serialNumbers.find(
+//               (sn) => sn.serialNumber === serialNumber
+//             );
 
-// //             if (serial) {
-// //               if (serial.status === "available") {
-// //                 serial.status = "in_transit";
-// //                 serial.transferHistory.push({
-// //                   fromCenter: stockRequest.warehouse,
-// //                   toCenter: stockRequest.center,
-// //                   transferDate: new Date(),
-// //                   transferType: "outlet_to_center",
-// //                   remark: "Swapped during serial change",
-// //                 });
-// //                 addedCount++;
-// //                 console.log(`[DEBUG] Marked serial ${serialNumber} as in_transit`);
-// //               } else if (serial.status === "in_transit") {
-// //                 const existingTransfer = serial.transferHistory.find(
-// //                   (history) =>
-// //                     history.toCenter?.toString() ===
-// //                     stockRequest.center.toString()
-// //                 );
+//             if (serial) {
+//               if (serial.status === "available") {
+//                 serial.status = "in_transit";
+//                 serial.transferHistory.push({
+//                   fromCenter: stockRequest.warehouse,
+//                   toCenter: stockRequest.center,
+//                   transferDate: new Date(),
+//                   transferType: "outlet_to_center",
+//                   remark: "Swapped during serial change",
+//                 });
+//                 addedCount++;
+//                 console.log(`[DEBUG] Marked serial ${serialNumber} as in_transit`);
+//               } else if (serial.status === "in_transit") {
+//                 const existingTransfer = serial.transferHistory.find(
+//                   (history) =>
+//                     history.toCenter?.toString() ===
+//                     stockRequest.center.toString()
+//                 );
 
-// //                 if (!existingTransfer) {
-// //                   serial.transferHistory.push({
-// //                     fromCenter: stockRequest.warehouse,
-// //                     toCenter: stockRequest.center,
-// //                     transferDate: new Date(),
-// //                     transferType: "outlet_to_center",
-// //                     remark: "Swapped during serial change",
-// //                   });
-// //                 }
-// //                 addedCount++;
-// //                 console.log(`[DEBUG] Serial ${serialNumber} already in_transit`);
-// //               }
-// //             } else {
-// //               return res.status(400).json({
-// //                 success: false,
-// //                 message: `Serial number ${serialNumber} not found in outlet stock`,
-// //                 productId: approval.productId,
-// //               });
-// //             }
-// //           }
+//                 if (!existingTransfer) {
+//                   serial.transferHistory.push({
+//                     fromCenter: stockRequest.warehouse,
+//                     toCenter: stockRequest.center,
+//                     transferDate: new Date(),
+//                     transferType: "outlet_to_center",
+//                     remark: "Swapped during serial change",
+//                   });
+//                 }
+//                 addedCount++;
+//                 console.log(`[DEBUG] Serial ${serialNumber} already in_transit`);
+//               }
+//             } else {
+//               return res.status(400).json({
+//                 success: false,
+//                 message: `Serial number ${serialNumber} not found in outlet stock`,
+//                 productId: approval.productId,
+//               });
+//             }
+//           }
 
-// //           // Update outlet quantities
-// //           if (restoredCount > 0) {
-// //             outletStock.availableQuantity += restoredCount;
-// //             outletStock.inTransitQuantity -= restoredCount;
-// //           }
-// //           if (addedCount > 0) {
-// //             outletStock.availableQuantity -= addedCount;
-// //             outletStock.inTransitQuantity += addedCount;
-// //           }
+//           // Update outlet quantities
+//           if (restoredCount > 0) {
+//             outletStock.availableQuantity += restoredCount;
+//             outletStock.inTransitQuantity -= restoredCount;
+//           }
+//           if (addedCount > 0) {
+//             outletStock.availableQuantity -= addedCount;
+//             outletStock.inTransitQuantity += addedCount;
+//           }
 
-// //           if (restoredCount > 0 || addedCount > 0) {
-// //             await outletStock.save();
-// //             console.log(`[DEBUG] Updated outlet after serial swap`);
-// //           }
-// //         }
-// //       } else {
-// //         // Handle non-serialized products
-// //         console.log(`[DEBUG] Processing non-serialized product`);
+//           if (restoredCount > 0 || addedCount > 0) {
+//             await outletStock.save();
+//             console.log(`[DEBUG] Updated outlet after serial swap`);
+//           }
+//         }
+//       } else {
+//         // Handle non-serialized products
+//         console.log(`[DEBUG] Processing non-serialized product`);
         
-// //         if (newApprovedQuantity < currentApprovedQuantity) {
-// //           console.log(`[DEBUG] Quantity reduced from ${currentApprovedQuantity} to ${newApprovedQuantity}`);
+//         if (newApprovedQuantity < currentApprovedQuantity) {
+//           console.log(`[DEBUG] Quantity reduced from ${currentApprovedQuantity} to ${newApprovedQuantity}`);
           
-// //           const quantityToRestore = currentApprovedQuantity - newApprovedQuantity;
+//           const quantityToRestore = currentApprovedQuantity - newApprovedQuantity;
           
-// //           // Restore unused quantity back to available
-// //           outletStock.availableQuantity += quantityToRestore;
-// //           outletStock.inTransitQuantity -= quantityToRestore;
+//           // Restore unused quantity back to available
+//           outletStock.availableQuantity += quantityToRestore;
+//           outletStock.inTransitQuantity -= quantityToRestore;
           
-// //           await outletStock.save();
-// //           console.log(`[DEBUG] Restored ${quantityToRestore} units: Available +${quantityToRestore}, InTransit -${quantityToRestore}`);
+//           await outletStock.save();
+//           console.log(`[DEBUG] Restored ${quantityToRestore} units: Available +${quantityToRestore}, InTransit -${quantityToRestore}`);
           
-// //         } else if (newApprovedQuantity > currentApprovedQuantity) {
-// //           console.log(`[DEBUG] Quantity increased from ${currentApprovedQuantity} to ${newApprovedQuantity}`);
+//         } else if (newApprovedQuantity > currentApprovedQuantity) {
+//           console.log(`[DEBUG] Quantity increased from ${currentApprovedQuantity} to ${newApprovedQuantity}`);
           
-// //           const quantityToAdd = newApprovedQuantity - currentApprovedQuantity;
+//           const quantityToAdd = newApprovedQuantity - currentApprovedQuantity;
           
-// //           // Check if enough stock is available
-// //           if (outletStock.availableQuantity < quantityToAdd) {
-// //             return res.status(400).json({
-// //               success: false,
-// //               message: `Insufficient stock in outlet. Required: ${quantityToAdd}, Available: ${outletStock.availableQuantity}`,
-// //               productId: approval.productId,
-// //               productName: productDoc?.productTitle || "Unknown Product",
-// //             });
-// //           }
+//           // Check if enough stock is available
+//           if (outletStock.availableQuantity < quantityToAdd) {
+//             return res.status(400).json({
+//               success: false,
+//               message: `Insufficient stock in outlet. Required: ${quantityToAdd}, Available: ${outletStock.availableQuantity}`,
+//               productId: approval.productId,
+//               productName: productDoc?.productTitle || "Unknown Product",
+//             });
+//           }
           
-// //           // Mark additional quantity as in_transit
-// //           outletStock.availableQuantity -= quantityToAdd;
-// //           outletStock.inTransitQuantity += quantityToAdd;
+//           // Mark additional quantity as in_transit
+//           outletStock.availableQuantity -= quantityToAdd;
+//           outletStock.inTransitQuantity += quantityToAdd;
           
-// //           await outletStock.save();
-// //           console.log(`[DEBUG] Added ${quantityToAdd} units: Available -${quantityToAdd}, InTransit +${quantityToAdd}`);
-// //         }
-// //       }
+//           await outletStock.save();
+//           console.log(`[DEBUG] Added ${quantityToAdd} units: Available -${quantityToAdd}, InTransit +${quantityToAdd}`);
+//         }
+//       }
 
-// //       console.log(`[DEBUG] Outlet stock after - Total: ${outletStock.totalQuantity}, Available: ${outletStock.availableQuantity}, InTransit: ${outletStock.inTransitQuantity}`);
-// //     }
+//       console.log(`[DEBUG] Outlet stock after - Total: ${outletStock.totalQuantity}, Available: ${outletStock.availableQuantity}, InTransit: ${outletStock.inTransitQuantity}`);
+//     }
 
-// //     // Update stock request products with new approvals
-// //     const updatedProducts = stockRequest.products.map((productItem) => {
-// //       const approval = productApprovals.find(
-// //         (pa) => pa.productId.toString() === productItem.product.toString()
-// //       );
+//     // Update stock request products with new approvals
+//     const updatedProducts = stockRequest.products.map((productItem) => {
+//       const approval = productApprovals.find(
+//         (pa) => pa.productId.toString() === productItem.product.toString()
+//       );
 
-// //       if (approval) {
-// //         const updatedItem = {
-// //           ...productItem.toObject(),
-// //           approvedQuantity: approval.approvedQuantity,
-// //         };
+//       if (approval) {
+//         const updatedItem = {
+//           ...productItem.toObject(),
+//           approvedQuantity: approval.approvedQuantity,
+//         };
 
-// //         // Only include approvedSerials for serialized products
-// //         const productDoc = Product.findById(approval.productId);
-// //         if (productDoc?.trackSerialNumber === "Yes") {
-// //           updatedItem.approvedSerials = approval.approvedSerials || [];
-// //         }
+//         // Only include approvedSerials for serialized products
+//         const productDoc = Product.findById(approval.productId);
+//         if (productDoc?.trackSerialNumber === "Yes") {
+//           updatedItem.approvedSerials = approval.approvedSerials || [];
+//         }
 
-// //         return updatedItem;
-// //       }
-// //       return productItem;
-// //     });
+//         return updatedItem;
+//       }
+//       return productItem;
+//     });
 
-// //     const updateData = {
-// //       products: updatedProducts,
-// //       updatedBy: userId,
-// //     };
+//     const updateData = {
+//       products: updatedProducts,
+//       updatedBy: userId,
+//     };
 
-// //     // Update status to Confirmed if it's Submitted
-// //     if (stockRequest.status === "Submitted") {
-// //       updateData.status = "Confirmed";
-// //       updateData.approvalInfo = {
-// //         ...stockRequest.approvalInfo,
-// //         approvedBy: userId,
-// //         approvedAt: new Date(),
-// //       };
-// //     }
+//     // Update status to Confirmed if it's Submitted
+//     if (stockRequest.status === "Submitted") {
+//       updateData.status = "Confirmed";
+//       updateData.approvalInfo = {
+//         ...stockRequest.approvalInfo,
+//         approvedBy: userId,
+//         approvedAt: new Date(),
+//       };
+//     }
 
-// //     const updatedRequest = await StockRequest.findByIdAndUpdate(
-// //       id,
-// //       updateData,
-// //       { new: true, runValidators: true }
-// //     )
-// //       .populate("warehouse", "_id centerName centerCode centerType")
-// //       .populate("center", "_id centerName centerCode")
-// //       .populate("products.product", "_id productTitle productCode productImage")
-// //       .populate("createdBy", "_id fullName email")
-// //       .populate("updatedBy", "_id fullName email")
-// //       .populate("approvalInfo.approvedBy", "_id fullName email");
+//     const updatedRequest = await StockRequest.findByIdAndUpdate(
+//       id,
+//       updateData,
+//       { new: true, runValidators: true }
+//     )
+//       .populate("warehouse", "_id centerName centerCode centerType")
+//       .populate("center", "_id centerName centerCode")
+//       .populate("products.product", "_id productTitle productCode productImage")
+//       .populate("createdBy", "_id fullName email")
+//       .populate("updatedBy", "_id fullName email")
+//       .populate("approvalInfo.approvedBy", "_id fullName email");
 
-// //     res.status(200).json({
-// //       success: true,
-// //       message: "Approved quantities updated successfully",
-// //       data: updatedRequest,
-// //     });
-// //   } catch (error) {
-// //     if (error.name === "CastError") {
-// //       return res.status(400).json({
-// //         success: false,
-// //         message: "Invalid stock request ID",
-// //       });
-// //     }
+//     res.status(200).json({
+//       success: true,
+//       message: "Approved quantities updated successfully",
+//       data: updatedRequest,
+//     });
+//   } catch (error) {
+//     if (error.name === "CastError") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid stock request ID",
+//       });
+//     }
 
-// //     if (error.name === "ValidationError") {
-// //       const errors = Object.values(error.errors).map((err) => err.message);
-// //       return res.status(400).json({
-// //         success: false,
-// //         message: "Validation error",
-// //         errors,
-// //       });
-// //     }
+//     if (error.name === "ValidationError") {
+//       const errors = Object.values(error.errors).map((err) => err.message);
+//       return res.status(400).json({
+//         success: false,
+//         message: "Validation error",
+//         errors,
+//       });
+//     }
 
-// //     if (error.message.includes("serial numbers") || error.message.includes("Insufficient stock")) {
-// //       return res.status(400).json({
-// //         success: false,
-// //         message: "Validation failed",
-// //         error: error.message,
-// //       });
-// //     }
+//     if (error.message.includes("serial numbers") || error.message.includes("Insufficient stock")) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Validation failed",
+//         error: error.message,
+//       });
+//     }
 
-// //     console.error("Error updating approved quantities:", error);
-// //     res.status(500).json({
-// //       success: false,
-// //       message: "Error updating approved quantities",
-// //       error:
-// //         process.env.NODE_ENV === "development"
-// //           ? error.message
-// //           : "Internal server error",
-// //     });
-// //   }
-// // };
+//     console.error("Error updating approved quantities:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Error updating approved quantities",
+//       error:
+//         process.env.NODE_ENV === "development"
+//           ? error.message
+//           : "Internal server error",
+//     });
+//   }
+// };
 
 
 // export const updateApprovedQuantities = async (req, res) => {
@@ -9460,12 +9460,178 @@
 // };
 
 
+
 import StockRequest from "../models/StockRequest.js";
 import Center from "../models/Center.js";
 import User from "../models/User.js";
 import StockPurchase from "../models/StockPurchase.js";
 import CenterStock from "../models/CenterStock.js";
 import mongoose from "mongoose";
+
+/**
+ * Synchronize a StockRequest received-quantity change into CenterStock.
+ *
+ * IMPORTANT:
+ * - This helper is only for NON-SERIALIZED products.
+ * - Serialized products must be processed through completeStockRequest()
+ *   / completeIncompleteRequest(), because their serialNumbers array must
+ *   also be updated.
+ * - Delta based: only the quantity difference is applied, preventing
+ *   duplicate stock when an already-received request is edited.
+ */
+const syncReceivedQuantityToCenterStock = async ({
+  centerId,
+  productId,
+  oldReceivedQuantity = 0,
+  newReceivedQuantity = 0,
+}) => {
+  const Product = mongoose.model("Product");
+
+  const oldQty = Number(oldReceivedQuantity) || 0;
+  const newQty = Number(newReceivedQuantity) || 0;
+  const delta = newQty - oldQty;
+
+  if (delta === 0) {
+    return null;
+  }
+
+  const product = await Product.findById(productId).select(
+    "_id productTitle trackSerialNumber"
+  );
+
+  if (!product) {
+    throw new Error(`Product ${productId} not found`);
+  }
+
+  if (product.trackSerialNumber === "Yes") {
+    throw new Error(
+      `Received quantity for serialized product "${product.productTitle}" must be updated through the completion endpoint so serial numbers remain synchronized.`
+    );
+  }
+
+  if (delta > 0) {
+    return CenterStock.findOneAndUpdate(
+      {
+        center: centerId,
+        product: productId,
+      },
+      {
+        $inc: {
+          totalQuantity: delta,
+          availableQuantity: delta,
+        },
+        $set: {
+          lastUpdated: new Date(),
+        },
+        $setOnInsert: {
+          center: centerId,
+          product: productId,
+          inTransitQuantity: 0,
+          consumedQuantity: 0,
+          serialNumbers: [],
+        },
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+      }
+    );
+  }
+
+  const removeQuantity = Math.abs(delta);
+
+  const stock = await CenterStock.findOne({
+    center: centerId,
+    product: productId,
+  });
+
+  if (!stock) {
+    throw new Error(
+      `Center stock record not found for product ${product.productTitle} while reducing received quantity by ${removeQuantity}.`
+    );
+  }
+
+  if ((stock.availableQuantity || 0) < removeQuantity) {
+    throw new Error(
+      `Cannot reduce received quantity for "${product.productTitle}". Center available stock is ${stock.availableQuantity || 0}, but ${removeQuantity} units must be removed.`
+    );
+  }
+
+  stock.totalQuantity = Math.max(
+    0,
+    (stock.totalQuantity || 0) - removeQuantity
+  );
+  stock.availableQuantity = Math.max(
+    0,
+    (stock.availableQuantity || 0) - removeQuantity
+  );
+  stock.lastUpdated = new Date();
+
+  return stock.save();
+};
+
+/**
+ * Apply receivedQuantity changes to CenterStock for an update operation.
+ *
+ * This is deliberately separate from completeStockRequest(), which already
+ * performs the physical receipt/source-stock transfer itself.
+ */
+const syncReceivedQuantityChanges = async ({
+  stockRequest,
+  nextProducts,
+}) => {
+  if (!Array.isArray(nextProducts)) {
+    return;
+  }
+
+  const Product = mongoose.model("Product");
+
+  for (const nextProduct of nextProducts) {
+    const existingProduct = stockRequest.products.find(
+      (p) =>
+        p.product?.toString() === nextProduct.product?.toString()
+    );
+
+    if (!existingProduct) {
+      continue;
+    }
+
+    const oldReceived = Number(existingProduct.receivedQuantity) || 0;
+    const newReceived = Number(nextProduct.receivedQuantity) || 0;
+
+    if (oldReceived === newReceived) {
+      continue;
+    }
+
+    const product = await Product.findById(nextProduct.product).select(
+      "_id productTitle trackSerialNumber"
+    );
+
+    if (!product) {
+      throw new Error(`Product ${nextProduct.product} not found`);
+    }
+
+    /*
+     * Generic update endpoints cannot safely mutate serialized receipts,
+     * because CenterStock.serialNumbers must change together with quantity.
+     * Force those through completeStockRequest().
+     */
+    if (product.trackSerialNumber === "Yes") {
+      throw new Error(
+        `Cannot change received quantity for serialized product "${product.productTitle}" from the generic update endpoint. Use the complete stock request endpoint so serial numbers remain synchronized.`
+      );
+    }
+
+    await syncReceivedQuantityToCenterStock({
+      centerId: stockRequest.center,
+      productId: nextProduct.product,
+      oldReceivedQuantity: oldReceived,
+      newReceivedQuantity: newReceived,
+    });
+  }
+};
+
 
 const checkStockRequestPermissions = (req, requiredPermissions = []) => {
   const userPermissions = req.user.role?.permissions || [];
@@ -10799,6 +10965,9 @@ export const updateStockRequest = async (req, res) => {
                   newProduct.productRemark !== undefined
                     ? newProduct.productRemark
                     : existingProduct.productRemark,
+                // receivedQuantity is synchronized below through
+                // syncReceivedQuantityChanges() so CenterStock never falls
+                // out of sync with the request.
                 receivedQuantity:
                   newProduct.receivedQuantity !== undefined
                     ? newProduct.receivedQuantity
@@ -10866,6 +11035,16 @@ export const updateStockRequest = async (req, res) => {
         case "Rejected":
           break;
       }
+    }
+
+    // Keep CenterStock synchronized whenever this endpoint changes
+    // receivedQuantity. completeStockRequest() is NOT affected because it
+    // already performs the physical receipt transfer itself.
+    if (updateData.products) {
+      await syncReceivedQuantityChanges({
+        stockRequest: existingRequest,
+        nextProducts: updateData.products,
+      });
     }
 
     const updatedRequest = await StockRequest.findByIdAndUpdate(
@@ -13544,56 +13723,84 @@ export const updateStockRequestStatus = async (req, res) => {
         }
         break;
 
-      case "Completed":
-        if (additionalInfo.productReceipts) {
-          for (const receipt of additionalInfo.productReceipts) {
-            const productItem = stockRequest.products.find(
-              (p) => p.product.toString() === receipt.productId.toString()
-            );
-
-            if (
-              productItem &&
-              receipt.receivedQuantity > productItem.approvedQuantity
-            ) {
-              return res.status(400).json({
-                success: false,
-                message: `Received quantity (${receipt.receivedQuantity}) cannot exceed approved quantity (${productItem.approvedQuantity})`,
-              });
-            }
-          }
+      case "Completed": {
+        if (
+          !additionalInfo.productReceipts ||
+          !Array.isArray(additionalInfo.productReceipts) ||
+          additionalInfo.productReceipts.length === 0
+        ) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Product receipts are required when completing a stock request. Use completeStockRequest for the actual receipt operation.",
+          });
         }
+
+        /*
+         * This endpoint historically changed receivedQuantity only, which
+         * caused Usage Summary to show the purchase while CenterStock stayed
+         * at zero.
+         *
+         * We now apply the exact receivedQuantity delta to CenterStock for
+         * non-serialized products. Serialized products are rejected here
+         * because changing their quantity without moving serialNumbers would
+         * corrupt stock.
+         */
+        const nextProducts = stockRequest.products.map((productItem) => {
+          const receipt = additionalInfo.productReceipts.find(
+            (pr) =>
+              pr.productId?.toString() === productItem.product?.toString()
+          );
+
+          if (!receipt) {
+            return productItem.toObject();
+          }
+
+          const receivedQuantity = Number(receipt.receivedQuantity);
+
+          if (!Number.isInteger(receivedQuantity) || receivedQuantity < 0) {
+            throw new Error(
+              `Received quantity must be a non-negative integer for product ${productItem.product}`
+            );
+          }
+
+          const approvedQuantity = Number(productItem.approvedQuantity) || 0;
+
+          if (receivedQuantity > approvedQuantity) {
+            throw new Error(
+              `Received quantity (${receivedQuantity}) cannot exceed approved quantity (${approvedQuantity})`
+            );
+          }
+
+          return {
+            ...productItem.toObject(),
+            receivedQuantity,
+            receivedRemark: receipt.receivedRemark || "",
+          };
+        });
+
+        await syncReceivedQuantityChanges({
+          stockRequest,
+          nextProducts,
+        });
 
         updateData.receivingInfo = {
           ...stockRequest.receivingInfo,
           receivedAt: currentDate,
           receivedBy: userId,
           receivedRemark: additionalInfo.receivedRemark || "",
-          ...additionalInfo,
         };
 
         updateData.completionInfo = {
           ...stockRequest.completionInfo,
           completedOn: currentDate,
           completedBy: userId,
-          ...additionalInfo,
         };
 
-        if (additionalInfo.productReceipts) {
-          updateData.products = stockRequest.products.map((productItem) => {
-            const receipt = additionalInfo.productReceipts.find(
-              (pr) => pr.productId.toString() === productItem.product.toString()
-            );
-            if (receipt) {
-              return {
-                ...productItem.toObject(),
-                receivedQuantity: receipt.receivedQuantity,
-                receivedRemark: receipt.receivedRemark || "",
-              };
-            }
-            return productItem;
-          });
-        }
+        updateData.products = nextProducts;
+
         break;
+      }
     }
 
     const updatedRequest = await StockRequest.findByIdAndUpdate(
@@ -13642,6 +13849,399 @@ export const updateStockRequestStatus = async (req, res) => {
   }
 };
 
+// export const updateApprovedQuantities = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
+//       req,
+//       ["manage_indent"]
+//     );
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message: "Access denied. manage_indent permission required.",
+//       });
+//     }
+
+//     const { id } = req.params;
+//     const { productApprovals } = req.body;
+
+//     const stockRequest = await StockRequest.findById(id)
+//       .populate("center", "reseller")
+//       .populate("warehouse", "_id");
+    
+//     if (!stockRequest) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Stock request not found",
+//       });
+//     }
+
+//     if (!checkCenterAccess(stockRequest, userCenter, permissions)) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. You can only update approved quantities for stock requests from your own center.",
+//       });
+//     }
+
+//     const userId = req.user?.id;
+//     if (!userId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "User authentication required",
+//       });
+//     }
+
+//     const OutletStock = mongoose.model("OutletStock");
+//     const ResellerStock = mongoose.model("ResellerStock");
+//     const Product = mongoose.model("Product");
+
+//     const resellerId = stockRequest.center?.reseller?._id;
+
+//     for (const approval of productApprovals) {
+//       const productItem = stockRequest.products.find(
+//         (p) => p.product.toString() === approval.productId.toString()
+//       );
+
+//       if (!productItem) {
+//         return res.status(400).json({
+//           success: false,
+//           message: `Product ${approval.productId} not found in stock request`,
+//         });
+//       }
+
+//       const currentApprovedQuantity = productItem.approvedQuantity || 0;
+//       const newApprovedQuantity = approval.approvedQuantity;
+      
+//       const productDoc = await Product.findById(approval.productId);
+//       const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
+
+//       console.log(`[DEBUG] Processing product ${approval.productId}:`);
+//       console.log(`[DEBUG] Current approved: ${currentApprovedQuantity}, New approved: ${newApprovedQuantity}`);
+
+//       let newSourceBreakdown = {
+//         fromReseller: { quantity: 0, serials: [] },
+//         fromOutlet: { quantity: 0, serials: [] },
+//         totalApproved: newApprovedQuantity
+//       };
+
+//       if (newApprovedQuantity > 0) {
+//         let resellerAvailable = 0;
+//         let outletAvailable = 0;
+//         let resellerStockDoc = null;
+//         let outletStockDoc = null;
+
+//         if (resellerId) {
+//           resellerStockDoc = await ResellerStock.findOne({
+//             reseller: resellerId,
+//             product: approval.productId,
+//           });
+//           if (resellerStockDoc) {
+//             resellerAvailable = resellerStockDoc.availableQuantity || 0;
+//           }
+//         }
+
+//         outletStockDoc = await OutletStock.findOne({
+//           outlet: stockRequest.warehouse,
+//           product: approval.productId,
+//         });
+//         if (outletStockDoc) {
+//           outletAvailable = outletStockDoc.availableQuantity || 0;
+//         }
+
+//         if (tracksSerialNumbers && approval.approvedSerials && approval.approvedSerials.length > 0) {
+//           const serials = approval.approvedSerials;
+        
+//           if (resellerStockDoc) {
+//             for (const serialNumber of serials) {
+//               const serial = resellerStockDoc.serialNumbers.find(
+//                 sn => sn.serialNumber === serialNumber && sn.status === "available"
+//               );
+//               if (serial) {
+//                 newSourceBreakdown.fromReseller.serials.push(serialNumber);
+//               }
+//             }
+//           }
+//           newSourceBreakdown.fromOutlet.serials = serials.filter(
+//             sn => !newSourceBreakdown.fromReseller.serials.includes(sn)
+//           );
+          
+//           newSourceBreakdown.fromReseller.quantity = newSourceBreakdown.fromReseller.serials.length;
+//           newSourceBreakdown.fromOutlet.quantity = newSourceBreakdown.fromOutlet.serials.length;
+//         } else {
+//           newSourceBreakdown.fromReseller.quantity = Math.min(newApprovedQuantity, resellerAvailable);
+//           newSourceBreakdown.fromOutlet.quantity = newApprovedQuantity - newSourceBreakdown.fromReseller.quantity;
+//         }
+//         if (newSourceBreakdown.fromReseller.quantity + newSourceBreakdown.fromOutlet.quantity !== newApprovedQuantity) {
+//           return res.status(400).json({
+//             success: false,
+//             message: `Source breakdown calculation error for product ${productDoc?.productTitle}. Expected ${newApprovedQuantity}, got Reseller: ${newSourceBreakdown.fromReseller.quantity}, Outlet: ${newSourceBreakdown.fromOutlet.quantity}`,
+//           });
+//         }
+
+//         const currentSourceBreakdown = productItem.sourceBreakdown || {
+//           fromReseller: { quantity: 0, serials: [] },
+//           fromOutlet: { quantity: 0, serials: [] }
+//         };
+
+//         if (outletStockDoc) {
+//           const currentOutletQty = currentSourceBreakdown.fromOutlet.quantity;
+//           const newOutletQty = newSourceBreakdown.fromOutlet.quantity;
+//           const outletQtyDiff = newOutletQty - currentOutletQty;
+
+//           if (outletQtyDiff > 0) {
+//             if (tracksSerialNumbers) {
+//               const newOutletSerials = newSourceBreakdown.fromOutlet.serials.filter(
+//                 serial => !currentSourceBreakdown.fromOutlet.serials.includes(serial)
+//               );
+              
+//               for (const serialNumber of newOutletSerials) {
+//                 const serial = outletStockDoc.serialNumbers.find(
+//                   sn => sn.serialNumber === serialNumber
+//                 );
+
+//                 if (serial && serial.status === "available") {
+//                   serial.status = "in_transit";
+//                   serial.currentLocation = stockRequest.warehouse;
+//                   serial.transferHistory.push({
+//                     fromCenter: stockRequest.warehouse,
+//                     toCenter: stockRequest.center,
+//                     transferDate: new Date(),
+//                     transferType: "outlet_to_center",
+//                     status: "in_transit",
+//                   });
+//                 }
+//               }
+//             }
+            
+//             outletStockDoc.availableQuantity -= outletQtyDiff;
+//             outletStockDoc.inTransitQuantity += outletQtyDiff;
+//           } else if (outletQtyDiff < 0) {
+//             const outletQtyToRevert = Math.abs(outletQtyDiff);
+            
+//             if (tracksSerialNumbers) {
+//               const serialsToRevert = currentSourceBreakdown.fromOutlet.serials.filter(
+//                 serial => !newSourceBreakdown.fromOutlet.serials.includes(serial)
+//               );
+              
+//               for (const serialNumber of serialsToRevert) {
+//                 const serial = outletStockDoc.serialNumbers.find(
+//                   sn => sn.serialNumber === serialNumber
+//                 );
+
+//                 if (serial && serial.status === "in_transit") {
+//                   serial.status = "available";
+//                   serial.currentLocation = stockRequest.warehouse;
+
+//                   if (serial.transferHistory.length > 0) {
+//                     const lastTransfer = serial.transferHistory[serial.transferHistory.length - 1];
+//                     if (lastTransfer.status === "in_transit") {
+//                       serial.transferHistory.pop();
+//                     }
+//                   }
+//                 }
+//               }
+//             }
+            
+//             outletStockDoc.availableQuantity += outletQtyToRevert;
+//             outletStockDoc.inTransitQuantity -= outletQtyToRevert;
+//           }
+
+//           await outletStockDoc.save();
+//         }
+
+//         if (resellerStockDoc) {
+//           const currentResellerQty = currentSourceBreakdown.fromReseller.quantity;
+//           const newResellerQty = newSourceBreakdown.fromReseller.quantity;
+//           const resellerQtyDiff = newResellerQty - currentResellerQty;
+
+//           if (resellerQtyDiff > 0) {
+//             if (tracksSerialNumbers) {
+//               const newResellerSerials = newSourceBreakdown.fromReseller.serials.filter(
+//                 serial => !currentSourceBreakdown.fromReseller.serials.includes(serial)
+//               );
+              
+//               for (const serialNumber of newResellerSerials) {
+//                 const serial = resellerStockDoc.serialNumbers.find(
+//                   sn => sn.serialNumber === serialNumber
+//                 );
+
+//                 if (serial && serial.status === "available") {
+//                   serial.status = "consumed";
+//                   serial.consumedDate = new Date();
+//                   serial.consumedBy = userId;
+//                   serial.currentLocation = stockRequest.center;
+//                 }
+//               }
+//             }
+            
+//             resellerStockDoc.availableQuantity -= resellerQtyDiff;
+//             resellerStockDoc.consumedQuantity += resellerQtyDiff;
+//           } else if (resellerQtyDiff < 0) {
+//             const resellerQtyToRevert = Math.abs(resellerQtyDiff);
+            
+//             if (tracksSerialNumbers) {
+//               const serialsToRevert = currentSourceBreakdown.fromReseller.serials.filter(
+//                 serial => !newSourceBreakdown.fromReseller.serials.includes(serial)
+//               );
+              
+//               for (const serialNumber of serialsToRevert) {
+//                 const serial = resellerStockDoc.serialNumbers.find(
+//                   sn => sn.serialNumber === serialNumber
+//                 );
+
+//                 if (serial && serial.status === "consumed") {
+//                   serial.status = "available";
+//                   serial.consumedDate = null;
+//                   serial.consumedBy = null;
+//                   serial.currentLocation = null;
+//                 }
+//               }
+//             }
+            
+//             resellerStockDoc.availableQuantity += resellerQtyToRevert;
+//             resellerStockDoc.consumedQuantity -= resellerQtyToRevert;
+//           }
+
+//           await resellerStockDoc.save();
+//         }
+//       } else {
+//         const currentSourceBreakdown = productItem.sourceBreakdown || {
+//           fromReseller: { quantity: 0, serials: [] },
+//           fromOutlet: { quantity: 0, serials: [] }
+//         };
+//         if (currentSourceBreakdown.fromOutlet.quantity > 0) {
+//           const outletStockDoc = await OutletStock.findOne({
+//             outlet: stockRequest.warehouse,
+//             product: approval.productId,
+//           });
+
+//           if (outletStockDoc) {
+//             if (tracksSerialNumbers) {
+//               for (const serialNumber of currentSourceBreakdown.fromOutlet.serials) {
+//                 const serial = outletStockDoc.serialNumbers.find(
+//                   sn => sn.serialNumber === serialNumber
+//                 );
+
+//                 if (serial && serial.status === "in_transit") {
+//                   serial.status = "available";
+//                   serial.currentLocation = stockRequest.warehouse;
+                  
+//                   if (serial.transferHistory.length > 0) {
+//                     const lastTransfer = serial.transferHistory[serial.transferHistory.length - 1];
+//                     if (lastTransfer.status === "in_transit") {
+//                       serial.transferHistory.pop();
+//                     }
+//                   }
+//                 }
+//               }
+//             }
+            
+//             outletStockDoc.availableQuantity += currentSourceBreakdown.fromOutlet.quantity;
+//             outletStockDoc.inTransitQuantity -= currentSourceBreakdown.fromOutlet.quantity;
+//             await outletStockDoc.save();
+//           }
+//         }
+//         if (currentSourceBreakdown.fromReseller.quantity > 0 && resellerStockDoc) {
+//           const resellerStockDoc = await ResellerStock.findOne({
+//             reseller: resellerId,
+//             product: approval.productId,
+//           });
+
+//           if (resellerStockDoc) {
+//             if (tracksSerialNumbers) {
+//               for (const serialNumber of currentSourceBreakdown.fromReseller.serials) {
+//                 const serial = resellerStockDoc.serialNumbers.find(
+//                   sn => sn.serialNumber === serialNumber
+//                 );
+
+//                 if (serial && serial.status === "consumed") {
+//                   serial.status = "available";
+//                   serial.consumedDate = null;
+//                   serial.consumedBy = null;
+//                   serial.currentLocation = null;
+//                 }
+//               }
+//             }
+            
+//             resellerStockDoc.availableQuantity += currentSourceBreakdown.fromReseller.quantity;
+//             resellerStockDoc.consumedQuantity -= currentSourceBreakdown.fromReseller.quantity;
+//             await resellerStockDoc.save();
+//           }
+//         }
+//       }
+
+//       productItem.sourceBreakdown = newSourceBreakdown;
+//       productItem.approvedQuantity = newApprovedQuantity;
+//       productItem.approvedRemark = approval.approvedRemark || "";
+//       if (tracksSerialNumbers) {
+//         productItem.approvedSerials = approval.approvedSerials || [];
+//       }
+//     }
+
+//     if (stockRequest.status === "Submitted") {
+//       stockRequest.status = "Confirmed";
+//       stockRequest.approvalInfo = {
+//         ...stockRequest.approvalInfo,
+//         approvedBy: userId,
+//         approvedAt: new Date(),
+//       };
+//     }
+
+//     stockRequest.updatedBy = userId;
+//     await stockRequest.save();
+
+//     const populatedRequest = await StockRequest.findById(stockRequest._id)
+//       .populate("warehouse", "_id centerName centerCode centerType")
+//       .populate("center", "_id centerName centerCode")
+//       .populate("products.product", "_id productTitle productCode productImage")
+//       .populate("createdBy", "_id fullName email")
+//       .populate("updatedBy", "_id fullName email")
+//       .populate("approvalInfo.approvedBy", "_id fullName email");
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Approved quantities updated successfully",
+//       data: populatedRequest,
+//     });
+//   } catch (error) {
+//     console.error("Error updating approved quantities:", error);
+
+//     if (error.name === "CastError") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid stock request ID",
+//       });
+//     }
+
+//     if (error.name === "ValidationError") {
+//       const errors = Object.values(error.errors).map((err) => err.message);
+//       return res.status(400).json({
+//         success: false,
+//         message: "Validation error",
+//         errors,
+//       });
+//     }
+
+//     if (error.message.includes("serial numbers") || error.message.includes("Insufficient stock")) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Validation failed",
+//         error: error.message,
+//       });
+//     }
+
+//     res.status(500).json({
+//       success: false,
+//       message: "Error updating approved quantities",
+//       error:
+//         process.env.NODE_ENV === "development"
+//           ? error.message
+//           : "Internal server error",
+//     });
+//   }
+// };
 export const updateApprovedQuantities = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
@@ -13662,7 +14262,7 @@ export const updateApprovedQuantities = async (req, res) => {
     const stockRequest = await StockRequest.findById(id)
       .populate("center", "reseller")
       .populate("warehouse", "_id");
-    
+
     if (!stockRequest) {
       return res.status(404).json({
         success: false,
@@ -13679,6 +14279,7 @@ export const updateApprovedQuantities = async (req, res) => {
     }
 
     const userId = req.user?.id;
+
     if (!userId) {
       return res.status(400).json({
         success: false,
@@ -13706,17 +14307,25 @@ export const updateApprovedQuantities = async (req, res) => {
 
       const currentApprovedQuantity = productItem.approvedQuantity || 0;
       const newApprovedQuantity = approval.approvedQuantity;
-      
+
       const productDoc = await Product.findById(approval.productId);
       const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
 
       console.log(`[DEBUG] Processing product ${approval.productId}:`);
-      console.log(`[DEBUG] Current approved: ${currentApprovedQuantity}, New approved: ${newApprovedQuantity}`);
+      console.log(
+        `[DEBUG] Current approved: ${currentApprovedQuantity}, New approved: ${newApprovedQuantity}`
+      );
 
       let newSourceBreakdown = {
-        fromReseller: { quantity: 0, serials: [] },
-        fromOutlet: { quantity: 0, serials: [] },
-        totalApproved: newApprovedQuantity
+        fromReseller: {
+          quantity: 0,
+          serials: [],
+        },
+        fromOutlet: {
+          quantity: 0,
+          serials: [],
+        },
+        totalApproved: newApprovedQuantity,
       };
 
       if (newApprovedQuantity > 0) {
@@ -13730,6 +14339,7 @@ export const updateApprovedQuantities = async (req, res) => {
             reseller: resellerId,
             product: approval.productId,
           });
+
           if (resellerStockDoc) {
             resellerAvailable = resellerStockDoc.availableQuantity || 0;
           }
@@ -13739,64 +14349,105 @@ export const updateApprovedQuantities = async (req, res) => {
           outlet: stockRequest.warehouse,
           product: approval.productId,
         });
+
         if (outletStockDoc) {
           outletAvailable = outletStockDoc.availableQuantity || 0;
         }
 
-        if (tracksSerialNumbers && approval.approvedSerials && approval.approvedSerials.length > 0) {
+        if (
+          tracksSerialNumbers &&
+          approval.approvedSerials &&
+          approval.approvedSerials.length > 0
+        ) {
           const serials = approval.approvedSerials;
-        
+
           if (resellerStockDoc) {
             for (const serialNumber of serials) {
               const serial = resellerStockDoc.serialNumbers.find(
-                sn => sn.serialNumber === serialNumber && sn.status === "available"
+                (sn) =>
+                  sn.serialNumber === serialNumber &&
+                  sn.status === "available"
               );
+
               if (serial) {
                 newSourceBreakdown.fromReseller.serials.push(serialNumber);
               }
             }
           }
+
           newSourceBreakdown.fromOutlet.serials = serials.filter(
-            sn => !newSourceBreakdown.fromReseller.serials.includes(sn)
+            (sn) =>
+              !newSourceBreakdown.fromReseller.serials.includes(sn)
           );
-          
-          newSourceBreakdown.fromReseller.quantity = newSourceBreakdown.fromReseller.serials.length;
-          newSourceBreakdown.fromOutlet.quantity = newSourceBreakdown.fromOutlet.serials.length;
+
+          newSourceBreakdown.fromReseller.quantity =
+            newSourceBreakdown.fromReseller.serials.length;
+
+          newSourceBreakdown.fromOutlet.quantity =
+            newSourceBreakdown.fromOutlet.serials.length;
         } else {
-          newSourceBreakdown.fromReseller.quantity = Math.min(newApprovedQuantity, resellerAvailable);
-          newSourceBreakdown.fromOutlet.quantity = newApprovedQuantity - newSourceBreakdown.fromReseller.quantity;
+          newSourceBreakdown.fromReseller.quantity = Math.min(
+            newApprovedQuantity,
+            resellerAvailable
+          );
+
+          newSourceBreakdown.fromOutlet.quantity =
+            newApprovedQuantity -
+            newSourceBreakdown.fromReseller.quantity;
         }
-        if (newSourceBreakdown.fromReseller.quantity + newSourceBreakdown.fromOutlet.quantity !== newApprovedQuantity) {
+
+        if (
+          newSourceBreakdown.fromReseller.quantity +
+            newSourceBreakdown.fromOutlet.quantity !==
+          newApprovedQuantity
+        ) {
           return res.status(400).json({
             success: false,
             message: `Source breakdown calculation error for product ${productDoc?.productTitle}. Expected ${newApprovedQuantity}, got Reseller: ${newSourceBreakdown.fromReseller.quantity}, Outlet: ${newSourceBreakdown.fromOutlet.quantity}`,
           });
         }
 
-        const currentSourceBreakdown = productItem.sourceBreakdown || {
-          fromReseller: { quantity: 0, serials: [] },
-          fromOutlet: { quantity: 0, serials: [] }
-        };
+        const currentSourceBreakdown =
+          productItem.sourceBreakdown || {
+            fromReseller: {
+              quantity: 0,
+              serials: [],
+            },
+            fromOutlet: {
+              quantity: 0,
+              serials: [],
+            },
+          };
 
         if (outletStockDoc) {
-          const currentOutletQty = currentSourceBreakdown.fromOutlet.quantity;
-          const newOutletQty = newSourceBreakdown.fromOutlet.quantity;
-          const outletQtyDiff = newOutletQty - currentOutletQty;
+          const currentOutletQty =
+            currentSourceBreakdown.fromOutlet.quantity;
+
+          const newOutletQty =
+            newSourceBreakdown.fromOutlet.quantity;
+
+          const outletQtyDiff =
+            newOutletQty - currentOutletQty;
 
           if (outletQtyDiff > 0) {
             if (tracksSerialNumbers) {
-              const newOutletSerials = newSourceBreakdown.fromOutlet.serials.filter(
-                serial => !currentSourceBreakdown.fromOutlet.serials.includes(serial)
-              );
-              
+              const newOutletSerials =
+                newSourceBreakdown.fromOutlet.serials.filter(
+                  (serial) =>
+                    !currentSourceBreakdown.fromOutlet.serials.includes(
+                      serial
+                    )
+                );
+
               for (const serialNumber of newOutletSerials) {
                 const serial = outletStockDoc.serialNumbers.find(
-                  sn => sn.serialNumber === serialNumber
+                  (sn) => sn.serialNumber === serialNumber
                 );
 
                 if (serial && serial.status === "available") {
                   serial.status = "in_transit";
                   serial.currentLocation = stockRequest.warehouse;
+
                   serial.transferHistory.push({
                     fromCenter: stockRequest.warehouse,
                     toCenter: stockRequest.center,
@@ -13807,20 +14458,24 @@ export const updateApprovedQuantities = async (req, res) => {
                 }
               }
             }
-            
+
             outletStockDoc.availableQuantity -= outletQtyDiff;
             outletStockDoc.inTransitQuantity += outletQtyDiff;
           } else if (outletQtyDiff < 0) {
             const outletQtyToRevert = Math.abs(outletQtyDiff);
-            
+
             if (tracksSerialNumbers) {
-              const serialsToRevert = currentSourceBreakdown.fromOutlet.serials.filter(
-                serial => !newSourceBreakdown.fromOutlet.serials.includes(serial)
-              );
-              
+              const serialsToRevert =
+                currentSourceBreakdown.fromOutlet.serials.filter(
+                  (serial) =>
+                    !newSourceBreakdown.fromOutlet.serials.includes(
+                      serial
+                    )
+                );
+
               for (const serialNumber of serialsToRevert) {
                 const serial = outletStockDoc.serialNumbers.find(
-                  sn => sn.serialNumber === serialNumber
+                  (sn) => sn.serialNumber === serialNumber
                 );
 
                 if (serial && serial.status === "in_transit") {
@@ -13828,7 +14483,11 @@ export const updateApprovedQuantities = async (req, res) => {
                   serial.currentLocation = stockRequest.warehouse;
 
                   if (serial.transferHistory.length > 0) {
-                    const lastTransfer = serial.transferHistory[serial.transferHistory.length - 1];
+                    const lastTransfer =
+                      serial.transferHistory[
+                        serial.transferHistory.length - 1
+                      ];
+
                     if (lastTransfer.status === "in_transit") {
                       serial.transferHistory.pop();
                     }
@@ -13836,7 +14495,7 @@ export const updateApprovedQuantities = async (req, res) => {
                 }
               }
             }
-            
+
             outletStockDoc.availableQuantity += outletQtyToRevert;
             outletStockDoc.inTransitQuantity -= outletQtyToRevert;
           }
@@ -13845,19 +14504,28 @@ export const updateApprovedQuantities = async (req, res) => {
         }
 
         if (resellerStockDoc) {
-          const currentResellerQty = currentSourceBreakdown.fromReseller.quantity;
-          const newResellerQty = newSourceBreakdown.fromReseller.quantity;
-          const resellerQtyDiff = newResellerQty - currentResellerQty;
+          const currentResellerQty =
+            currentSourceBreakdown.fromReseller.quantity;
+
+          const newResellerQty =
+            newSourceBreakdown.fromReseller.quantity;
+
+          const resellerQtyDiff =
+            newResellerQty - currentResellerQty;
 
           if (resellerQtyDiff > 0) {
             if (tracksSerialNumbers) {
-              const newResellerSerials = newSourceBreakdown.fromReseller.serials.filter(
-                serial => !currentSourceBreakdown.fromReseller.serials.includes(serial)
-              );
-              
+              const newResellerSerials =
+                newSourceBreakdown.fromReseller.serials.filter(
+                  (serial) =>
+                    !currentSourceBreakdown.fromReseller.serials.includes(
+                      serial
+                    )
+                );
+
               for (const serialNumber of newResellerSerials) {
                 const serial = resellerStockDoc.serialNumbers.find(
-                  sn => sn.serialNumber === serialNumber
+                  (sn) => sn.serialNumber === serialNumber
                 );
 
                 if (serial && serial.status === "available") {
@@ -13868,20 +14536,25 @@ export const updateApprovedQuantities = async (req, res) => {
                 }
               }
             }
-            
+
             resellerStockDoc.availableQuantity -= resellerQtyDiff;
             resellerStockDoc.consumedQuantity += resellerQtyDiff;
           } else if (resellerQtyDiff < 0) {
-            const resellerQtyToRevert = Math.abs(resellerQtyDiff);
-            
+            const resellerQtyToRevert =
+              Math.abs(resellerQtyDiff);
+
             if (tracksSerialNumbers) {
-              const serialsToRevert = currentSourceBreakdown.fromReseller.serials.filter(
-                serial => !newSourceBreakdown.fromReseller.serials.includes(serial)
-              );
-              
+              const serialsToRevert =
+                currentSourceBreakdown.fromReseller.serials.filter(
+                  (serial) =>
+                    !newSourceBreakdown.fromReseller.serials.includes(
+                      serial
+                    )
+                );
+
               for (const serialNumber of serialsToRevert) {
                 const serial = resellerStockDoc.serialNumbers.find(
-                  sn => sn.serialNumber === serialNumber
+                  (sn) => sn.serialNumber === serialNumber
                 );
 
                 if (serial && serial.status === "consumed") {
@@ -13892,18 +14565,29 @@ export const updateApprovedQuantities = async (req, res) => {
                 }
               }
             }
-            
-            resellerStockDoc.availableQuantity += resellerQtyToRevert;
-            resellerStockDoc.consumedQuantity -= resellerQtyToRevert;
+
+            resellerStockDoc.availableQuantity +=
+              resellerQtyToRevert;
+
+            resellerStockDoc.consumedQuantity -=
+              resellerQtyToRevert;
           }
 
           await resellerStockDoc.save();
         }
       } else {
-        const currentSourceBreakdown = productItem.sourceBreakdown || {
-          fromReseller: { quantity: 0, serials: [] },
-          fromOutlet: { quantity: 0, serials: [] }
-        };
+        const currentSourceBreakdown =
+          productItem.sourceBreakdown || {
+            fromReseller: {
+              quantity: 0,
+              serials: [],
+            },
+            fromOutlet: {
+              quantity: 0,
+              serials: [],
+            },
+          };
+
         if (currentSourceBreakdown.fromOutlet.quantity > 0) {
           const outletStockDoc = await OutletStock.findOne({
             outlet: stockRequest.warehouse,
@@ -13912,44 +14596,72 @@ export const updateApprovedQuantities = async (req, res) => {
 
           if (outletStockDoc) {
             if (tracksSerialNumbers) {
-              for (const serialNumber of currentSourceBreakdown.fromOutlet.serials) {
+              for (const serialNumber of
+                currentSourceBreakdown.fromOutlet.serials) {
                 const serial = outletStockDoc.serialNumbers.find(
-                  sn => sn.serialNumber === serialNumber
+                  (sn) => sn.serialNumber === serialNumber
                 );
 
-                if (serial && serial.status === "in_transit") {
+                if (
+                  serial &&
+                  serial.status === "in_transit"
+                ) {
                   serial.status = "available";
-                  serial.currentLocation = stockRequest.warehouse;
-                  
+                  serial.currentLocation =
+                    stockRequest.warehouse;
+
                   if (serial.transferHistory.length > 0) {
-                    const lastTransfer = serial.transferHistory[serial.transferHistory.length - 1];
-                    if (lastTransfer.status === "in_transit") {
+                    const lastTransfer =
+                      serial.transferHistory[
+                        serial.transferHistory.length - 1
+                      ];
+
+                    if (
+                      lastTransfer.status === "in_transit"
+                    ) {
                       serial.transferHistory.pop();
                     }
                   }
                 }
               }
             }
-            
-            outletStockDoc.availableQuantity += currentSourceBreakdown.fromOutlet.quantity;
-            outletStockDoc.inTransitQuantity -= currentSourceBreakdown.fromOutlet.quantity;
+
+            outletStockDoc.availableQuantity +=
+              currentSourceBreakdown.fromOutlet.quantity;
+
+            outletStockDoc.inTransitQuantity -=
+              currentSourceBreakdown.fromOutlet.quantity;
+
             await outletStockDoc.save();
           }
         }
-        if (currentSourceBreakdown.fromReseller.quantity > 0 && resellerStockDoc) {
-          const resellerStockDoc = await ResellerStock.findOne({
-            reseller: resellerId,
-            product: approval.productId,
-          });
+
+        // FIX:
+        // resellerStockDoc was previously referenced here before
+        // being declared in this scope.
+        if (
+          currentSourceBreakdown.fromReseller.quantity > 0
+        ) {
+          const resellerStockDoc =
+            await ResellerStock.findOne({
+              reseller: resellerId,
+              product: approval.productId,
+            });
 
           if (resellerStockDoc) {
             if (tracksSerialNumbers) {
-              for (const serialNumber of currentSourceBreakdown.fromReseller.serials) {
-                const serial = resellerStockDoc.serialNumbers.find(
-                  sn => sn.serialNumber === serialNumber
-                );
+              for (const serialNumber of
+                currentSourceBreakdown.fromReseller.serials) {
+                const serial =
+                  resellerStockDoc.serialNumbers.find(
+                    (sn) =>
+                      sn.serialNumber === serialNumber
+                  );
 
-                if (serial && serial.status === "consumed") {
+                if (
+                  serial &&
+                  serial.status === "consumed"
+                ) {
                   serial.status = "available";
                   serial.consumedDate = null;
                   serial.consumedBy = null;
@@ -13957,9 +14669,13 @@ export const updateApprovedQuantities = async (req, res) => {
                 }
               }
             }
-            
-            resellerStockDoc.availableQuantity += currentSourceBreakdown.fromReseller.quantity;
-            resellerStockDoc.consumedQuantity -= currentSourceBreakdown.fromReseller.quantity;
+
+            resellerStockDoc.availableQuantity +=
+              currentSourceBreakdown.fromReseller.quantity;
+
+            resellerStockDoc.consumedQuantity -=
+              currentSourceBreakdown.fromReseller.quantity;
+
             await resellerStockDoc.save();
           }
         }
@@ -13967,14 +14683,18 @@ export const updateApprovedQuantities = async (req, res) => {
 
       productItem.sourceBreakdown = newSourceBreakdown;
       productItem.approvedQuantity = newApprovedQuantity;
-      productItem.approvedRemark = approval.approvedRemark || "";
+      productItem.approvedRemark =
+        approval.approvedRemark || "";
+
       if (tracksSerialNumbers) {
-        productItem.approvedSerials = approval.approvedSerials || [];
+        productItem.approvedSerials =
+          approval.approvedSerials || [];
       }
     }
 
     if (stockRequest.status === "Submitted") {
       stockRequest.status = "Confirmed";
+
       stockRequest.approvalInfo = {
         ...stockRequest.approvalInfo,
         approvedBy: userId,
@@ -13983,15 +14703,35 @@ export const updateApprovedQuantities = async (req, res) => {
     }
 
     stockRequest.updatedBy = userId;
+
     await stockRequest.save();
 
-    const populatedRequest = await StockRequest.findById(stockRequest._id)
-      .populate("warehouse", "_id centerName centerCode centerType")
-      .populate("center", "_id centerName centerCode")
-      .populate("products.product", "_id productTitle productCode productImage")
-      .populate("createdBy", "_id fullName email")
-      .populate("updatedBy", "_id fullName email")
-      .populate("approvalInfo.approvedBy", "_id fullName email");
+    const populatedRequest =
+      await StockRequest.findById(stockRequest._id)
+        .populate(
+          "warehouse",
+          "_id centerName centerCode centerType"
+        )
+        .populate(
+          "center",
+          "_id centerName centerCode"
+        )
+        .populate(
+          "products.product",
+          "_id productTitle productCode productImage"
+        )
+        .populate(
+          "createdBy",
+          "_id fullName email"
+        )
+        .populate(
+          "updatedBy",
+          "_id fullName email"
+        )
+        .populate(
+          "approvalInfo.approvedBy",
+          "_id fullName email"
+        );
 
     res.status(200).json({
       success: true,
@@ -13999,7 +14739,10 @@ export const updateApprovedQuantities = async (req, res) => {
       data: populatedRequest,
     });
   } catch (error) {
-    console.error("Error updating approved quantities:", error);
+    console.error(
+      "Error updating approved quantities:",
+      error
+    );
 
     if (error.name === "CastError") {
       return res.status(400).json({
@@ -14009,7 +14752,10 @@ export const updateApprovedQuantities = async (req, res) => {
     }
 
     if (error.name === "ValidationError") {
-      const errors = Object.values(error.errors).map((err) => err.message);
+      const errors = Object.values(error.errors).map(
+        (err) => err.message
+      );
+
       return res.status(400).json({
         success: false,
         message: "Validation error",
@@ -14017,7 +14763,10 @@ export const updateApprovedQuantities = async (req, res) => {
       });
     }
 
-    if (error.message.includes("serial numbers") || error.message.includes("Insufficient stock")) {
+    if (
+      error.message?.includes("serial numbers") ||
+      error.message?.includes("Insufficient stock")
+    ) {
       return res.status(400).json({
         success: false,
         message: "Validation failed",
@@ -14035,7 +14784,6 @@ export const updateApprovedQuantities = async (req, res) => {
     });
   }
 };
-
 export const getMostRecentOrderNumber = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
@@ -14094,6 +14842,7 @@ export const getMostRecentOrderNumber = async (req, res) => {
 
 export const getCenterSerialNumbers = async (req, res) => {
   try {
+    const Product = mongoose.model("Product");
     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
       req,
       ["indent_all_center", "indent_own_center"]
@@ -14665,7 +15414,6 @@ export const updateCenterChallanApproval = async (req, res) => {
   }
 };
 
-
 export const exportStockRequestsToExcel = async (req, res) => {
   try {
     res.status(200).json({
@@ -14682,3 +15430,5 @@ export const exportStockRequestsToExcel = async (req, res) => {
     });
   }
 };
+
+        

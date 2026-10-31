@@ -338,35 +338,33 @@ export const createStockClosing = async (req, res) => {
       products,
       status,
       remark,
-      reportMonth, // NEW: Add this field to track which month the report is for
-      reportYear   // NEW: Add this field to track which year the report is for
+      reportMonth,
+      reportYear
     } = req.body;
 
-    if (!products || !Array.isArray(products) || products.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Products array with at least one product is required",
-      });
-    }
+    // ========== REMOVED: Products validation ==========
+    // No longer required - products can be empty or not provided
 
-    // Validate products
-    for (const [index, product] of products.entries()) {
-      if (
-        !product.product ||
-        product.productQty === undefined ||
-        product.damageQty === undefined
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: `Product at index ${index} is missing required fields (product, productQty, damageQty)`,
-        });
-      }
+    // ========== VALIDATE PRODUCTS ONLY IF PROVIDED ==========
+    if (products && Array.isArray(products) && products.length > 0) {
+      for (const [index, product] of products.entries()) {
+        if (
+          !product.product ||
+          product.productQty === undefined ||
+          product.damageQty === undefined
+        ) {
+          return res.status(400).json({
+            success: false,
+            message: `Product at index ${index} is missing required fields (product, productQty, damageQty)`,
+          });
+        }
 
-      if (product.damageQty > product.productQty) {
-        return res.status(400).json({
-          success: false,
-          message: `Damage quantity cannot exceed product quantity for product at index ${index}`,
-        });
+        if (product.damageQty > product.productQty) {
+          return res.status(400).json({
+            success: false,
+            message: `Damage quantity cannot exceed product quantity for product at index ${index}`,
+          });
+        }
       }
     }
 
@@ -444,9 +442,8 @@ export const createStockClosing = async (req, res) => {
     let reportYearValue = reportYear;
     
     if (!reportMonthValue || !reportYearValue) {
-      // If not provided, use the date or current date
       const closingDate = date ? new Date(date) : new Date();
-      reportMonthValue = closingDate.getMonth() + 1; // 1-12
+      reportMonthValue = closingDate.getMonth() + 1;
       reportYearValue = closingDate.getFullYear();
     }
 
@@ -456,12 +453,12 @@ export const createStockClosing = async (req, res) => {
       stockClosingForOtherCenter: stockClosingForOtherCenter,
       center: targetCenter,
       closingCenter: userClosingCenter,
-      products,
+      products: products || [], // Allow empty products array
       status: status || "Draft",
       createdBy: req.user?.id,
       remark: remark || "",
-      reportMonth: reportMonthValue, // NEW: Store the month
-      reportYear: reportYearValue,   // NEW: Store the year
+      reportMonth: reportMonthValue,
+      reportYear: reportYearValue,
     };
 
     const stockClosing = new StockClosing(stockClosingData);
@@ -719,80 +716,127 @@ export const getAllStockClosings = async (req, res) => {
       sortOrder = "desc",
       centerType,
       startDate,
-      endDate,  
+      endDate,
       ...filterParams
     } = req.query;
 
-    const filter = buildStockClosingFilter(
-      filterParams,
-      permissions,
-      userCenter
-    );
+    // ========== BUILD FILTER ==========
+    let filter = {};
+    
+    if (Object.keys(filterParams).length > 0) {
+      filter = buildStockClosingFilter(
+        filterParams,
+        permissions,
+        userCenter
+      );
+    } else {
+      if (permissions.view_closing_stock_own_center && !permissions.view_closing_stock_all_center) {
+        const userCenterId = userCenter?._id || userCenter;
+        if (userCenterId) {
+          filter.closingCenter = userCenterId;
+        }
+      }
+    }
+
+    // ========== DATE FILTER ==========
     if (startDate || endDate) {
       filter.date = {};
       if (startDate) {
-        filter.date.$gte = new Date(startDate);
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        filter.date.$gte = start;
       }
       if (endDate) {
-        filter.date.$lte = new Date(endDate);
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        filter.date.$lte = end;
       }
     }
 
-    const sortOptions = buildStockClosingSortOptions(sortBy, sortOrder);
+    // ========== SORT OPTIONS ==========
+    const sortOptions = {};
+    const validSortFields = ["date", "createdAt", "updatedAt", "closingCenter"];
+    const actualSortBy = validSortFields.includes(sortBy) ? sortBy : "date";
+    sortOptions[actualSortBy] = sortOrder === "desc" ? -1 : 1;
+
+    // ========== PAGINATION ==========
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    // ========== POPULATE OPTIONS - REMOVED approvedBy ==========
+    const populateOptions = [
+      {
+        path: "closingCenter",
+        select: "centerName centerCode centerType address phone reseller",
+        populate: {
+          path: "reseller",
+          select: "businessName name email phone"
+        }
+      },
+      {
+        path: "products.product",
+        select: "productTitle productCode productPrice productCategory"
+      },
+      {
+        path: "createdBy",
+        select: "fullName email username"
+      }
+      // REMOVED: approvedBy population
+    ];
+
+    // ========== EXECUTE QUERY ==========
+    console.log('Final filter:', JSON.stringify(filter, null, 2));
 
     const [stockClosings, totalCount] = await Promise.all([
       StockClosing.find(filter)
-        .populate(stockClosingPopulateOptions)
+        .populate(populateOptions)
         .sort(sortOptions)
-        .skip((parseInt(page) - 1) * parseInt(limit))
-        .limit(parseInt(limit))
+        .skip(skip)
+        .limit(limitNum)
         .lean(),
-
       StockClosing.countDocuments(filter),
     ]);
 
-    const filteredStockClosings = centerType
-      ? stockClosings.filter(
-          (sc) => sc.closingCenter && sc.closingCenter.centerType === centerType
-        )
-      : stockClosings;
-
-    const actualTotal = centerType ? filteredStockClosings.length : totalCount;
-
-    if (filteredStockClosings.length === 0) {
-      return res.status(200).json({
-        success: true,
-        message: "No stock closings found",
-        data: [],
-        pagination: {
-          currentPage: parseInt(page),
-          totalPages: 0,
-          totalItems: 0,
-          itemsPerPage: parseInt(limit),
-          hasNext: false,
-          hasPrev: false,
-        },
-      });
+    // ========== APPLY CENTER TYPE FILTER ==========
+    let filteredStockClosings = stockClosings;
+    if (centerType) {
+      filteredStockClosings = stockClosings.filter(
+        (sc) => sc.closingCenter && sc.closingCenter.centerType === centerType
+      );
     }
 
-    const totalPages = Math.ceil(actualTotal / parseInt(limit));
+    const actualTotal = centerType ? filteredStockClosings.length : totalCount;
+    const totalPages = Math.ceil(actualTotal / limitNum);
 
+    // ========== RESPONSE ==========
     res.json({
       success: true,
       message: "Stock closings retrieved successfully",
       data: filteredStockClosings,
       pagination: {
-        currentPage: parseInt(page),
+        currentPage: pageNum,
         totalPages,
         totalItems: actualTotal,
-        itemsPerPage: parseInt(limit),
-        hasNext: parseInt(page) < totalPages,
-        hasPrev: parseInt(page) > 1,
+        itemsPerPage: limitNum,
+        hasNext: pageNum < totalPages,
+        hasPrev: pageNum > 1,
       },
+      appliedFilters: {
+        centerType: centerType || "all",
+        dateRange: {
+          startDate: startDate || "none",
+          endDate: endDate || "none",
+        }
+      }
     });
   } catch (error) {
     console.error("Get all stock closings error:", error);
-    handleControllerError(error, res);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch stock closings",
+      error: error.message,
+    });
   }
 };
 
@@ -1499,29 +1543,37 @@ export const getMonthlyStockClosingStatus = async (req, res) => {
       const submission = submissionsMap.get(center._id.toString());
       const hasSubmitted = !!submission;
       
-      if (hasSubmitted && submission.status === "Approved") {
-        submittedCount++;
-      }
-      
-      // ALL centers that have submitted get "submitted" status
-      // NO other conditions - just mark as submitted if they have a record
       let submissionStatus = "pending";
       let remarks = "";
-      
+
       if (hasSubmitted && submission.status === "Approved") {
+        submittedCount++;
         submissionStatus = "approved";
         const submittedDate = new Date(submission.createdAt || submission.date);
-        remarks = `✅ Report approved (submitted on ${submittedDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })})`;
+        remarks = `✅ Report approved (submitted on ${submittedDate.toLocaleDateString('en-IN', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric'
+        })})`;
       } else if (hasSubmitted) {
+        submittedCount++;
         submissionStatus = "awaited";
         const submittedDate = new Date(submission.createdAt || submission.date);
-        remarks = `⏳ Report submitted on ${submittedDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}, awaiting approval`;
+        remarks = `⏳ Report submitted on ${submittedDate.toLocaleDateString('en-IN', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric'
+        })}, awaiting approval`;
       } else if (isDeadlinePassed) {
         submissionStatus = "missed";
-        remarks = `❌ No report submitted for ${targetDate.toLocaleString('default', { month: 'long' })} ${targetYear}`;
+        remarks = `❌ No report submitted for ${targetDate.toLocaleString('default', {
+          month: 'long'
+        })} ${targetYear}`;
       } else {
         submissionStatus = "pending";
-        remarks = `⏳ Awaiting submission for ${targetDate.toLocaleString('default', { month: 'long' })} ${targetYear}`;
+        remarks = `⏳ Awaiting submission for ${targetDate.toLocaleString('default', {
+          month: 'long'
+        })} ${targetYear}`;
       }
       
       centersData.push({
@@ -1530,7 +1582,7 @@ export const getMonthlyStockClosingStatus = async (req, res) => {
         centerCode: center.centerCode,
         centerType: center.centerType,
         reseller: center.reseller || null,
-        submissionStatus: submissionStatus, // This will be "submitted" for ALL who have a record
+        submissionStatus: submissionStatus,
         submittedOn: submission ? submission.createdAt : null,
         submittedBy: submission ? submission.createdBy : null,
         reportId: submission ? submission._id : null,
@@ -1570,6 +1622,7 @@ export const getMonthlyStockClosingStatus = async (req, res) => {
     
   } catch (error) {
     console.error("❌ Error getting monthly stock closing status:", error);
+
     res.status(500).json({
       success: false,
       message: "Internal server error",
