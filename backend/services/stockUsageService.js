@@ -2,12 +2,42 @@ import mongoose from "mongoose";
 
 import StockUsage from "../models/StockUsage.js";
 import CenterStock from "../models/CenterStock.js";
+import OutletStock from "../models/OutletStock.js";
 import Product from "../models/Product.js";
 import EntityStockUsage from "../models/EntityStock.js";
 import FaultyStock from "../models/FaultyStock.js";
 import ReturnRecord from "../models/ReturnRecord.js";
 import ReplacementRecord from "../models/ReplacementRecord.js";
 import Center from "../models/Center.js";
+
+// Resolve the correct stock collection for a Center or Outlet.
+const getLocationStockModel = async (locationId, session = null) => {
+    let query = Center.findById(locationId).select("centerType");
+    if (session) query = query.session(session);
+
+    const location = await query;
+
+    if (!location) {
+        throw new Error(`Stock location not found: ${locationId}`);
+    }
+
+    return location.centerType === "Outlet" ? OutletStock : CenterStock;
+};
+
+const findLocationStock = async (locationId, productId, session = null) => {
+    const StockModel = await getLocationStockModel(locationId, session);
+
+    const filter = StockModel === OutletStock
+        ? { outlet: locationId, product: productId }
+        : { center: locationId, product: productId };
+
+    let query = StockModel.findOne(filter);
+    if (session) query = query.session(session);
+
+    return query;
+};
+
+
 
 /**
  * Create a Stock Usage entry.
@@ -35,10 +65,7 @@ export const createStockUsage = async (usageData) => {
             throw new Error(`Product not found: ${item.product}`);
         }
 
-        const centerStock = await CenterStock.findOne({
-            center: usageData.center,
-            product: item.product,
-        });
+        const centerStock = await findLocationStock(usageData.center, item.product);
 
 
                 if (!centerStock) {
@@ -157,10 +184,7 @@ export const processDamageUsage = async (stockUsage) => {
                 throw new Error(`Product not found: ${item.product}`);
             }
 
-            const centerStock = await CenterStock.findOne({
-                center: stockUsage.center,
-                product: item.product,
-            }).session(session);
+            const centerStock = await findLocationStock(stockUsage.center, item.product, session);
 
             if (!centerStock) {
                 throw new Error(
@@ -429,10 +453,7 @@ export const processStockDeduction = async (stockUsage) => {
                 throw new Error(`Product not found: ${item.product}`);
             }
 
-            const centerStock = await CenterStock.findOne({
-                center: stockUsage.center,
-                product: item.product,
-            }).session(session);
+            const centerStock = await findLocationStock(stockUsage.center, item.product, session);
 
             if (!centerStock) {
                 throw new Error(
@@ -530,10 +551,7 @@ export const reserveStockForDamage = async (stockUsage) => {
                 throw new Error(`Product not found: ${item.product}`);
             }
 
-            const centerStock = await CenterStock.findOne({
-                center: stockUsage.center,
-                product: item.product,
-            }).session(session);
+            const centerStock = await findLocationStock(stockUsage.center, item.product, session);
 
             if (!centerStock) {
                 throw new Error(
@@ -947,10 +965,7 @@ export const approveDamageRequest = async (
                 );
             }
 
-            const centerStock = await CenterStock.findOne({
-                center: stockUsage.center,
-                product: item.product,
-            }).session(session);
+            const centerStock = await findLocationStock(stockUsage.center, item.product, session);
 
             if (!centerStock) {
                 throw new Error(
@@ -1077,10 +1092,7 @@ export const rejectDamageRequest = async (
                 );
             }
 
-            const centerStock = await CenterStock.findOne({
-                center: stockUsage.center,
-                product: item.product,
-            }).session(session);
+            const centerStock = await findLocationStock(stockUsage.center, item.product, session);
 
             if (!centerStock) {
                 throw new Error(
@@ -2921,10 +2933,7 @@ export const revertDamageEntry = async ({
                 );
             }
 
-            const centerStock = await CenterStock.findOne({
-                center: stockUsage.center,
-                product: item.product,
-            }).session(session);
+            const centerStock = await findLocationStock(stockUsage.center, item.product, session);
 
             if (!centerStock) {
                 throw new Error(

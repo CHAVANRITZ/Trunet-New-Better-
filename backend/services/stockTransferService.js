@@ -596,15 +596,17 @@ const validateSourceStock = async (
                 centerStock.availableQuantity || 0;
         }
 
-        if (availableQuantity === 0) {
+        if (availableQuantity < productItem.quantity) {
             const outletStock = await OutletStock.findOne({
                 outlet: fromCenterId,
                 product: productItem.product,
             });
 
-            if (outletStock) {
-                availableQuantity =
-                    outletStock.availableQuantity || 0;
+            const outletAvailable =
+                outletStock?.availableQuantity || 0;
+
+            if (outletAvailable > availableQuantity) {
+                availableQuantity = outletAvailable;
             }
         }
 
@@ -1638,155 +1640,146 @@ export const confirmStockTransfer = async ({
          *   available serials -> in_transit
          *   inTransitQuantity += approvedQuantity
          */
+
         for (const approval of approvalsToReserve) {
             const approvedQuantity =
-                approval.approvedQuantity || 0;
+                approval.approvedQuantity ?? 0;
 
-            if (approvedQuantity <= 0) {
-                continue;
-            }
+            if (approvedQuantity <= 0) continue;
 
-            const product =
-                await Product.findById(
-                    approval.productId
-                ).session(session);
+            const product = await Product.findById(
+                approval.productId
+            ).session(session);
 
             const tracksSerialNumbers =
                 product?.trackSerialNumber === "Yes";
 
-            const centerStock =
-                await CenterStock.findOne({
-                    center:
-                        stockTransfer.fromCenter,
-                    product:
-                        approval.productId,
-                }).session(session);
+            let sourceStock = await CenterStock.findOne({
+                center: stockTransfer.fromCenter,
+                product: approval.productId,
+            }).session(session);
 
-            if (!centerStock) {
-                throw new StockTransferServiceError(
-                    `No stock found for product ${
-                        product?.productTitle ||
-                        approval.productId
-                    } in source center.`,
-                    {
-                        statusCode: 400,
-                        code:
-                            "SOURCE_STOCK_NOT_FOUND",
-                    }
-                );
-            }
+            let sourceStockType = "CenterStock";
 
             if (
-                centerStock.availableQuantity <
-                approvedQuantity
+                !sourceStock ||
+                (sourceStock.availableQuantity || 0) < approvedQuantity
             ) {
+                const outletStock = await OutletStock.findOne({
+                    outlet: stockTransfer.fromCenter,
+                    product: approval.productId,
+                }).session(session);
+
+                if (
+                    outletStock &&
+                    (outletStock.availableQuantity || 0) >= approvedQuantity
+                ) {
+                    sourceStock = outletStock;
+                    sourceStockType = "OutletStock";
+                }
+            }
+
+            if (!sourceStock) {
                 throw new StockTransferServiceError(
-                    `Insufficient stock for product ${
-                        product?.productTitle ||
-                        approval.productId
-                    }. Available: ${
-                        centerStock.availableQuantity
-                    }, Approved: ${approvedQuantity}`,
+                    `No source stock found for product ${product?.productTitle || approval.productId}.`,
                     {
                         statusCode: 400,
-                        code:
-                            "INSUFFICIENT_SOURCE_STOCK",
+                        code: "SOURCE_STOCK_NOT_FOUND",
                     }
                 );
             }
 
-            /*
-             * Serialized products require exactly one
-             * available serial for every approved quantity.
-             */
+            const availableQuantity =
+                sourceStock.availableQuantity || 0;
+
+            if (availableQuantity < approvedQuantity) {
+                throw new StockTransferServiceError(
+                    `Insufficient stock for product ${product?.productTitle || approval.productId}. Available: ${availableQuantity}, Approved: ${approvedQuantity}`,
+                    {
+                        statusCode: 400,
+                        code: "INSUFFICIENT_SOURCE_STOCK",
+                    }
+                );
+            }
+
+            const transferProduct = stockTransfer.products.find(
+                item => sameId(item.product, approval.productId)
+            );
+
+            if (transferProduct) {
+                transferProduct.sourceStockType = sourceStockType;
+            }
+
             if (tracksSerialNumbers) {
-                if (
-                    !Array.isArray(
-                        approval.approvedSerials
-                    ) ||
-                    approval.approvedSerials.length !==
-                        approvedQuantity
-                ) {
+                const serials = approval.approvedSerials || [];
+
+                if (serials.length !== approvedQuantity) {
                     throw new StockTransferServiceError(
                         `Number of serial numbers must match approved quantity for product ${product.productTitle}.`,
                         {
                             statusCode: 400,
-                            code:
-                                "SERIAL_QUANTITY_MISMATCH",
+                            code: "SERIAL_QUANTITY_MISMATCH",
                         }
                     );
                 }
 
-                const approvedSerialSet =
-                    new Set(
-                        approval.approvedSerials
-                    );
-
-                if (
-                    approvedSerialSet.size !==
-                    approval.approvedSerials.length
-                ) {
+                if (new Set(serials).size !== serials.length) {
                     throw new StockTransferServiceError(
                         `Duplicate serial numbers found for product ${product.productTitle}.`,
                         {
                             statusCode: 400,
-                            code:
-                                "DUPLICATE_SERIAL_NUMBERS",
+                            code: "DUPLICATE_SERIAL_NUMBERS",
                         }
                     );
                 }
 
-                for (const serialNumber of
-                    approval.approvedSerials) {
-                    const serial =
-                        centerStock.serialNumbers.find(
-                            (item) =>
-                                item.serialNumber ===
-                                    serialNumber &&
-                                item.status ===
-                                    "available"
-                        );
+                for (const serialNumber of serials) {
+                    const serial = (sourceStock.serialNumbers || []).find(
+                        item =>
+                            item.serialNumber === serialNumber &&
+                            item.status === "available" &&
+                            (
+                                !item.currentLocation ||
+                                item.currentLocation.toString() ===
+                                    stockTransfer.fromCenter.toString()
+                            )
+                    );
 
                     if (!serial) {
                         throw new StockTransferServiceError(
-                            `Serial number ${serialNumber} not available for product ${product.productTitle}.`,
+                            `Serial number ${serialNumber} not available in ${sourceStockType} for product ${product.productTitle}.`,
                             {
                                 statusCode: 400,
-                                code:
-                                    "SERIAL_NOT_AVAILABLE",
+                                code: "SERIAL_NOT_AVAILABLE",
                             }
                         );
                     }
 
-                    serial.status =
-                        "in_transit";
+                    serial.status = "in_transit";
+                    serial.currentLocation = stockTransfer.fromCenter;
+                    serial.transferHistory =
+                        serial.transferHistory || [];
 
                     serial.transferHistory.push({
-                        fromCenter:
-                            stockTransfer.fromCenter,
-
-                        toCenter:
-                            stockTransfer.toCenter,
-
-                        transferDate:
-                            new Date(),
-
-                        transferType:
-                            "outbound_transfer",
+                        fromCenter: stockTransfer.fromCenter,
+                        toCenter: stockTransfer.toCenter,
+                        transferDate: new Date(),
+                        transferType: "outbound_transfer",
                     });
                 }
             }
 
-            centerStock.availableQuantity -=
-                approvedQuantity;
+            sourceStock.availableQuantity =
+                availableQuantity - approvedQuantity;
 
-            centerStock.inTransitQuantity +=
-                approvedQuantity;
+            sourceStock.inTransitQuantity =
+                (sourceStock.inTransitQuantity || 0) + approvedQuantity;
 
-            await centerStock.save({
-                session,
-            });
+            await sourceStock.save({ session });
         }
+
+        // Persist source collection selection in the same transaction.
+        await stockTransfer.save({ session });
 
         /*
          * Commit transfer confirmation and source-stock

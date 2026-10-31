@@ -145,6 +145,12 @@ const stockTransferSchema = new mongoose.Schema(
           maxlength: 200,
         },
 
+        sourceStockType: {
+          type: String,
+          enum: ["CenterStock", "OutletStock"],
+          default: "CenterStock",
+        },
+
         requiresSerialNumbers: {
           type: Boolean,
           default: false,
@@ -840,96 +846,96 @@ stockTransferSchema.statics.getDestinationStats =
  * - A serial is accepted when it is either available or in_transit
  *   and is currently located at the source center.
  */
+
 stockTransferSchema.methods.validateSerialNumbers = async function (
-  productApprovals
+  productApprovals,
+  session = null
 ) {
   const CenterStock = mongoose.model("CenterStock");
+  const OutletStock = mongoose.model("OutletStock");
   const Product = mongoose.model("Product");
-  const validationResults = [];
+  const results = [];
 
   for (const approval of productApprovals) {
-    const productDoc = await Product.findById(
-      approval.productId
-    );
+    const product = await Product.findById(approval.productId).session(session);
+    const serialized = product?.trackSerialNumber === "Yes";
 
-    const tracksSerialNumbers =
-      productDoc?.trackSerialNumber === "Yes";
-
-    if (
-      tracksSerialNumbers &&
-      approval.approvedSerials
-    ) {
-      const centerStock = await CenterStock.findOne({
-        center: this.fromCenter,
-        product: approval.productId,
-      });
-
-      if (!centerStock) {
-        validationResults.push({
-          productId: approval.productId,
-          productName: productDoc.productTitle,
-          valid: false,
-          error:
-            "No stock found in source center for this product",
-        });
-
-        continue;
-      }
-
-      const availableSerials = [];
-      const unavailableSerials = [];
-
-      for (const serial of approval.approvedSerials) {
-        const serialEntry =
-          centerStock.serialNumbers.find(
-            (sn) => sn.serialNumber === serial
-          );
-
-        if (serialEntry) {
-          const isValidStatus =
-            serialEntry.status === "available" ||
-            serialEntry.status === "in_transit";
-
-          const isAtSource =
-            serialEntry.currentLocation?.toString() ===
-            this.fromCenter.toString();
-
-          if (isValidStatus && isAtSource) {
-            availableSerials.push(serial);
-          } else {
-            unavailableSerials.push(serial);
-          }
-        } else {
-          unavailableSerials.push(serial);
-        }
-      }
-
-      validationResults.push({
+    if (!serialized || !Array.isArray(approval.approvedSerials)) {
+      results.push({
         productId: approval.productId,
-        productName: productDoc.productTitle,
-        valid: unavailableSerials.length === 0,
-        availableSerials,
-        unavailableSerials,
-        error:
-          unavailableSerials.length > 0
-            ? `Serial numbers not available: ${unavailableSerials.join(
-                ", "
-              )}`
-            : null,
-      });
-    } else {
-      validationResults.push({
-        productId: approval.productId,
-        productName: productDoc.productTitle,
+        productName: product?.productTitle || "Unknown",
         valid: true,
         availableSerials: [],
         unavailableSerials: [],
         error: null,
       });
+      continue;
     }
+
+    const center = await CenterStock.findOne({
+      center: this.fromCenter,
+      product: approval.productId,
+    }).session(session);
+
+    const outlet = await OutletStock.findOne({
+      outlet: this.fromCenter,
+      product: approval.productId,
+    }).session(session);
+
+    const isValidAtSource = (entry) =>
+      entry &&
+      entry.status === "available" &&
+      (!entry.currentLocation ||
+        entry.currentLocation.toString() === this.fromCenter.toString());
+
+    let source = center;
+    let sourceType = "CenterStock";
+
+    const allIn = (stock) =>
+      approval.approvedSerials.every((number) =>
+        (stock?.serialNumbers || []).some(
+          (entry) => entry.serialNumber === number && isValidAtSource(entry)
+        )
+      );
+
+    if (!allIn(center) && allIn(outlet)) {
+      source = outlet;
+      sourceType = "OutletStock";
+    }
+
+    const availableSerials = [];
+    const unavailableSerials = [];
+
+    for (const number of approval.approvedSerials) {
+      const entry = (source?.serialNumbers || []).find(
+        (item) => item.serialNumber === number
+      );
+
+      if (isValidAtSource(entry)) availableSerials.push(number);
+      else unavailableSerials.push(number);
+    }
+
+    const transferItem = this.products.find(
+      (item) => item.product.toString() === approval.productId.toString()
+    );
+
+    if (transferItem && unavailableSerials.length === 0) {
+      transferItem.sourceStockType = sourceType;
+    }
+
+    results.push({
+      productId: approval.productId,
+      productName: product?.productTitle || "Unknown",
+      valid: unavailableSerials.length === 0,
+      availableSerials,
+      unavailableSerials,
+      error: unavailableSerials.length
+        ? `Serial numbers not available: ${unavailableSerials.join(", ")}`
+        : null,
+    });
   }
 
-  return validationResults;
+  return results;
 };
 
 stockTransferSchema.methods.validateTransferSerialNumbers =
@@ -1098,500 +1104,297 @@ stockTransferSchema.methods.confirmTransfer =
   : this.save();
   };
 
-stockTransferSchema.methods.processSourceDeduction =
+
+stockTransferSchema.methods.processSourceDeduction = async function () {
+  const CenterStock = mongoose.model("CenterStock");
+  const OutletStock = mongoose.model("OutletStock");
+  const Product = mongoose.model("Product");
+
+  for (const item of this.products) {
+    const approved = item.approvedQuantity ?? item.quantity;
+    const received = item.receivedQuantity ?? approved;
+
+    if (received < 0 || received > approved) {
+      throw new Error(
+        `Received quantity ${received} exceeds approved quantity ${approved}`
+      );
+    }
+    if (approved <= 0) continue;
+
+    const outletSource = item.sourceStockType === "OutletStock";
+    const SourceStock = outletSource ? OutletStock : CenterStock;
+    const query = outletSource
+      ? { outlet: this.fromCenter, product: item.product }
+      : { center: this.fromCenter, product: item.product };
+
+    const stock = await SourceStock.findOne(query);
+    if (!stock) {
+      throw new Error(`Source stock not found for product ${item.product}`);
+    }
+
+    const product = await Product.findById(item.product);
+    const serialized = product?.trackSerialNumber === "Yes";
+    const returned = approved - received;
+
+    if ((stock.inTransitQuantity || 0) < approved) {
+      throw new Error(
+        `Insufficient in-transit stock. Available: ${stock.inTransitQuantity || 0}, Required: ${approved}`
+      );
+    }
+
+    if (serialized) {
+      const approvedSerials = item.approvedSerials || [];
+      const receivedSerials = item.receivedSerials || [];
+
+      if (approvedSerials.length !== approved ||
+          receivedSerials.length !== received) {
+        throw new Error(`Serial count does not match quantities for ${item.product}`);
+      }
+
+      if (new Set(approvedSerials).size !== approvedSerials.length ||
+          new Set(receivedSerials).size !== receivedSerials.length) {
+        throw new Error(`Duplicate serial numbers for ${item.product}`);
+      }
+
+      const approvedSet = new Set(approvedSerials);
+      const receivedSet = new Set(receivedSerials);
+
+      for (const number of receivedSerials) {
+        if (!approvedSet.has(number)) {
+          throw new Error(`Received serial ${number} was not approved`);
+        }
+      }
+
+      for (const number of approvedSerials) {
+        const serial = (stock.serialNumbers || []).find(
+          (entry) => entry.serialNumber === number
+        );
+
+        if (!serial || serial.status !== "in_transit") {
+          throw new Error(`Serial ${number} is not reserved in transit`);
+        }
+
+        if (receivedSet.has(number)) {
+          serial.status = "transferred";
+          serial.currentLocation = this.toCenter;
+          serial.transferredDate = new Date();
+          serial.transferHistory = serial.transferHistory || [];
+          serial.transferHistory.push({
+            fromCenter: this.fromCenter,
+            toCenter: this.toCenter,
+            transferDate: new Date(),
+            transferType: "outbound_transfer",
+          });
+        } else {
+          serial.status = "available";
+          serial.currentLocation = this.fromCenter;
+        }
+      }
+    }
+
+    stock.inTransitQuantity = (stock.inTransitQuantity || 0) - approved;
+    stock.totalQuantity = (stock.totalQuantity || 0) - received;
+    stock.availableQuantity = (stock.availableQuantity || 0) + returned;
+
+    await stock.save();
+  }
+
+  this.stockStatus.sourceDeducted = true;
+  this.stockStatus.deductedAt = new Date();
+  this.stockStatus.lastStockCheck = new Date();
+};
+
+stockTransferSchema.methods.processDestinationAddition =
   async function () {
-    const CenterStock =
-      mongoose.model("CenterStock");
+    const CenterStock = mongoose.model("CenterStock");
+    const OutletStock = mongoose.model("OutletStock");
+    const Product = mongoose.model("Product");
 
     for (const item of this.products) {
-      const approvedQuantity =
-        item.approvedQuantity ?? item.quantity;
+      const quantityToAdd = item.receivedQuantity ?? 0;
+      if (quantityToAdd <= 0) continue;
 
-      const receivedQuantity =
-        item.receivedQuantity ?? approvedQuantity;
+      const product = await Product.findById(item.product);
+      const requiresSerialNumbers =
+        product?.trackSerialNumber === "Yes";
 
-      if (
-        receivedQuantity < 0 ||
-        receivedQuantity > approvedQuantity
-      ) {
-        throw new Error(
-          `Received quantity (${receivedQuantity}) cannot exceed approved quantity (${approvedQuantity})`
-        );
+      let serialsToAdd = [];
+
+      if (requiresSerialNumbers) {
+        const SourceStock =
+          item.sourceStockType === "OutletStock"
+            ? OutletStock
+            : CenterStock;
+
+        const sourceQuery =
+          item.sourceStockType === "OutletStock"
+            ? { outlet: this.fromCenter, product: item.product }
+            : { center: this.fromCenter, product: item.product };
+
+        const sourceStock =
+          await SourceStock.findOne(sourceQuery);
+
+        if (!sourceStock) {
+          throw new Error(
+            `Source stock not found while adding destination serials for ${item.product}`
+          );
+        }
+
+        for (const serialNumber of (item.receivedSerials || [])) {
+          const sourceSerial =
+            sourceStock.serialNumbers.find(
+              sn => sn.serialNumber === serialNumber
+            );
+
+          if (!sourceSerial) {
+            throw new Error(
+              `Source serial metadata missing for ${serialNumber}`
+            );
+          }
+
+          const serialData = {
+            serialNumber,
+            purchaseId: sourceSerial.purchaseId || undefined,
+            status: "available",
+            currentLocation: this.toCenter,
+            transferHistory: [
+              ...(sourceSerial.transferHistory || []).map(
+                entry => entry.toObject ? entry.toObject() : { ...entry }
+              ),
+              {
+                fromCenter: this.fromCenter,
+                toCenter: this.toCenter,
+                transferDate: new Date(),
+                transferType: "inbound_transfer",
+              },
+            ],
+          };
+
+          if (sourceSerial.originalOutlet) {
+            serialData.originalOutlet =
+              sourceSerial.originalOutlet;
+          } else if (item.sourceStockType === "OutletStock") {
+            serialData.originalOutlet = this.fromCenter;
+          }
+
+          serialsToAdd.push(serialData);
+        }
+
+        if (serialsToAdd.length !== quantityToAdd) {
+          throw new Error(
+            `Received serial count does not match destination quantity for ${item.product}`
+          );
+        }
       }
 
-      const returnQuantity =
-        approvedQuantity - receivedQuantity;
-
-      if (approvedQuantity <= 0) {
-        console.log(
-          `[DEBUG] Skipping product ${item.product} - approved quantity is 0`
-        );
-        continue;
-      }
-
-      const centerStock =
+      let destination =
         await CenterStock.findOne({
-          center: this.fromCenter,
+          center: this.toCenter,
           product: item.product,
         });
 
-      if (!centerStock) {
-        throw new Error(
-          `Stock not found for product in source center`
-        );
+      if (!destination) {
+        destination = new CenterStock({
+          center: this.toCenter,
+          product: item.product,
+          totalQuantity: 0,
+          availableQuantity: 0,
+          inTransitQuantity: 0,
+          consumedQuantity: 0,
+          serialNumbers: [],
+        });
       }
-
-      console.log(
-        `[DEBUG] Processing source deduction for product ${item.product}:`
-      );
-
-      console.log(
-        `[DEBUG] - Approved quantity: ${approvedQuantity}`
-      );
-
-      console.log(
-        `[DEBUG] - Received quantity: ${receivedQuantity}`
-      );
-
-      console.log(
-        `[DEBUG] - Return quantity: ${returnQuantity}`
-      );
-
-      console.log(
-        `[DEBUG] - Available stock: ${centerStock.availableQuantity}`
-      );
-
-      console.log(
-        `[DEBUG] - In transit stock: ${centerStock.inTransitQuantity}`
-      );
-
-      const product =
-        await mongoose
-          .model("Product")
-          .findById(item.product);
-
-      const requiresSerialNumbers =
-        product?.trackSerialNumber === "Yes";
 
       if (requiresSerialNumbers) {
-        const approvedSerials =
-          item.approvedSerials || [];
+        const existing = new Set(
+          destination.serialNumbers.map(sn => sn.serialNumber)
+        );
 
-        const receivedSerials =
-          item.receivedSerials || [];
+        const duplicates = serialsToAdd.filter(
+          sn => existing.has(sn.serialNumber)
+        );
 
-        if (
-          approvedSerials.length !==
-          approvedQuantity
-        ) {
+        if (duplicates.length) {
           throw new Error(
-            `Serial numbers count (${approvedSerials.length}) doesn't match approved quantity (${approvedQuantity})`
+            `Destination already contains serial ${duplicates[0].serialNumber}`
           );
         }
 
-        if (
-          receivedSerials.length !==
-          receivedQuantity
-        ) {
-          throw new Error(
-            `Received serial numbers count (${receivedSerials.length}) doesn't match received quantity (${receivedQuantity})`
-          );
-        }
-
-        const approvedSerialSet =
-          new Set(approvedSerials);
-
-        const receivedSerialSet =
-          new Set(receivedSerials);
-
-        if (
-          approvedSerialSet.size !==
-          approvedSerials.length
-        ) {
-          throw new Error(
-            `Duplicate approved serial numbers found for product ${item.product}`
-          );
-        }
-
-        if (
-          receivedSerialSet.size !==
-          receivedSerials.length
-        ) {
-          throw new Error(
-            `Duplicate received serial numbers found for product ${item.product}`
-          );
-        }
-
-        for (const serialNumber of receivedSerials) {
-          if (!approvedSerialSet.has(serialNumber)) {
-            throw new Error(
-              `Received serial ${serialNumber} was not part of the approved serials`
-            );
-          }
-        }
-
-        for (const serialNumber of approvedSerials) {
-          const serial =
-            centerStock.serialNumbers.find(
-              (sn) =>
-                sn.serialNumber ===
-                  serialNumber &&
-                (
-                  sn.status === "in_transit" ||
-                  sn.status === "available"
-                )
-            );
-
-          if (!serial) {
-            throw new Error(
-              `Serial number ${serialNumber} not found or not in correct status`
-            );
-          }
-
-          if (
-            receivedSerialSet.has(serialNumber)
-          ) {
-            // Actually received/used serial:
-            // move it from source to destination.
-            serial.status = "transferred";
-
-            serial.currentLocation =
-              this.toCenter;
-
-            serial.transferredDate =
-              new Date();
-
-            const hasTransferHistory =
-              serial.transferHistory.some(
-                (th) =>
-                  th.toCenter?.toString() ===
-                  this.toCenter.toString()
-              );
-
-            if (!hasTransferHistory) {
-              serial.transferHistory.push({
-                fromCenter:
-                  this.fromCenter,
-
-                toCenter:
-                  this.toCenter,
-
-                transferDate:
-                  new Date(),
-
-                transferType:
-                  "outbound_transfer",
-              });
-            }
-          } else {
-            // Approved but not received:
-            // release it back to source available stock.
-            serial.status = "available";
-
-            serial.currentLocation =
-              this.fromCenter;
-          }
-        }
-
-        centerStock.inTransitQuantity -=
-          approvedQuantity;
-
-        centerStock.totalQuantity -=
-          receivedQuantity;
-
-        centerStock.availableQuantity +=
-          returnQuantity;
-
-      } else {
-        if (
-          centerStock.inTransitQuantity <
-          approvedQuantity
-        ) {
-          throw new Error(
-            `Insufficient in-transit stock. Available: ${centerStock.inTransitQuantity}, Required: ${approvedQuantity}`
-          );
-        }
-
-        centerStock.inTransitQuantity -=
-          approvedQuantity;
-
-        centerStock.totalQuantity -=
-          receivedQuantity;
-
-        centerStock.availableQuantity +=
-          returnQuantity;
+        destination.serialNumbers.push(...serialsToAdd);
       }
 
-      await centerStock.save();
+      destination.totalQuantity =
+        (destination.totalQuantity || 0) + quantityToAdd;
 
-      console.log(
-        `[DEBUG] Source deduction completed for product ${item.product}`
-      );
+      destination.availableQuantity =
+        (destination.availableQuantity || 0) + quantityToAdd;
 
-      console.log(
-        `[DEBUG] - New available: ${centerStock.availableQuantity}`
-      );
-
-      console.log(
-        `[DEBUG] - New in transit: ${centerStock.inTransitQuantity}`
-      );
-
-      console.log(
-        `[DEBUG] - New total: ${centerStock.totalQuantity}`
-      );
+      await destination.save();
     }
 
-    this.stockStatus.sourceDeducted =
-      true;
-
-    this.stockStatus.deductedAt =
-      new Date();
-
-    this.stockStatus.lastStockCheck =
-      new Date();
+    this.stockStatus.destinationAdded = true;
+    this.stockStatus.addedAt = new Date();
+    this.stockStatus.lastStockCheck = new Date();
   };
-  stockTransferSchema.methods.processDestinationAddition =
-  async function () {
-    const CenterStock =
-      mongoose.model("CenterStock");
 
-    for (const item of this.products) {
-const quantityToAdd =
-  item.receivedQuantity ?? 0;
 
-      if (quantityToAdd <= 0) {
-        console.log(
-          `[DEBUG] Skipping product ${item.product} - quantity to add is 0`
-        );
-        continue;
-      }
-
-      console.log(
-        `[DEBUG] Processing destination addition for product ${item.product}:`
-      );
-
-      console.log(
-        `[DEBUG] - Quantity to add: ${quantityToAdd}`
-      );
-
-      const product =
-        await mongoose
-          .model("Product")
-          .findById(item.product);
-
-      const requiresSerialNumbers =
-        product?.trackSerialNumber === "Yes";
-
-      if (requiresSerialNumbers) {
-const serialNumbersToAdd =
-  item.receivedSerials || [];
-
-        const sourceCenterStock =
-          await CenterStock.findOne({
-            center: this.fromCenter,
-            product: item.product,
-          });
-
-        const serialsToAdd = [];
-
-        if (
-          sourceCenterStock &&
-          serialNumbersToAdd.length > 0
-        ) {
-          for (
-            const serialNumber of serialNumbersToAdd
-          ) {
-            const sourceSerial =
-              sourceCenterStock.serialNumbers.find(
-                (sn) =>
-                  sn.serialNumber ===
-                  serialNumber
-              );
-
-            if (sourceSerial) {
-              serialsToAdd.push({
-                serialNumber:
-                  serialNumber,
-
-                purchaseId:
-                  sourceSerial.purchaseId,
-
-                originalOutlet:
-                  sourceSerial.originalOutlet ||
-                  this.fromCenter,
-
-                status: "available",
-
-                currentLocation:
-                  this.toCenter,
-
-                transferHistory: [
-                  ...(sourceSerial.transferHistory ||
-                    []),
-
-                  {
-                    fromCenter:
-                      this.fromCenter,
-
-                    toCenter:
-                      this.toCenter,
-
-                    transferDate:
-                      new Date(),
-
-                    transferType:
-                      "inbound_transfer",
-                  },
-                ],
-              });
-            }
-          }
-        }
-
-        let destinationCenterStock =
-          await CenterStock.findOne({
-            center: this.toCenter,
-            product: item.product,
-          });
-
-        if (destinationCenterStock) {
-          destinationCenterStock.totalQuantity +=
-            quantityToAdd;
-
-          destinationCenterStock.availableQuantity +=
-            quantityToAdd;
-
-          if (serialsToAdd.length > 0) {
-            const existingSerials =
-              new Set(
-                destinationCenterStock.serialNumbers.map(
-                  (sn) =>
-                    sn.serialNumber
-                )
-              );
-
-            const newSerials =
-              serialsToAdd.filter(
-                (sn) =>
-                  !existingSerials.has(
-                    sn.serialNumber
-                  )
-              );
-
-            destinationCenterStock.serialNumbers.push(
-              ...newSerials
-            );
-          }
-
-          await destinationCenterStock.save();
-        } else {
-          await CenterStock.create({
-            center: this.toCenter,
-            product: item.product,
-            totalQuantity: quantityToAdd,
-            availableQuantity: quantityToAdd,
-            inTransitQuantity: 0,
-            consumedQuantity: 0,
-            serialNumbers: serialsToAdd,
-            lastUpdated: new Date(),
-          });
-        }
-      } else {
-        const updateData = {
-          $inc: {
-            totalQuantity: quantityToAdd,
-            availableQuantity: quantityToAdd,
-          },
-
-          lastUpdated: new Date(),
-        };
-
-        await CenterStock.findOneAndUpdate(
-          {
-            center: this.toCenter,
-            product: item.product,
-          },
-          updateData,
-          {
-            upsert: true,
-            new: true,
-          }
-        );
-      }
-
-      console.log(
-        `[DEBUG] Destination addition completed for product ${item.product}`
-      );
-    }
-
-    this.stockStatus.destinationAdded =
-      true;
-
-    this.stockStatus.addedAt =
-      new Date();
-
-    this.stockStatus.lastStockCheck =
-      new Date();
-  };
 
 stockTransferSchema.methods.getAvailableSerials =
   async function () {
-    const CenterStock =
-      mongoose.model("CenterStock");
-
-    const Product =
-      mongoose.model("Product");
-
-    const availableSerials = [];
+    const CenterStock = mongoose.model("CenterStock");
+    const OutletStock = mongoose.model("OutletStock");
+    const Product = mongoose.model("Product");
+    const result = [];
 
     for (const item of this.products) {
-      const productDoc =
-        await Product.findById(
-          item.product
-        );
+      const product = await Product.findById(item.product);
 
-      const tracksSerialNumbers =
-        productDoc?.trackSerialNumber ===
-        "Yes";
+      if (product?.trackSerialNumber !== "Yes") continue;
 
-      if (tracksSerialNumbers) {
-        const centerStock =
-          await CenterStock.findOne({
-            center: this.fromCenter,
-            product: item.product,
-          });
+      const centerStock = await CenterStock.findOne({
+        center: this.fromCenter,
+        product: item.product,
+      });
 
-        if (centerStock) {
-          const available =
-            centerStock.serialNumbers
-              .filter(
-                (sn) =>
-                  sn.status === "available" &&
-                  sn.currentLocation?.toString() ===
-                    this.fromCenter.toString()
-              )
-              .map(
-                (sn) => sn.serialNumber
-              );
+      let stock = centerStock;
 
-          availableSerials.push({
-            productId: item.product,
+      if (!stock || (stock.availableQuantity || 0) < item.quantity) {
+        const outletStock = await OutletStock.findOne({
+          outlet: this.fromCenter,
+          product: item.product,
+        });
 
-            productName:
-              productDoc.productTitle,
-
-            availableSerials:
-              available,
-
-            requestedQuantity:
-              item.quantity,
-          });
+        if (
+          outletStock &&
+          (outletStock.availableQuantity || 0) >
+            (stock?.availableQuantity || 0)
+        ) {
+          stock = outletStock;
         }
       }
+
+      const serials = (stock?.serialNumbers || [])
+        .filter(sn =>
+          sn.status === "available" &&
+          (
+            !sn.currentLocation ||
+            sn.currentLocation.toString() === this.fromCenter.toString()
+          )
+        )
+        .slice(0, item.quantity)
+        .map(sn => sn.serialNumber);
+
+      result.push({
+        productId: item.product,
+        productName: product.productTitle,
+        availableSerials: serials,
+        requestedQuantity: item.quantity,
+      });
     }
 
-    return availableSerials;
+    return result;
   };
+
 
 stockTransferSchema.methods.shipTransfer =
   async function (
@@ -1811,256 +1614,214 @@ stockTransferSchema.methods.rejectTransfer =
     return this.save();
   };
 
+
 stockTransferSchema.methods.reverseSourceDeduction =
   async function () {
-    const CenterStock =
-      mongoose.model("CenterStock");
+    const CenterStock = mongoose.model("CenterStock");
+    const OutletStock = mongoose.model("OutletStock");
 
     for (const item of this.products) {
-      const quantityToReverse =
-        item.approvedQuantity ||
-        item.quantity;
+      const quantity =
+        item.approvedQuantity ?? item.quantity;
 
-      if (quantityToReverse <= 0) {
-        continue;
+      if (quantity <= 0) continue;
+
+      const isOutlet =
+        item.sourceStockType === "OutletStock";
+
+      const SourceStock = isOutlet ? OutletStock : CenterStock;
+
+      const query = isOutlet
+        ? { outlet: this.fromCenter, product: item.product }
+        : { center: this.fromCenter, product: item.product };
+
+      const stock = await SourceStock.findOne(query);
+
+      if (!stock) {
+        throw new Error(
+          `Cannot reverse source stock: ${item.product} not found`
+        );
       }
 
-      const centerStock =
-        await CenterStock.findOne({
-          center: this.fromCenter,
-          product: item.product,
-        });
+      const serials = item.approvedSerials || [];
 
-      if (!centerStock) {
-        console.warn(
-          `Stock not found for product ${item.product} in source center during reversal`
+      for (const serialNumber of serials) {
+        const serial = stock.serialNumbers.find(
+          sn => sn.serialNumber === serialNumber
         );
 
-        continue;
-      }
-
-      if (
-        item.requiresSerialNumbers &&
-        item.serialNumbers &&
-        item.serialNumbers.length > 0
-      ) {
-        for (
-          const serialNumber of
-          item.serialNumbers
-        ) {
-          const serial =
-            centerStock.serialNumbers.find(
-              (sn) =>
-                sn.serialNumber ===
-                  serialNumber &&
-                sn.status === "transferred"
-            );
-
-          if (serial) {
-            serial.status =
-              "available";
-
-            serial.currentLocation =
-              this.fromCenter;
-
-            if (
-              serial.transferHistory
-                .length > 0
-            ) {
-              serial.transferHistory.pop();
-            }
-          }
+        if (serial && (
+          serial.status === "transferred" ||
+          serial.status === "in_transit"
+        )) {
+          serial.status = "available";
+          serial.currentLocation = this.fromCenter;
         }
       }
 
-      centerStock.availableQuantity +=
-        quantityToReverse;
+      stock.availableQuantity =
+        (stock.availableQuantity || 0) + quantity;
 
-      centerStock.totalQuantity +=
-        quantityToReverse;
+      stock.totalQuantity =
+        (stock.totalQuantity || 0) + quantity;
 
-      await centerStock.save();
+      stock.inTransitQuantity = Math.max(
+        0,
+        (stock.inTransitQuantity || 0) - quantity
+      );
+
+      await stock.save();
     }
 
-    this.stockStatus.sourceDeducted =
-      false;
-
-    this.stockStatus.deductedAt =
-      null;
-
-    this.stockStatus.lastStockCheck =
-      new Date();
+    this.stockStatus.sourceDeducted = false;
+    this.stockStatus.deductedAt = null;
+    this.stockStatus.lastStockCheck = new Date();
   };
-  stockTransferSchema.methods.reverseDestinationAddition =
+
+
+
+stockTransferSchema.methods.reverseDestinationAddition =
   async function () {
-    const CenterStock =
-      mongoose.model("CenterStock");
+    const CenterStock = mongoose.model("CenterStock");
 
     for (const item of this.products) {
-      const quantityToReverse =
-        item.receivedQuantity ||
-        item.approvedQuantity ||
-        item.quantity;
+      const quantity =
+        item.receivedQuantity ?? 0;
 
-      if (quantityToReverse <= 0) {
-        continue;
-      }
+      if (quantity <= 0) continue;
 
-      const centerStock =
-        await CenterStock.findOne({
-          center: this.toCenter,
-          product: item.product,
-        });
+      const stock = await CenterStock.findOne({
+        center: this.toCenter,
+        product: item.product,
+      });
 
-      if (!centerStock) {
-        console.warn(
-          `Stock not found for product ${item.product} in destination center during reversal`
-        );
+      if (!stock) continue;
 
-        continue;
+      const receivedSerials = new Set(
+        item.receivedSerials || []
+      );
+
+      if (receivedSerials.size) {
+        stock.serialNumbers =
+          stock.serialNumbers.filter(
+            sn => !receivedSerials.has(sn.serialNumber)
+          );
       }
 
       if (
-        item.requiresSerialNumbers &&
-        item.serialNumbers &&
-        item.serialNumbers.length > 0
+        (stock.availableQuantity || 0) < quantity ||
+        (stock.totalQuantity || 0) < quantity
       ) {
-        const serialsToRemove =
-          item.serialNumbers.slice(
-            0,
-            quantityToReverse
-          );
-
-        centerStock.serialNumbers =
-          centerStock.serialNumbers.filter(
-            (sn) =>
-              !serialsToRemove.includes(
-                sn.serialNumber
-              )
-          );
+        throw new Error(
+          `Cannot reverse destination stock safely for product ${item.product}`
+        );
       }
 
-      centerStock.availableQuantity -=
-        quantityToReverse;
+      stock.availableQuantity -= quantity;
+      stock.totalQuantity -= quantity;
 
-      centerStock.totalQuantity -=
-        quantityToReverse;
-
-      if (centerStock.totalQuantity <= 0) {
-        await CenterStock.findByIdAndDelete(
-          centerStock._id
-        );
+      if (stock.totalQuantity === 0) {
+        await CenterStock.findByIdAndDelete(stock._id);
       } else {
-        await centerStock.save();
+        await stock.save();
       }
     }
 
-    this.stockStatus.destinationAdded =
-      false;
-
+    this.stockStatus.destinationAdded = false;
     this.stockStatus.addedAt = null;
-
-    this.stockStatus.lastStockCheck =
-      new Date();
+    this.stockStatus.lastStockCheck = new Date();
   };
+
 
 stockTransferSchema.methods.validateStockAvailability =
   async function () {
-    const CenterStock =
-      mongoose.model("CenterStock");
-
-    const Product =
-      mongoose.model("Product");
+    const CenterStock = mongoose.model("CenterStock");
+    const OutletStock = mongoose.model("OutletStock");
+    const Product = mongoose.model("Product");
 
     for (const item of this.products) {
-      const product =
-        await Product.findById(
-          item.product
-        );
+      const product = await Product.findById(item.product);
+
+      if (!product) {
+        throw new Error(`Product not found: ${item.product}`);
+      }
 
       const requiresSerialNumbers =
-        product
-          ? product.trackSerialNumbers
-          : false;
+        product.trackSerialNumber === "Yes";
 
-      item.requiresSerialNumbers =
-        requiresSerialNumbers;
+      item.requiresSerialNumbers = requiresSerialNumbers;
 
-      const centerStock =
-        await CenterStock.findOne({
-          center: this.fromCenter,
+      let sourceStock = await CenterStock.findOne({
+        center: this.fromCenter,
+        product: item.product,
+      });
+
+      let stockCollection = "CenterStock";
+
+      if (
+        !sourceStock ||
+        (sourceStock.availableQuantity || 0) < item.quantity
+      ) {
+        const outletStock = await OutletStock.findOne({
+          outlet: this.fromCenter,
           product: item.product,
         });
 
-      if (
-        !centerStock ||
-        centerStock.availableQuantity <
-          item.quantity
-      ) {
+        if (
+          outletStock &&
+          (outletStock.availableQuantity || 0) >= item.quantity
+        ) {
+          sourceStock = outletStock;
+          stockCollection = "OutletStock";
+        }
+      }
+
+      const availableQuantity =
+        sourceStock?.availableQuantity || 0;
+
+      if (!sourceStock || availableQuantity < item.quantity) {
         throw new Error(
-          `Insufficient stock for product ${product?.productTitle}. Available: ${
-            centerStock?.availableQuantity ||
-            0
-          }, Requested: ${item.quantity}`
+          `Insufficient stock for product ${product.productTitle}. ` +
+          `Available: ${availableQuantity}, Requested: ${item.quantity}`
         );
       }
 
-      item.productInStock =
-        centerStock.availableQuantity;
+      item.productInStock = availableQuantity;
 
-      if (
-        requiresSerialNumbers &&
-        centerStock.serialNumbers
-      ) {
-        const availableSerials =
-          centerStock.serialNumbers
-            .filter(
-              (sn) =>
-                sn.status === "available"
-            )
-            .sort(
-              (a, b) =>
-                new Date(
-                  a.createdAt ||
-                    a.transferHistory[0]
-                      ?.transferDate
-                ) -
-                new Date(
-                  b.createdAt ||
-                    b.transferHistory[0]
-                      ?.transferDate
-                )
-            )
-            .slice(
-              0,
-              item.quantity
-            );
+      if (requiresSerialNumbers) {
+        const serialNumbers = sourceStock.serialNumbers || [];
 
-        if (
-          availableSerials.length <
-          item.quantity
-        ) {
+        const availableSerials = serialNumbers
+          .filter((serial) => {
+            const isAvailable = serial.status === "available";
+
+            const isAtSource =
+              !serial.currentLocation ||
+              serial.currentLocation.toString() ===
+                this.fromCenter.toString();
+
+            return isAvailable && isAtSource;
+          })
+          .slice(0, item.quantity);
+
+        if (availableSerials.length < item.quantity) {
           throw new Error(
-            `Insufficient serial numbers available for product ${product?.productTitle}. Available: ${availableSerials.length}, Required: ${item.quantity}`
+            `Insufficient serial numbers available for product ` +
+            `${product.productTitle}. Available: ${availableSerials.length}, ` +
+            `Required: ${item.quantity}`
           );
         }
 
-        item.availableSerials =
-          availableSerials.map(
-            (serial) => ({
-              serialNumber:
-                serial.serialNumber,
-
-              purchaseId:
-                serial.purchaseId,
-
-              addedAt:
-                serial.createdAt ||
-                serial.transferHistory[0]
-                  ?.transferDate,
-            })
-          );
+        item.availableSerials = availableSerials.map((serial) => ({
+          serialNumber: serial.serialNumber,
+          purchaseId: serial.purchaseId,
+          addedAt: serial.createdAt || serial.addedAt,
+        }));
       }
+
+      console.log(
+        `[StockTransfer] Validated ${product.productTitle} from ${stockCollection}`
+      );
     }
   };
 

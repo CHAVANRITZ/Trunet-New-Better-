@@ -721,26 +721,21 @@ export async function getOutletSerialNumbers(
         return [];
     }
 
-    let serialNumbers =
+    /*
+     * Outlet stock belongs to the Outlet.
+     * Available serials are eligible for selection before
+     * they are transferred to a reseller.
+     *
+     * resellerId is retained for API compatibility, but must
+     * not filter available Outlet serials.
+     */
+    const serialNumbers =
         stock.serialNumbers.filter(
             (serial) =>
-                serial.status === "available"
+                serial.status === "available" &&
+                serial.currentLocation?.toString() ===
+                    outletId.toString()
         );
-
-    /*
-     * The supplied new OutletStock schema does not contain
-     * a reseller field on serialNumbers.
-     *
-     * Therefore no reseller-specific filtering is added here.
-     * The resellerId remains accepted for API compatibility.
-     */
-    if (resellerId) {
-        serialNumbers = serialNumbers.filter(
-            (serial) =>
-                serial.transferredTo?.toString() ===
-                resellerId.toString()
-        );
-    }
 
     return serialNumbers;
 }

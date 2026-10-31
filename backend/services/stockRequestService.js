@@ -808,6 +808,16 @@ export const createStockRequest = async (user, body) => {
 
     const centerId = userDoc.center;
 
+    if (String(warehouse) === String(centerId)) {
+      return {
+        statusCode: 400,
+        body: {
+          success: false,
+          message: "Source Outlet and destination Center cannot be the same.",
+        },
+      };
+    }
+
     const centerExists = await Center.findById(centerId);
 
     if (!centerExists) {
@@ -2528,6 +2538,17 @@ export const shipStockRequest = async (user, id, body) => {
     if (!stockRequest) {
       return { statusCode: 404, body: { success: false, message: "Stock request not found" } };
     }
+
+    if (String(stockRequest.warehouse) === String(stockRequest.center)) {
+      return {
+        statusCode: 400,
+        body: {
+          success: false,
+          message: "Cannot ship stock to the same Outlet from which it is sourced.",
+        },
+      };
+    }
+
     if (!checkCenterAccess(stockRequest, userCenter, permissions)) {
       return {
         statusCode: 403,
@@ -4384,10 +4405,44 @@ export const completeStockRequest = async (user, requestId, body) => {
       };
     }
 
+    if (String(centerId) === String(warehouseId)) {
+      return {
+        statusCode: 400,
+        body: {
+          success: false,
+          message: "Cannot complete a stock request where source and destination are the same.",
+        },
+      };
+    }
+
+    const CenterModel = mongoose.model("Center");
+    const destinationCenter = await CenterModel.findById(centerId);
+
+    if (!destinationCenter) {
+      return {
+        statusCode: 404,
+        body: {
+          success: false,
+          message: "Destination Center or Outlet not found.",
+        },
+      };
+    }
+
+    const isOutletDestination =
+      destinationCenter.centerType === "Outlet";
+
     const CenterStock = mongoose.model("CenterStock");
     const OutletStock = mongoose.model("OutletStock");
     const ResellerStock = mongoose.model("ResellerStock");
     const Product = mongoose.model("Product");
+
+    const DestinationStock = isOutletDestination
+      ? OutletStock
+      : CenterStock;
+
+    const destinationStockFilter = isOutletDestination
+      ? { outlet: centerId, product: null }
+      : { center: centerId, product: null };
 
     const completedReceipts = [];
 
@@ -4769,7 +4824,7 @@ export const completeStockRequest = async (user, requestId, body) => {
               fromCenter: warehouseId,
               toCenter: centerId,
               transferDate: new Date(),
-              transferType: "outlet_to_center",
+              transferType: isOutletDestination ? "outbound_transfer" : "outlet_to_center",
             });
           }
 
@@ -4837,14 +4892,18 @@ export const completeStockRequest = async (user, requestId, body) => {
        * ============================================================
        */
 
-      let centerStock = await CenterStock.findOne({
-        center: centerId,
+      const destinationQuery = {
+        ...destinationStockFilter,
         product: productId,
-      });
+      };
+
+      let centerStock = await DestinationStock.findOne(destinationQuery);
 
       if (!centerStock) {
-        centerStock = new CenterStock({
-          center: centerId,
+        centerStock = new DestinationStock({
+          ...(isOutletDestination
+            ? { outlet: centerId }
+            : { center: centerId }),
           product: productId,
           totalQuantity: 0,
           availableQuantity: 0,
@@ -5018,44 +5077,76 @@ export const completeStockRequest = async (user, requestId, body) => {
               };
             }
 
-            if (!purchaseId) {
+            const sourceType =
+              sourceSerialEntry.sourceType || "purchase";
+
+            // CenterStock requires purchaseId and originalOutlet.
+            // OutletStock uses its own serial schema.
+            if (!isOutletDestination) {
+              if (!purchaseId) {
+                return {
+                  statusCode: 400,
+                  body: {
+                    success: false,
+                    message: `Purchase ID missing for source serial ${serial}`,
+                  },
+                };
+              }
+
+              if (!originalOutlet) {
+                return {
+                  statusCode: 400,
+                  body: {
+                    success: false,
+                    message: `Original outlet missing for source serial ${serial}`,
+                  },
+                };
+              }
+            } else if (sourceType === "purchase" && !purchaseId) {
               return {
                 statusCode: 400,
                 body: {
                   success: false,
-                  message: `Purchase ID missing for source serial ${serial}`,
+                  message: `Purchase ID missing for Outlet destination serial ${serial}`,
                 },
               };
             }
 
-            if (!originalOutlet) {
-              return {
-                statusCode: 400,
-                body: {
-                  success: false,
-                  message: `Original outlet missing for source serial ${serial}`,
-                },
-              };
+            if (isOutletDestination) {
+              // OutletStock serial structure
+              centerStock.serialNumbers.push({
+                serialNumber: serial,
+                ...(purchaseId ? { purchaseId } : {}),
+                sourceType,
+                status: "available",
+                currentLocation: centerId,
+                transferHistory: [
+                  {
+                    fromCenter: warehouseId,
+                    toCenter: centerId,
+                    transferDate: new Date(),
+                    transferType: "inbound_transfer",
+                  },
+                ],
+              });
+            } else {
+              // Preserve existing CenterStock serial structure
+              centerStock.serialNumbers.push({
+                serialNumber: serial,
+                purchaseId,
+                originalOutlet,
+                status: "available",
+                currentLocation: centerId,
+                transferHistory: [
+                  {
+                    fromCenter: warehouseId,
+                    toCenter: centerId,
+                    transferDate: new Date(),
+                    transferType: "inbound_transfer",
+                  },
+                ],
+              });
             }
-
-            /*
-             * Legacy CenterStock serialized structure.
-             */
-            centerStock.serialNumbers.push({
-              serialNumber: serial,
-              purchaseId,
-              originalOutlet,
-              status: "available",
-              currentLocation: centerId,
-              transferHistory: [
-                {
-                  fromCenter: warehouseId,
-                  toCenter: centerId,
-                  transferDate: new Date(),
-                  transferType: "inbound_transfer",
-                },
-              ],
-            });
           }
         }
       }
@@ -5711,10 +5802,12 @@ export const getMostRecentOrderNumber = async (user) => {
 
 export const getCenterSerialNumbers = async (user, productId) => {
   try {
-    const ProductModel = mongoose.model("Product");
-    const { hasAccess, permissions, userCenter } = await checkStockRequestPermissions(user, [
-      "indent_all_center", "indent_own_center",
-    ]);
+    const { hasAccess, permissions, userCenter } =
+      await checkStockRequestPermissions(user, [
+        "indent_all_center",
+        "indent_own_center",
+      ]);
+
     if (!hasAccess) {
       return {
         statusCode: 403,
@@ -5725,27 +5818,130 @@ export const getCenterSerialNumbers = async (user, productId) => {
       };
     }
 
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return {
+        statusCode: 400,
+        body: { success: false, message: "Invalid product ID" },
+      };
+    }
+
     const userDoc = await User.findById(user.id).populate("center");
+
     if (!userDoc || !userDoc.center) {
       return {
         statusCode: 400,
         body: { success: false, message: "User center information not found" },
       };
     }
-    const centerId = userDoc.center._id;
 
-    if (permissions.indent_own_center && !permissions.indent_all_center && userCenter) {
+    const center = userDoc.center;
+    const centerId = center._id;
+
+    if (
+      permissions.indent_own_center &&
+      !permissions.indent_all_center &&
+      userCenter
+    ) {
       const userCenterId = userCenter._id || userCenter;
+
       if (userCenterId.toString() !== centerId.toString()) {
         return {
           statusCode: 403,
-          body: { success: false, message: "Access denied. You can only view serial numbers from your own center." },
+          body: {
+            success: false,
+            message: "Access denied. You can only view serial numbers from your own center.",
+          },
         };
       }
     }
 
+    const product = await Product.findById(productId).select(
+      "productTitle productCode trackSerialNumber"
+    );
+
+    if (!product) {
+      return {
+        statusCode: 404,
+        body: { success: false, message: "Product not found" },
+      };
+    }
+
+    // Outlet stock and serial numbers are stored in OutletStock.
+    if (center.centerType === "Outlet") {
+      const outletStock = await OutletStock.findOne({
+        outlet: centerId,
+        product: productId,
+      })
+        .populate("outlet", "centerName centerCode centerType")
+        .populate("product", "productTitle productCode trackSerialNumber")
+        .lean();
+
+      if (!outletStock) {
+        return {
+          statusCode: 200,
+          body: {
+            success: true,
+            message: "No stock found for the specified product",
+            data: {
+              center,
+              product,
+              availableSerials: [],
+              totalAvailable: 0,
+              availableQuantity: 0,
+              stockSummary: {
+                totalQuantity: 0,
+                availableQuantity: 0,
+                inTransitQuantity: 0,
+                consumedQuantity: 0,
+              },
+            },
+          },
+        };
+      }
+
+      const availableSerials = (outletStock.serialNumbers || [])
+        .filter((sn) => sn.status === "available")
+        .map((sn) => ({
+          serialNumber: sn.serialNumber,
+          purchaseId: sn.purchaseId,
+          currentLocation: sn.currentLocation,
+          status: sn.status,
+          sourceType: sn.sourceType,
+        }));
+
+      return {
+        statusCode: 200,
+        body: {
+          success: true,
+          message: "Outlet serial numbers retrieved successfully",
+          data: {
+            centerStock: {
+              _id: outletStock._id,
+              center: outletStock.outlet,
+              product: outletStock.product,
+              totalQuantity: outletStock.totalQuantity || 0,
+              availableQuantity: outletStock.availableQuantity || 0,
+              inTransitQuantity: outletStock.inTransitQuantity || 0,
+              lastUpdated: outletStock.lastUpdated,
+            },
+            availableSerials,
+            totalAvailable: availableSerials.length,
+            availableQuantity: outletStock.availableQuantity || 0,
+            stockSummary: {
+              totalQuantity: outletStock.totalQuantity || 0,
+              availableQuantity: outletStock.availableQuantity || 0,
+              inTransitQuantity: outletStock.inTransitQuantity || 0,
+              consumedQuantity: 0,
+            },
+          },
+        },
+      };
+    }
+
+    // Regular Center: retain existing CenterStock behavior.
     const centerStock = await CenterStock.findOne({
-      center: centerId, product: productId,
+      center: centerId,
+      product: productId,
     })
       .populate("center", "centerName centerCode centerType")
       .populate("product", "productTitle productCode trackSerialNumber");
@@ -5757,22 +5953,23 @@ export const getCenterSerialNumbers = async (user, productId) => {
           success: true,
           message: "No stock found for the specified product",
           data: {
-            center: await Center.findById(centerId).select("centerName centerCode centerType"),
-            product: await ProductModel.findById(productId).select(
-              "productTitle productCode trackSerialNumber"
-            ),
+            center,
+            product,
             availableSerials: [],
             totalAvailable: 0,
+            availableQuantity: 0,
             stockSummary: {
-              totalQuantity: 0, availableQuantity: 0,
-              inTransitQuantity: 0, consumedQuantity: 0,
+              totalQuantity: 0,
+              availableQuantity: 0,
+              inTransitQuantity: 0,
+              consumedQuantity: 0,
             },
           },
         },
       };
     }
 
-    const availableSerials = centerStock.serialNumbers
+    const availableSerials = (centerStock.serialNumbers || [])
       .filter((sn) => sn.status === "available")
       .map((sn) => ({
         serialNumber: sn.serialNumber,
@@ -5800,24 +5997,39 @@ export const getCenterSerialNumbers = async (user, productId) => {
           },
           availableSerials,
           totalAvailable: availableSerials.length,
+          availableQuantity: centerStock.availableQuantity || 0,
+          stockSummary: {
+            totalQuantity: centerStock.totalQuantity || 0,
+            availableQuantity: centerStock.availableQuantity || 0,
+            inTransitQuantity: centerStock.inTransitQuantity || 0,
+            consumedQuantity: centerStock.consumedQuantity || 0,
+          },
         },
       },
     };
   } catch (error) {
     console.error("Error retrieving center serial numbers:", error);
+
     if (error.name === "CastError") {
-      return { statusCode: 400, body: { success: false, message: "Invalid product ID" } };
+      return {
+        statusCode: 400,
+        body: { success: false, message: "Invalid product ID" },
+      };
     }
+
     return {
       statusCode: 500,
       body: {
         success: false,
         message: "Error retrieving center serial numbers",
-        error: process.env.NODE_ENV === "development" ? error.message : "Internal server error",
+        error: process.env.NODE_ENV === "development"
+          ? error.message
+          : "Internal server error",
       },
     };
   }
 };
+
 
 export const getStockRequestCount = async (query) => {
   try {

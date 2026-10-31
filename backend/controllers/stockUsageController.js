@@ -90,8 +90,26 @@ export const createStockUsage = async (req, res) => {
             );
         }
 
+        const centerId =
+            req.selectedCenterId ??
+            req.authorizationContext?.centerId ??
+            req.user?.fullUser?.center?._id ??
+            req.user?.fullUser?.center ??
+            req.user?.center?._id ??
+            req.user?.center ??
+            null;
+
+        if (!centerId) {
+            return sendError(
+                res,
+                new Error("No center or outlet is assigned to the authenticated user"),
+                "Error creating stock usage"
+            );
+        }
+
         const result = await stockUsageService.createStockUsage({
             ...req.body,
+            center: centerId,
             createdBy,
         });
 

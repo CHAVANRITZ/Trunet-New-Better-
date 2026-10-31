@@ -34,17 +34,36 @@ export const validateCreateStockUsage = [
     .isIn([
       "Customer",
       "Building",
+      "Building to Building",
       "Control Room",
       "Damage",
+      "Stolen from Center",
+      "Stolen from Field",
       "Damage Return",
+      "Other",
     ])
     .withMessage("Invalid usage type"),
 
-  body("center")
-    .notEmpty()
-    .withMessage("Center ID is required")
-    .custom((value) => mongoose.Types.ObjectId.isValid(value))
-    .withMessage("Invalid center ID"),
+  body("center").custom((value, { req }) => {
+    const centerId =
+      value || req.selectedCenterId || req.user?.fullUser?.center;
+
+    if (!centerId) {
+      throw new Error("Center ID is required");
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(centerId)) {
+      throw new Error("Invalid center ID");
+    }
+
+    // Use the authenticated user selected/assigned center
+    // only when the frontend has not supplied a center.
+    if (!value) {
+      req.body.center = centerId;
+    }
+
+    return true;
+  }),
 
   body("customer")
     .optional({ nullable: true })
@@ -83,7 +102,7 @@ export const validateCreateStockUsage = [
     .withMessage("Serial numbers must be an array"),
 
   body("reason")
-    .optional()
+    .optional({ nullable: true })
     .isString()
     .withMessage("Reason must be a string")
     .isLength({ max: 500 })
@@ -114,9 +133,13 @@ export const validateUpdateStockUsage = [
     .isIn([
       "Customer",
       "Building",
+      "Building to Building",
       "Control Room",
       "Damage",
+      "Stolen from Center",
+      "Stolen from Field",
       "Damage Return",
+      "Other",
     ])
     .withMessage("Invalid usage type"),
 
