@@ -7,11 +7,11 @@ import User from "../models/User.js";
 const checkStockUsagePermissions = (req, requiredPermissions = []) => {
     const userPermissions = req.user.role?.permissions || [];
     const usageModule = userPermissions.find((perm) => perm.module === "Usage");
-  
+
     if (!usageModule) {
       return { hasAccess: false, permissions: {} };
     }
-  
+
     const permissions = {
       manage_usage_own_center: usageModule.permissions.includes(
         "manage_usage_own_center"
@@ -30,43 +30,43 @@ const checkStockUsagePermissions = (req, requiredPermissions = []) => {
         "accept_damage_return"
       ),
     };
-  
+
     const hasRequiredPermission = requiredPermissions.some(
       (perm) => permissions[perm]
     );
-  
+
     return {
       hasAccess: hasRequiredPermission,
       permissions,
       userCenter: req.user.center,
     };
   };
-  
+
   const getUserCenterId = async (userId) => {
     if (!userId) {
       throw new Error("User ID is required");
     }
-  
+
     const user = await User.findById(userId).populate(
       "center",
       "centerName centerCode centerType"
     );
-  
+
     if (!user) {
       throw new Error("User not found");
     }
-  
+
     if (!user.center) {
       throw new Error("User center information not found");
     }
-  
+
     return user.center._id;
   };
 
 export const createDamageReturn = async (req, res) => {
   try {
     const { hasAccess } = checkStockUsagePermissions(req, [
-      "manage_usage_own_center", 
+      "manage_usage_own_center",
       "manage_usage_all_center"
     ]);
 
@@ -77,10 +77,10 @@ export const createDamageReturn = async (req, res) => {
       });
     }
 
-    const { 
-      usageId,      
+    const {
+      usageId,
       serialNumber,
-      remark 
+      remark
     } = req.body;
 
     const createdBy = req.user.id;
@@ -109,7 +109,7 @@ export const createDamageReturn = async (req, res) => {
       });
     }
 
-    const userCenterId = await getUserCenterId(req.user._id);
+    const userCenterId = await getUserCenterId(req.user.id);
     if (originalUsage.center._id.toString() !== userCenterId.toString()) {
       return res.status(403).json({
         success: false,
@@ -117,7 +117,7 @@ export const createDamageReturn = async (req, res) => {
       });
     }
 
-    const itemWithSerial = originalUsage.items.find(item => 
+    const itemWithSerial = originalUsage.items.find(item =>
       item.serialNumbers && item.serialNumbers.includes(serialNumber)
     );
 
@@ -181,9 +181,9 @@ export const createDamageReturn = async (req, res) => {
     await damageReturn.save();
 
     await markSpecificSerialAsPendingDamage(
-      originalUsage.center._id, 
-      itemWithSerial.product._id, 
-      serialNumber, 
+      originalUsage.center._id,
+      itemWithSerial.product._id,
+      serialNumber,
       damageReturn._id
     );
 
@@ -214,45 +214,45 @@ export const createDamageReturn = async (req, res) => {
 export const approveDamageReturn = async (req, res) => {
     try {
       const { hasAccess } = checkStockUsagePermissions(req, ["accept_damage_return"]);
-  
+
       if (!hasAccess) {
         return res.status(403).json({
           success: false,
           message: "Access denied. accept_damage_return permission required.",
         });
       }
-  
+
       const { id } = req.params;
       const approvedBy = req.user.id;
-  
+
       if (!mongoose.Types.ObjectId.isValid(id)) {
         return res.status(400).json({
           success: false,
           message: "Invalid damage return ID",
         });
       }
-  
+
       const damageReturn = await DamageReturn.findById(id)
         .populate("center", "name centerType")
         .populate("customer", "username name mobile")
         .populate("product", "productTitle productCode");
-  
+
       if (!damageReturn) {
         return res.status(404).json({
           success: false,
           message: "Damage return record not found",
         });
       }
-  
+
       if (damageReturn.status !== "pending") {
         return res.status(400).json({
           success: false,
           message: `Damage return is already ${damageReturn.status}`
         });
       }
-  
+
       console.log(`Approving damage return for serial: ${damageReturn.serialNumber}`);
-  
+
       // Mark serial as damaged in center stock
       await markSpecificSerialAsDamaged(
         damageReturn.center._id,
@@ -261,28 +261,28 @@ export const approveDamageReturn = async (req, res) => {
         damageReturn._id,
         approvedBy
       );
-  
+
       // Update damage return status
       damageReturn.status = "approved";
       damageReturn.approvedBy = approvedBy;
       damageReturn.approvalDate = new Date();
       await damageReturn.save();
-  
+
       console.log(`✓ Damage return ${id} approved successfully`);
-  
+
       const populatedDamageReturn = await DamageReturn.findById(damageReturn._id)
         .populate("center", "name centerType")
         .populate("customer", "username name mobile")
         .populate("product", "productTitle productCode")
         .populate("createdBy", "name email")
         .populate("approvedBy", "name email");
-  
+
       res.json({
         success: true,
         message: "Damage return approved successfully",
         data: populatedDamageReturn
       });
-  
+
     } catch (error) {
       console.error("Approve damage return error:", error);
       res.status(500).json({
@@ -291,7 +291,7 @@ export const approveDamageReturn = async (req, res) => {
       });
     }
   };
-  
+
 export const rejectDamageReturn = async (req, res) => {
   try {
     const { hasAccess } = checkStockUsagePermissions(req, ["accept_damage_return"]);
@@ -398,19 +398,19 @@ const markSpecificSerialAsDamaged = async (centerId, productId, specificSerialNu
       center: centerId,
       product: productId
     });
-  
+
     if (!centerStock) {
       throw new Error("Center stock not found");
     }
-  
+
     const serial = centerStock.serialNumbers.find(
       sn => sn.serialNumber === specificSerialNumber && sn.status === "damage_pending"
     );
-  
+
     if (!serial) {
       throw new Error(`Serial number ${specificSerialNumber} not found or not in pending damage status. Current status: ${centerStock.serialNumbers.find(sn => sn.serialNumber === specificSerialNumber)?.status || 'not found'}`);
     }
-  
+
     // Update status from 'damage_pending' to 'damaged'
     serial.status = "damaged";
     serial.transferHistory.push({
@@ -421,7 +421,7 @@ const markSpecificSerialAsDamaged = async (centerId, productId, specificSerialNu
       remark: "Damage approved - marked as damaged",
       approvedBy: approvedBy
     });
-  
+
     await centerStock.save();
     console.log(`✓ Serial ${specificSerialNumber} status updated from 'damage_pending' to 'damaged'`);
   };
@@ -491,14 +491,14 @@ export const getAllDamageReturns = async (req, res) => {
         req,
         ["view_usage_own_center", "view_usage_all_center"]
       );
-  
+
       if (!hasAccess) {
         return res.status(403).json({
           success: false,
           message: "Access denied. view_usage_own_center or view_usage_all_center permission required.",
         });
       }
-  
+
       const {
         center,
         customer,
@@ -514,9 +514,9 @@ export const getAllDamageReturns = async (req, res) => {
         sortOrder = "desc",
         search
       } = req.query;
-  
+
       const filter = {};
-  
+
       if (permissions.view_usage_own_center && !permissions.view_usage_all_center && userCenter) {
         filter.center = userCenter._id || userCenter;
       } else if (center) {
@@ -542,11 +542,11 @@ export const getAllDamageReturns = async (req, res) => {
           { usageType: { $regex: search, $options: 'i' } }
         ];
       }
-  
+
       const pageNum = parseInt(page);
       const limitNum = parseInt(limit);
       const skip = (pageNum - 1) * limitNum;
-  
+
       const sort = {};
       sort[sortBy] = sortOrder === "desc" ? -1 : 1;
       const damageReturns = await DamageReturn.find(filter)
@@ -562,7 +562,7 @@ export const getAllDamageReturns = async (req, res) => {
         .sort(sort)
         .skip(skip)
         .limit(limitNum);
-  
+
       const total = await DamageReturn.countDocuments(filter);
       const stats = await DamageReturn.aggregate([
         { $match: filter },
@@ -585,9 +585,9 @@ export const getAllDamageReturns = async (req, res) => {
           }
         }
       ]);
-  
+
       const totalPages = Math.ceil(total / limitNum);
-  
+
       res.json({
         success: true,
         data: damageReturns,

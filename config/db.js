@@ -1,14 +1,25 @@
-import mongoose from 'mongoose';
-import dotenv from 'dotenv';
-dotenv.config();
-const connectDB = async () => {
-  try {
-    const conn = await mongoose.connect(process.env.MONGO_URI);
-    console.log(`MongoDB connected: ${conn.connection.host}`);
-  } catch (err) {
-    console.error(`Error: ${err.message}`);
-    process.exit(1);
-  }
-};
+import mongoose from "mongoose";
+import { env } from "./env.js";
 
-export default connectDB;
+/**
+ * Establishes a connection to MongoDB.
+ *
+ * The database connection is kept separate from the Express
+ * application so that database concerns remain centralized
+ * and reusable.
+ */
+export async function connectDatabase() {
+    if (!env.MONGO_URI) {
+        throw new Error("MONGO_URI is not configured.");
+    }
+
+    try {
+        await mongoose.connect(env.MONGO_URI);
+
+        console.log("MongoDB connected successfully.");
+    } catch (error) {
+        console.error("MongoDB connection failed:", error.message);
+
+        throw error;
+    }
+}

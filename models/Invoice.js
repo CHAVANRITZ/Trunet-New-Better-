@@ -1,5 +1,5 @@
 
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const invoiceSchema = new mongoose.Schema({
   invoiceNumber: {
@@ -7,28 +7,33 @@ const invoiceSchema = new mongoose.Schema({
     required: true,
     unique: true
   },
+
   invoiceDate: {
     type: Date,
     required: true
   },
+
   stockRequestIds: [{
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'StockRequest',
+    ref: "StockRequest",
     required: true
   }],
+
   reseller: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Reseller',
+    ref: "Reseller",
     required: true
   },
+
   centers: [{
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Center'
+    ref: "Center"
   }],
+
   products: [{
     productId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Product'
+      ref: "Product"
     },
     productTitle: String,
     hsnCode: String,
@@ -45,6 +50,7 @@ const invoiceSchema = new mongoose.Schema({
     totalAmount: Number,
     unit: String
   }],
+
   totalOutletAmount: Number,
   totalDamageRepairAmount: Number,
   totalCenterReturnAmount: Number,
@@ -53,6 +59,7 @@ const invoiceSchema = new mongoose.Schema({
   sgst: Number,
   roundOff: Number,
   totalAmount: Number,
+
   metadata: {
     deliveryNote: String,
     modeOfPayment: String,
@@ -67,6 +74,7 @@ const invoiceSchema = new mongoose.Schema({
     destination: String,
     termsOfDelivery: String
   },
+
   hsnSummary: [{
     hsnCode: String,
     taxableValue: Number,
@@ -74,31 +82,37 @@ const invoiceSchema = new mongoose.Schema({
     sgstAmount: Number,
     totalTax: Number
   }],
+
   invoiceHtml: String,
   invoicePdfPath: String,
-cancellationDetails: {
-  cancelledAt: Date,
-  cancelledBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+
+  cancellationDetails: {
+    cancelledAt: Date,
+    cancelledBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
+    },
+    cancelReason: String,
+    cancelWithCreditNote: Boolean
   },
-  cancelReason: String,
-  cancelWithCreditNote: Boolean
-},
+
   status: {
     type: String,
-    enum: ['generated', 'sent', 'paid', 'cancelled'],
-    default: 'generated'
+    enum: ["generated", "sent", "paid", "cancelled"],
+    default: "generated"
   },
+
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+    ref: "User"
   },
+
   createdAt: {
     type: Date,
     default: Date.now
   },
+
   updatedAt: Date
 });
 
-export default mongoose.model('Invoice', invoiceSchema);
+export default mongoose.model("Invoice", invoiceSchema);

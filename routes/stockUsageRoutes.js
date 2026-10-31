@@ -1,156 +1,320 @@
 import express from "express";
+
 import {
-  createStockUsage,
-  getAllStockUsage,
-  getStockUsageById,
-  updateStockUsage,
-  deleteStockUsage,
-  approveDamageRequest,
-  rejectDamageRequest,
-  getPendingDamageRequests,
-  getDamageRequestsByStatus,
-  getStockUsageByCustomer,
-  getStockUsageByBuilding,
-  getStockUsageByControlRoom,
-  getProductDevicesByCustomer,
-  getProductDevicesByBuilding,
-  getProductDevicesByControlRoom,
-  changeToDamageReturn,
-  getDamageReturnRecordsWithStats,
-  replaceProductSerial,
-  returnProductSerial,
-  getAllFaultyStock,
-  revertDamageEntry,
-  checkRevertEligibility,
+    createStockUsage,
+    getAllStockUsage,
+    getStockUsageById,
+    updateStockUsage,
+    deleteStockUsage,
+    approveDamageRequest,
+    rejectDamageRequest,
+    getPendingDamageRequests,
+    getDamageRequestsByStatus,
+    getStockUsageByCustomer,
+    getStockUsageByBuilding,
+    getStockUsageByControlRoom,
+    getProductDevicesByCustomer,
+    getProductDevicesByBuilding,
+    getProductDevicesByControlRoom,
+    changeToDamageReturn,
+    getDamageReturnRecordsWithStats,
+    returnProductSerial,
+    replaceProductSerial,
+    getAllFaultyStock,
+    checkRevertEligibility,
+    revertDamageEntry,
 } from "../controllers/stockUsageController.js";
 
-import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
+import {
+    validateCreateStockUsage,
+    validateUpdateStockUsage,
+    validateStockUsageId,
+    validateDamageReturnApproval,
+    validateCheckRevertEligibility,
+    validateRevertDamage,
+    validateStockUsageQuery,
+} from "../validators/stockUsageValidations.js";
+
+import { authMiddleware } from "../middlewares/authMiddleware.js";
+import {
+    authorizeAccess,
+    attachAuthorizationContext,
+} from "../middlewares/authorizationMiddleware.js";
 
 const router = express.Router();
 
 const MODULE = "Usage";
 
+/*
+ * Collection routes
+ */
+
+router
+    .route("/")
+    .post(
+        authMiddleware,
+        authorizeAccess(
+            MODULE,
+            "manage_usage_own_center",
+            "manage_usage_all_center"
+        ),
+        attachAuthorizationContext(MODULE),
+        validateCreateStockUsage,
+        createStockUsage
+    )
+    .get(
+        authMiddleware,
+        authorizeAccess(
+            MODULE,
+            "view_usage_own_center",
+            "view_usage_all_center"
+        ),
+        attachAuthorizationContext(MODULE),
+        validateStockUsageQuery,
+        getAllStockUsage
+    );
+
+/*
+ * Pending and status-based damage requests
+ */
+
 router.get(
-  "/pending",
-  protect,
-  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
-  getPendingDamageRequests
-);
-router.get(
-  "/requests",
-  protect,
-  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
-  getDamageRequestsByStatus
+    "/pending",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_usage_own_center",
+        "view_usage_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    getPendingDamageRequests
 );
 
 router.get(
-  "/damage-return",
-  protect,
-  getDamageReturnRecordsWithStats
+    "/requests/:status",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_usage_own_center",
+        "view_usage_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    getDamageRequestsByStatus
 );
-router.get("/faulty-stock", protect,
-  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
-  getAllFaultyStock);
+
+/*
+ * Damage Return and faulty stock
+ */
+
+router.get(
+    "/damage-return",
+    authMiddleware,
+    attachAuthorizationContext(MODULE),
+    getDamageReturnRecordsWithStats
+);
+
+router.get(
+    "/faulty-stock",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_usage_own_center",
+        "view_usage_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    getAllFaultyStock
+);
+
+router.patch(
+    "/damage/:id/damage-return",
+    authMiddleware,
+    attachAuthorizationContext(MODULE),
+    validateStockUsageId,
+    changeToDamageReturn
+);
+
+/*
+ * Product serial operations
+ */
 
 router.post(
-  "/",
-  protect,
-  authorizeAccess(MODULE, "manage_usage_own_center", "manage_usage_all_center"),
-  createStockUsage
+    "/return/product",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_usage_own_center",
+        "manage_usage_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    returnProductSerial
 );
 
 router.post(
-  "/return/product",
-  protect,
-  authorizeAccess(MODULE, "manage_usage_own_center", "manage_usage_all_center"),
-  returnProductSerial
+    "/replace-serial",
+    authMiddleware,
+    attachAuthorizationContext(MODULE),
+    replaceProductSerial
+);
+
+/*
+ * Customer, building, and control-room lookups
+ * Keep these before /:id routes.
+ */
+
+router.get(
+    "/customer/:customerId/devices",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_usage_own_center",
+        "view_usage_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    getProductDevicesByCustomer
 );
 
 router.get(
-  "/",
-  protect,
-  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
-  getAllStockUsage
+    "/building/:buildingId/devices",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_usage_own_center",
+        "view_usage_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    getProductDevicesByBuilding
 );
+
 router.get(
-  "/:id",
-  protect,
-  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
-  getStockUsageById
+    "/control-room/:controlRoomId/devices",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_usage_own_center",
+        "view_usage_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    getProductDevicesByControlRoom
 );
+
+router.get(
+    "/customer/:customerId",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_usage_own_center",
+        "view_usage_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    getStockUsageByCustomer
+);
+
+router.get(
+    "/building/:buildingId",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_usage_own_center",
+        "view_usage_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    getStockUsageByBuilding
+);
+
+router.get(
+    "/control-room/:controlRoomId",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_usage_own_center",
+        "view_usage_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    getStockUsageByControlRoom
+);
+
+/*
+ * Damage approval, rejection, and revert
+ */
+
+router.patch(
+    "/:id/approve",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "accept_damage_return"
+    ),
+    attachAuthorizationContext(MODULE),
+    validateDamageReturnApproval,
+    approveDamageRequest
+);
+
+router.patch(
+    "/:id/reject",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_usage_own_center",
+        "manage_usage_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    validateStockUsageId,
+    rejectDamageRequest
+);
+
+router.get(
+    "/:id/check-revert",
+    authMiddleware,
+    attachAuthorizationContext(MODULE),
+    validateCheckRevertEligibility,
+    checkRevertEligibility
+);
+
 router.put(
-  "/:id",
-  protect,
-  authorizeAccess(MODULE, "allow_edit_usage"),
-  updateStockUsage
-);
-router.delete(
-  "/:id",
-  protect,
-  authorizeAccess(MODULE, "manage_usage_own_center", "manage_usage_all_center"),
-  deleteStockUsage
+    "/:id/revert-damage",
+    authMiddleware,
+    attachAuthorizationContext(MODULE),
+    validateRevertDamage,
+    revertDamageEntry
 );
 
-router.patch(
-  "/:id/approve",
-  protect,
-  authorizeAccess(MODULE, "accept_damage_return"),
-  approveDamageRequest
-);
+/*
+ * Individual usage routes
+ */
 
-router.patch(
-  "/:id/reject",
-  protect,
-  authorizeAccess(MODULE, "manage_usage_own_center", "manage_usage_all_center"),
-  rejectDamageRequest
-);
-
-router.get(
-  "/customer/:customerId",
-  protect,
-  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
-  getStockUsageByCustomer
-);
-router.get(
-  "/building/:buildingId",
-  protect,
-  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
-  getStockUsageByBuilding
-);
-router.get(
-  "/control-room/:controlRoomId",
-  protect,
-  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
-  getStockUsageByControlRoom
-);
-router.get(
-  "/customer/:customerId/devices",
-  protect,
-  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
-  getProductDevicesByCustomer
-);
-router.get(
-  "/building/:buildingId/devices",
-  protect,
-  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
-  getProductDevicesByBuilding
-);
-router.get(
-  "/control-room/:controlRoomId/devices",
-  protect,
-  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
-  getProductDevicesByControlRoom
-);
-
-router.patch(
-  "/damage/:id/damage-return",
-  protect,
-  changeToDamageReturn
-);
-
-router.post('/replace-serial', protect, replaceProductSerial);
-
-router.put("/:id/revert-damage", protect, revertDamageEntry);
-router.get("/:id/check-revert", protect, checkRevertEligibility);
+router
+    .route("/:id")
+    .get(
+        authMiddleware,
+        authorizeAccess(
+            MODULE,
+            "view_usage_own_center",
+            "view_usage_all_center"
+        ),
+        attachAuthorizationContext(MODULE),
+        validateStockUsageId,
+        getStockUsageById
+    )
+    .put(
+        authMiddleware,
+        authorizeAccess(
+            MODULE,
+            "allow_edit_usage"
+        ),
+        attachAuthorizationContext(MODULE),
+        validateUpdateStockUsage,
+        updateStockUsage
+    )
+    .delete(
+        authMiddleware,
+        authorizeAccess(
+            MODULE,
+            "manage_usage_own_center",
+            "manage_usage_all_center"
+        ),
+        attachAuthorizationContext(MODULE),
+        validateStockUsageId,
+        deleteStockUsage
+    );
 
 export default router;

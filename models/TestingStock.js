@@ -71,7 +71,7 @@ const testingStockSchema = new mongoose.Schema(
           type: String,
           enum: [
             "pending_testing",
-            "under_testing", 
+            "under_testing",
             "tested",
             "passed",
             "failed",
@@ -282,7 +282,7 @@ testingStockSchema.methods.returnToOutlet = async function (
     // Update serial status
     serial.status = "returned";
     serial.currentLocation = toOutlet;
-    
+
     // Update quantities
     if (serial.testResult === "passed") {
       this.passedQuantity -= 1;

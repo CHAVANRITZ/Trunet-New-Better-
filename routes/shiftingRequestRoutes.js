@@ -1,81 +1,176 @@
 import express from "express";
+
 import {
-  createShiftingRequest,
-  getAllShiftingRequests,
-  updateShiftingRequestStatus,
-  getShiftingRequestById,
-  getCustomerShiftingHistory,
-  getCustomerCurrentCenter,
-  deleteShiftingRequest,
-  updateShiftingRequest,
-  getShiftingRequestsByCustomer,
+    createShiftingRequest,
+    getAllShiftingRequests,
+    updateShiftingRequestStatus,
+    getShiftingRequestById,
+    getCustomerShiftingHistory,
+    getCustomerCurrentCenter,
+    deleteShiftingRequest,
+    updateShiftingRequest,
+    getShiftingRequestsByCustomer,
 } from "../controllers/shiftingRequestController.js";
-import { validateShiftingRequest } from "../validations/shiftingRequestValidator.js";
-import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
+
+import {
+    validateShiftingRequest,
+} from "../validators/shiftingRequestValidator.js";
+
+import { authMiddleware } from "../middlewares/authMiddleware.js";
+
+import {
+    authorizeAccess,
+    attachAuthorizationContext,
+} from "../middlewares/authorizationMiddleware.js";
 
 const router = express.Router();
 
 const MODULE = "Shifting";
 
-authorizeAccess(MODULE, "view_own_purchase_stock", "view_all_purchase_stock"),
-  router.post(
+/*
+ * Create shifting request
+ * POST /api/v1/shifting-requests
+ */
+router.post(
     "/",
-    protect,
+    authMiddleware,
     authorizeAccess(
-      MODULE,
-      "manage_shifting_own_center", "manage_shifting_all_center"
+        MODULE,
+        "manage_shifting_own_center",
+        "manage_shifting_all_center"
     ),
+    attachAuthorizationContext(MODULE),
     validateShiftingRequest,
     createShiftingRequest
-  );
-router.get(
-  "/",
-  protect,
-  authorizeAccess(MODULE, "view_shifting_own_center", "view_shifting_all_center"),
-  getAllShiftingRequests
-);
-router.get(
-  "/:id",
-  protect,
-  authorizeAccess(MODULE, "view_shifting_own_center", "view_shifting_all_center"),
-  getShiftingRequestById
-);
-router.get(
-  "/customer/:customerId/requests",
-  protect,
-  authorizeAccess(MODULE, "view_shifting_own_center", "view_shifting_all_center"),
-  getShiftingRequestsByCustomer
-);
-router.put(
-  "/:id",
-  protect,
-  authorizeAccess(MODULE, "manage_shifting_own_center", "manage_shifting_all_center"),
-  updateShiftingRequest
-);
-router.delete(
-  "/:id",
-  protect,
-  authorizeAccess(MODULE,"manage_shifting_own_center", "manage_shifting_all_center"),
-  deleteShiftingRequest
-);
-router.put(
-  "/:id/status",
-  protect,
-  authorizeAccess(MODULE, "accept_shifting_all_center", "accept_shifting_own_center"),
-  updateShiftingRequestStatus
 );
 
+/*
+ * Get all shifting requests
+ * GET /api/v1/shifting-requests
+ */
 router.get(
-  "/customers/:customerId/history",
-  protect,
-  authorizeAccess(MODULE, "view_shifting_own_center", "view_shifting_all_center"),
-  getCustomerShiftingHistory
+    "/",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_shifting_own_center",
+        "view_shifting_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    getAllShiftingRequests
 );
+
+/*
+ * Get shifting requests for a customer
+ * Keep this route before /:id.
+ * GET /api/v1/shifting-requests/customer/:customerId/requests
+ */
 router.get(
-  "/customers/:customerId/current-center",
-  protect,
-  authorizeAccess(MODULE, "view_shifting_own_center", "view_shifting_all_center"),
-  getCustomerCurrentCenter
+    "/customer/:customerId/requests",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_shifting_own_center",
+        "view_shifting_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    getShiftingRequestsByCustomer
+);
+
+/*
+ * Get customer shifting history
+ * GET /api/v1/shifting-requests/customers/:customerId/history
+ */
+router.get(
+    "/customers/:customerId/history",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_shifting_own_center",
+        "view_shifting_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    getCustomerShiftingHistory
+);
+
+/*
+ * Get customer's current center and shifting history
+ * GET /api/v1/shifting-requests/customers/:customerId/current-center
+ */
+router.get(
+    "/customers/:customerId/current-center",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_shifting_own_center",
+        "view_shifting_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    getCustomerCurrentCenter
+);
+
+/*
+ * Get a shifting request by ID
+ * GET /api/v1/shifting-requests/:id
+ */
+router.get(
+    "/:id",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_shifting_own_center",
+        "view_shifting_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    getShiftingRequestById
+);
+
+/*
+ * Update a pending shifting request
+ * PUT /api/v1/shifting-requests/:id
+ */
+router.put(
+    "/:id",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_shifting_own_center",
+        "manage_shifting_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    updateShiftingRequest
+);
+
+/*
+ * Delete a shifting request
+ * DELETE /api/v1/shifting-requests/:id
+ */
+router.delete(
+    "/:id",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_shifting_own_center",
+        "manage_shifting_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    deleteShiftingRequest
+);
+
+/*
+ * Approve or reject a shifting request
+ * PUT /api/v1/shifting-requests/:id/status
+ */
+router.put(
+    "/:id/status",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "accept_shifting_all_center",
+        "accept_shifting_own_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    updateShiftingRequestStatus
 );
 
 export default router;

@@ -57,15 +57,18 @@ const centerReturnSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-
-centerReturnSchema.pre('save', async function(next) {
+centerReturnSchema.pre("save", async function(next) {
   if (!this.returnNumber) {
     const date = new Date();
     const year = date.getFullYear().toString().slice(-2);
-    const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    const count = await mongoose.model('CenterReturn').countDocuments();
-    this.returnNumber = `CR${year}${month}${(count + 1).toString().padStart(4, '0')}`;
+    const month = (date.getMonth() + 1).toString().padStart(2, "0");
+    const count = await mongoose.model("CenterReturn").countDocuments();
+
+    this.returnNumber = `CR${year}${month}${(count + 1)
+      .toString()
+      .padStart(4, "0")}`;
   }
+
   next();
 });
 

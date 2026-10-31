@@ -1,533 +1,214 @@
-// import jwt from "jsonwebtoken";
-// import User from "../models/User.js";
-// import Center from "../models/Center.js";
 
-// export const protect = async (req, res, next) => {
-//   try {
-//     let token;
-
-//     if (
-//       req.headers.authorization &&
-//       req.headers.authorization.startsWith("Bearer")
-//     ) {
-//       token = req.headers.authorization.split(" ")[1];
-//     }
-
-//     if (!token) {
-//       return res.status(401).json({
-//         success: false,
-//         message: "You are not logged in. Please log in to get access.",
-//       });
-//     }
-
-//     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-//     // Check if center selection is completed
-//     if (decoded.step === 'center_selection') {
-//       return res.status(403).json({
-//         success: false,
-//         message: "Please select a center first",
-//         requiresCenterSelection: true
-//       });
-//     }
-
-//     // Check if token has centerId (it should for complete tokens)
-//     if (!decoded.centerId) {
-//       return res.status(401).json({
-//         success: false,
-//         message: "Invalid token. Center information missing.",
-//       });
-//     }
-
-//     // Get user with populated data
-//     const currentUser = await User.findById(decoded.id)
-//       .populate({
-//         path: "role",
-//         select: "roleTitle permissions",
-//       })
-//       .populate({
-//         path: "center",
-//         select: "centerName centerCode centerType",
-//       })
-//       .populate({
-//         path: "accessibleCenters",
-//         select: "centerName centerCode",
-//       });
-
-//     if (!currentUser) {
-//       return res.status(401).json({
-//         success: false,
-//         message: "The user belonging to this token no longer exists.",
-//       });
-//     }
-
-//     if (currentUser.status === "Disable") {
-//       return res.status(401).json({
-//         success: false,
-//         message:
-//           "Your account has been disabled. Please contact administrator.",
-//       });
-//     }
-
-//     // Check if user has access to the center in token
-//     const hasAccessToCenter = currentUser.accessibleCenters?.some(
-//       center => center._id.toString() === decoded.centerId
-//     );
-
-//     if (!hasAccessToCenter) {
-//       return res.status(403).json({
-//         success: false,
-//         message: "You don't have access to this center anymore.",
-//       });
-//     }
-
-//     // Instead of strict match, update user's center field if it doesn't match
-//     if (currentUser.center?._id?.toString() !== decoded.centerId) {
-//       // Update user's center field to match the token
-//       currentUser.center = decoded.centerId;
-//       await currentUser.save();
-      
-//       // Repopulate center after update
-//       await currentUser.populate({
-//         path: "center",
-//         select: "centerName centerCode centerType",
-//       });
-//     }
-
-//     req.user = currentUser;
-//     req.selectedCenterId = decoded.centerId;
-    
-//     next();
-//   } catch (error) {
-//     console.error("Auth middleware error:", error);
-
-//     if (error.name === "JsonWebTokenError") {
-//       return res.status(401).json({
-//         success: false,
-//         message: "Invalid token. Please log in again.",
-//       });
-//     }
-
-//     if (error.name === "TokenExpiredError") {
-//       return res.status(401).json({
-//         success: false,
-//         message: "Your token has expired. Please log in again.",
-//       });
-//     }
-
-//     res.status(500).json({
-//       success: false,
-//       message: "Internal server error",
-//     });
-//   }
-// };
-
-// export const restrictTo = (...roles) => {
-//   return (req, res, next) => {
-//     if (!roles.includes(req.user.role.roleTitle)) {
-//       return res.status(403).json({
-//         success: false,
-//         message: "You do not have permission to perform this action",
-//       });
-//     }
-//     next();
-//   };
-// };
-
-// export const authorize = (requiredPermissions = []) => {
-//   return (req, res, next) => {
-//     if (!req.user) {
-//       return res.status(401).json({
-//         success: false,
-//         message: "Not authenticated",
-//       });
-//     }
-
-//     if (req.user.role?.roleTitle?.toLowerCase() === "superadmin") {
-//       return next();
-//     }
-
-//     if (requiredPermissions.length === 0) {
-//       return next();
-//     }
-
-//     const userPermissions = req.user.role?.permissions || [];
-
-//     const hasPermission = requiredPermissions.some((requiredPerm) => {
-//       return userPermissions.some((modulePerm) => {
-//         return modulePerm.permissions.includes(requiredPerm);
-//       });
-//     });
-
-//     if (!hasPermission) {
-//       return res.status(403).json({
-//         success: false,
-//         message: "Access denied. Insufficient permissions.",
-//       });
-//     }
-
-//     next();
-//   };
-// };
-
-// export const authorizeAccess = (module, ...actions) => {
-//   return async (req, res, next) => {
-//     if (!req.user) {
-//       return res.status(401).json({
-//         success: false,
-//         message: "Not authenticated",
-//       });
-//     }
-//     if (req.user.role?.roleTitle?.toLowerCase() === "superadmin") {
-//       return next();
-//     }
-
-//     const userPermissions = req.user.role?.permissions || [];
-
-//     const modulePermissions = userPermissions.find(
-//       (perm) => perm.module.toLowerCase() === module.toLowerCase()
-//     );
-
-//     if (!modulePermissions) {
-//       return res.status(403).json({
-//         success: false,
-//         message: `Access denied. No permissions for ${module} module.`,
-//       });
-//     }
-
-//     const hasPermission = actions.some((action) =>
-//       modulePermissions.permissions.includes(action)
-//     );
-
-//     if (!hasPermission) {
-//       return res.status(403).json({
-//         success: false,
-//         message: `Access denied. Required one of: ${actions.join(
-//           ", "
-//         )} for ${module} module.`,
-//       });
-//     }
-
-//     next();
-//   };
-// };
-
-
-
-
-// middlewares/authMiddleware.js
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
-import { isSuperAdmin } from "../utils/checkPermissions.js";
+import Role from "../models/Role.js";
+import { env } from "../config/env.js";
+import { isSuperAdmin as checkIsSuperAdmin } from "../utils/checkPermissions.js";
+import { ApiError } from "../utils/ApiError.js";
 
-export const protect = async (req, res, next) => {
-  try {
-    let token;
+/**
+ * Authenticates requests using the JWT access token.
+ *
+ * Loads the current user and role from MongoDB on every protected
+ * request so account status and permission changes take effect.
+ *
+ * All errors are forwarded to Express error middleware with next(error).
+ */
+export async function authMiddleware(req, res, next) {
+    try {
+        const authorizationHeader = req.headers.authorization;
 
-    if (
-      req.headers.authorization &&
-      req.headers.authorization.startsWith("Bearer")
-    ) {
-      token = req.headers.authorization.split(" ")[1];
-    }
+        if (!authorizationHeader) {
+            return next(
+                new ApiError(
+                    401,
+                    "You are not logged in. Please log in to get access."
+                )
+            );
+        }
 
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: "You are not logged in. Please log in to get access.",
-      });
-    }
+        const [scheme, token] = authorizationHeader.split(" ");
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        if (scheme !== "Bearer" || !token) {
+            return next(
+                new ApiError(401, "Invalid authorization header.")
+            );
+        }
 
-    // Check if center selection is completed
-    if (decoded.step === 'center_selection') {
-      return res.status(403).json({
-        success: false,
-        message: "Please select a center first",
-        requiresCenterSelection: true
-      });
-    }
+        let decodedToken;
 
-    // Check if token has centerId (it should for complete tokens)
-    if (!decoded.centerId) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid token. Center information missing.",
-      });
-    }
+        try {
+            decodedToken = jwt.verify(token, env.JWT_SECRET);
+        } catch (error) {
+            if (error.name === "TokenExpiredError") {
+                return next(
+                    new ApiError(
+                        401,
+                        "Your token has expired. Please log in again."
+                    )
+                );
+            }
 
-    // Get user with populated data
-    const currentUser = await User.findById(decoded.id)
-      .populate({
-        path: "role",
-        select: "roleTitle permissions isSuperAdmin",
-      })
-      .populate({
-        path: "center",
-        select: "centerName centerCode centerType",
-      })
-      .populate({
-        path: "accessibleCenters",
-        select: "centerName centerCode",
-      });
+            if (
+                error.name === "JsonWebTokenError" ||
+                error.name === "NotBeforeError"
+            ) {
+                return next(
+                    new ApiError(
+                        401,
+                        "Invalid token. Please log in again."
+                    )
+                );
+            }
 
-    if (!currentUser) {
-      return res.status(401).json({
-        success: false,
-        message: "The user belonging to this token no longer exists.",
-      });
-    }
+            return next(error);
+        }
 
-    if (currentUser.status === "Disable" && !isSuperAdmin(currentUser)) {
-      return res.status(401).json({
-        success: false,
-        message:
-          "Your account has been disabled. Please contact administrator.",
-      });
-    }
+        // Require the authenticated user's ID in the token.
+        if (
+            !decodedToken.sub ||
+            !jwtIdIsValid(decodedToken.sub)
+        ) {
+            return next(
+                new ApiError(
+                    401,
+                    "Invalid token. User information is missing."
+                )
+            );
+        }
 
-    // Superadmin bypasses center access checks
-    if (!isSuperAdmin(currentUser)) {
-      // Check if user has access to the center in token
-      const hasAccessToCenter = currentUser.accessibleCenters?.some(
-        center => center._id.toString() === decoded.centerId
-      );
+// Center-selection tokens may access only the center-selection endpoint.
+// Center-selection tokens can access only the existing selection endpoint.
+if (decodedToken.step === "center_selection") {
+    const isSelectCenterEndpoint =
+        req.method === "POST" &&
+        req.path.replace(/\/+$/, "") === "/select-center";
 
-      if (!hasAccessToCenter) {
+    if (!isSelectCenterEndpoint) {
         return res.status(403).json({
-          success: false,
-          message: "You don't have access to this center anymore.",
+            success: false,
+            message: "Please select a center first.",
+            requiresCenterSelection: true
         });
-      }
+    }
+}
 
-      // Instead of strict match, update user's center field if it doesn't match
-      if (currentUser.center?._id?.toString() !== decoded.centerId) {
-        // Update user's center field to match the token
-        currentUser.center = decoded.centerId;
-        await currentUser.save();
-        
-        // Repopulate center after update
-        await currentUser.populate({
-          path: "center",
-          select: "centerName centerCode centerType",
+        // Load the latest user record from MongoDB.
+        const user = await User.findById(decodedToken.sub);
+
+        if (!user) {
+            return next(
+                new ApiError(
+                    401,
+                    "The user belonging to this token no longer exists."
+                )
+            );
+        }
+
+        if (user.status !== "Enable") {
+            return next(
+                new ApiError(
+                    403,
+                    "Your account has been disabled. Please contact administrator."
+                )
+            );
+        }
+
+        if (!user.role) {
+            return next(
+                new ApiError(403, "User role is not configured.")
+            );
+        }
+
+        // Load the raw role document to preserve stored permissions.
+        const role = await Role.collection.findOne({
+            _id: user.role
         });
-      }
-    } else {
-      // For Superadmin, ensure they have a center set
-      if (!currentUser.center && decoded.centerId) {
-        currentUser.center = decoded.centerId;
-        await currentUser.save();
-        
-        // Repopulate center after update
-        await currentUser.populate({
-          path: "center",
-          select: "centerName centerCode centerType",
-        });
-      }
+
+        if (!role) {
+            return next(
+                new ApiError(403, "User role is not configured.")
+            );
+        }
+
+        // Determine Super Admin access from the user or role.
+        const roleTitle =
+            typeof role.roleTitle === "string"
+                ? role.roleTitle.trim().toLowerCase()
+                : "";
+
+        const userIsSuperAdmin = user.isSuperAdmin === true;
+        const roleIsSuperAdmin = role.isSuperAdmin === true;
+        const titleIsSuperAdmin = roleTitle === "superadmin";
+
+        const superAdminStatus =
+            userIsSuperAdmin ||
+            roleIsSuperAdmin ||
+            titleIsSuperAdmin;
+
+        // Attach the authenticated user to the request.
+        req.user = {
+            id: user._id.toString(),
+            role,
+            status: user.status,
+            fullUser: user,
+            isSuperAdmin: superAdminStatus
+        };
+
+        // Preserve the selected center when present in the token.
+        if (decodedToken.centerId) {
+            req.selectedCenterId = decodedToken.centerId;
+        }
+
+        return next();
+    } catch (error) {
+        // Forward database errors and all unexpected errors.
+        return next(error);
     }
+}
 
-    req.user = currentUser;
-    req.selectedCenterId = decoded.centerId;
-    
-    next();
-  } catch (error) {
-    console.error("Auth middleware error:", error);
-
-    if (error.name === "JsonWebTokenError") {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid token. Please log in again.",
-      });
-    }
-
-    if (error.name === "TokenExpiredError") {
-      return res.status(401).json({
-        success: false,
-        message: "Your token has expired. Please log in again.",
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-    });
-  }
-};
-
-export const restrictTo = (...roles) => {
-  return (req, res, next) => {
-    if (isSuperAdmin(req.user)) {
-      return next();
-    }
-    
-    if (!roles.includes(req.user.role.roleTitle)) {
-      return res.status(403).json({
-        success: false,
-        message: "You do not have permission to perform this action",
-      });
-    }
-    next();
-  };
-};
-
-export const authorize = (requiredPermissions = []) => {
-  return (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        message: "Not authenticated",
-      });
-    }
-
-    if (req.user.role?.roleTitle?.toLowerCase() === "superadmin") {
-      return next();
-    }
-
-    if (requiredPermissions.length === 0) {
-      return next();
-    }
-
-    const userPermissions = req.user.role?.permissions || [];
-
-    const hasPermission = requiredPermissions.some((requiredPerm) => {
-      return userPermissions.some((modulePerm) => {
-        return modulePerm.permissions.includes(requiredPerm);
-      });
-    });
-
-    if (!hasPermission) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. Insufficient permissions.",
-      });
-    }
-
-    next();
-  };
-};
-
-export const authorizeAccess = (module, ...actions) => {
-  return async (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        message: "Not authenticated",
-      });
-    }
-
-    // Check if user is Superadmin
-    if (isSuperAdmin(req.user)) {
-      return next();
-    }
-
-    const userPermissions = req.user.role?.permissions || [];
-
-    const modulePermissions = userPermissions.find(
-      (perm) => perm.module.toLowerCase() === module.toLowerCase()
+/**
+ * Checks whether a value can be used as a MongoDB user ID.
+ */
+function jwtIdIsValid(value) {
+    return (
+        typeof value === "string" &&
+        /^[a-fA-F0-9]{24}$/.test(value)
     );
+}
 
-    if (!modulePermissions) {
-      return res.status(403).json({
-        success: false,
-        message: `Access denied. No permissions for ${module} module.`,
-      });
-    }
+/**
+ * Restricts access to specific database-backed role titles.
+ *
+ * Super Admin users are allowed through automatically.
+ */
+export function restrictTo(...roles) {
+    return function roleMiddleware(req, res, next) {
+        if (!req.user) {
+            return next(
+                new ApiError(401, "Authentication required.")
+            );
+        }
 
-    const hasPermission = actions.some((action) =>
-      modulePermissions.permissions.includes(action)
-    );
+        const hasSuperAdminAccess =
+            req.user.isSuperAdmin === true ||
+            checkIsSuperAdmin(req.user);
 
-    if (!hasPermission) {
-      return res.status(403).json({
-        success: false,
-        message: `Access denied. You need at least one of these permissions: ${actions.join(", ")} for the ${module} module.`,
-      });
-    }
+        if (hasSuperAdminAccess) {
+            return next();
+        }
 
-    next();
-  };
-};
+        const currentRole = req.user.role?.roleTitle;
 
+        if (!roles.includes(currentRole)) {
+            return next(
+                new ApiError(
+                    403,
+                    "You do not have permission to perform this action."
+                )
+            );
+        }
 
-// ONLY AFTER authorizeAccess is completely closed
-export const protectCenterSelection = async (req, res, next) => {
-  try {
-    let token;
-
-    if (
-      req.headers.authorization &&
-      req.headers.authorization.startsWith("Bearer")
-    ) {
-      token = req.headers.authorization.split(" ")[1];
-    }
-
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: "You are not logged in. Please log in to get access.",
-      });
-    }
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    // This middleware is ONLY for the center-selection token
-    if (decoded.step !== "center_selection") {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid center selection token.",
-      });
-    }
-
-    const currentUser = await User.findById(decoded.id)
-      .populate({
-        path: "role",
-        select: "roleTitle permissions isSuperAdmin",
-      })
-      .populate({
-        path: "accessibleCenters",
-        select: "centerName centerCode",
-      });
-
-    if (!currentUser) {
-      return res.status(401).json({
-        success: false,
-        message: "The user belonging to this token no longer exists.",
-      });
-    }
-
-    if (currentUser.status === "Disable" && !isSuperAdmin(currentUser)) {
-      return res.status(401).json({
-        success: false,
-        message:
-          "Your account has been disabled. Please contact administrator.",
-      });
-    }
-
-    // switchCenter() needs req.user.id
-    req.user = currentUser;
-
-    next();
-  } catch (error) {
-    console.error("Center selection middleware error:", error);
-
-    if (error.name === "JsonWebTokenError") {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid token. Please log in again.",
-      });
-    }
-
-    if (error.name === "TokenExpiredError") {
-      return res.status(401).json({
-        success: false,
-        message: "Your token has expired. Please log in again.",
-      });
-    }
-
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-    });
-  }
-};
+        return next();
+    };
+}

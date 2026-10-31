@@ -1,218 +1,384 @@
 import express from "express";
+
 import {
-  createStockTransfer,
-  getAllStockTransfers,
-  getStockTransferById,
-  updateStockTransfer,
-  deleteStockTransfer,
-  submitStockTransfer,
-  approveStockTransferByAdmin,
-  rejectStockTransferByAdmin,
-  confirmStockTransfer,
-  shipStockTransfer,
-  completeStockTransfer,
-  markStockTransferAsIncomplete,
-  rejectStockTransfer,
-  getPendingAdminApprovalTransfers,
-  getTransferStats,
-  updateShippingInfo,
-  rejectShipping,
-  getMostRecentTransferNumber,
-  completeIncompleteStockTransfer,
-  updateApprovedQuantities,
-  getWarehouseProductSummary,
+    createStockTransfer,
+    getAllStockTransfers,
+    getStockTransferById,
+    updateStockTransfer,
+    deleteStockTransfer,
+    submitStockTransfer,
+    approveStockTransferByAdmin,
+    rejectStockTransferByAdmin,
+    confirmStockTransfer,
+    shipStockTransfer,
+    completeStockTransfer,
+    markStockTransferAsIncomplete,
+    rejectStockTransfer,
+    getPendingAdminApprovalTransfers,
+    getTransferStats,
+    updateShippingInfo,
+    rejectShipping,
+    getMostRecentTransferNumber,
+    completeIncompleteStockTransfer,
+    updateApprovedQuantities,
+    getWarehouseProductSummary,
+    getOriginalOutletProductSummary,
 } from "../controllers/stockTransferController.js";
+
 import {
-  validateCreateStockTransfer,
-  validateUpdateStockTransfer,
-  validateIdParam,
-  validateAdminApproval,
-  validateAdminRejection,
-  validateShipping,
-  validateUpdateShippingInfo,
-  validateCompletion,
-  validateConfirmation,
-  validateIncompleteTransfer,
-  validateRejectShipment,
-  validateRejectTransfer,
-  validateQueryParams,
-  validateUpdateApprovedQuantities,
-} from "../validations/stockTransferValidations.js";
-import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
+    validateCreateStockTransfer,
+    validateUpdateStockTransfer,
+    validateIdParam,
+    validateAdminApproval,
+    validateAdminRejection,
+    validateShipping,
+    validateUpdateShippingInfo,
+    validateCompletion,
+    validateConfirmation,
+    validateIncompleteTransfer,
+    validateRejectShipment,
+    validateRejectTransfer,
+    validateQueryParams,
+    validateUpdateApprovedQuantities,
+    validateCompleteIncompleteTransfer,
+} from "../validators/stockTransferValidator.js";
+
+import { authMiddleware } from "../middlewares/authMiddleware.js";
+import {
+    authorizeAccess,
+    attachAuthorizationContext,
+} from "../middlewares/authorizationMiddleware.js";
 
 const router = express.Router();
+
+/*
+ * Transfer is the existing legacy permission module.
+ *
+ * Permission action names are intentionally preserved because
+ * they are part of the existing database/API authorization contract.
+ */
 const MODULE = "Transfer";
 
-router
-  .route("/")
-  .post(
-    protect,
-    authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
-    validateCreateStockTransfer,
-    createStockTransfer
-  )
-  .get(
-    protect,
-    authorizeAccess(MODULE, "stock_transfer_own_center", "stock_transfer_all_center"),
-    validateQueryParams,
-    getAllStockTransfers
-  );
+/*
+ * --------------------------------------------------------------------------
+ * Collection routes
+ * --------------------------------------------------------------------------
+ */
 
 router
-  .route("/latest-transfer-number")
-  .get(
-    protect,
-    authorizeAccess(MODULE, "stock_transfer_own_center", "stock_transfer_all_center"),
+    .route("/")
+    .post(
+        authMiddleware,
+        authorizeAccess(
+            MODULE,
+            "manage_stock_transfer_own_center",
+            "manage_stock_transfer_all_center"
+        ),
+        attachAuthorizationContext(MODULE),
+        validateCreateStockTransfer,
+        createStockTransfer
+    )
+    .get(
+        authMiddleware,
+        authorizeAccess(
+            MODULE,
+            "stock_transfer_own_center",
+            "stock_transfer_all_center"
+        ),
+        attachAuthorizationContext(MODULE),
+        validateQueryParams,
+        getAllStockTransfers
+    );
+
+/*
+ * --------------------------------------------------------------------------
+ * Transfer metadata / reporting routes
+ * --------------------------------------------------------------------------
+ */
+
+router.get(
+    "/latest-transfer-number",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "stock_transfer_own_center",
+        "stock_transfer_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
     getMostRecentTransferNumber
-  );
-
-router.get(
-  "/summary/original-outlet",
-  protect,
-  authorizeAccess(MODULE, "stock_transfer_own_center", "stock_transfer_all_center"),
-  getWarehouseProductSummary
 );
 
-router
-  .route("/stats")
-  .get(
-    protect,
-    authorizeAccess(MODULE, "stock_transfer_own_center", "stock_transfer_all_center"),
+
+router.get(
+    "/summary/original-outlet",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "stock_transfer_own_center",
+        "stock_transfer_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    getOriginalOutletProductSummary
+);
+
+
+router.get(
+    "/stats",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "stock_transfer_own_center",
+        "stock_transfer_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
     getTransferStats
-  );
+);
+
+/*
+ * --------------------------------------------------------------------------
+ * Individual transfer routes
+ * --------------------------------------------------------------------------
+ */
 
 router
-  .route("/:id")
-  .get(
-    protect,
-    authorizeAccess(MODULE, "stock_transfer_own_center", "stock_transfer_all_center"),
+    .route("/:id")
+    .get(
+        authMiddleware,
+        authorizeAccess(
+            MODULE,
+            "stock_transfer_own_center",
+            "stock_transfer_all_center"
+        ),
+        attachAuthorizationContext(MODULE),
+        validateIdParam,
+        getStockTransferById
+    )
+    .put(
+        authMiddleware,
+        authorizeAccess(
+            MODULE,
+            "manage_stock_transfer_own_center",
+            "manage_stock_transfer_all_center"
+        ),
+        attachAuthorizationContext(MODULE),
+        validateUpdateStockTransfer,
+        updateStockTransfer
+    )
+    .delete(
+        authMiddleware,
+        authorizeAccess(
+            MODULE,
+            "delete_transfer_own_center",
+            "delete_transfer_all_center"
+        ),
+        attachAuthorizationContext(MODULE),
+        validateIdParam,
+        deleteStockTransfer
+    );
+
+/*
+ * --------------------------------------------------------------------------
+ * Transfer lifecycle
+ * --------------------------------------------------------------------------
+ */
+
+router.post(
+    "/:id/submit",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_stock_transfer_own_center",
+        "manage_stock_transfer_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
     validateIdParam,
-    getStockTransferById
-  )
-  .put(
-    protect,
-    authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
-    validateIdParam,
-    validateUpdateStockTransfer,
-    updateStockTransfer
-  )
-  .delete(
-    protect,
-    authorizeAccess(MODULE, "delete_transfer_own_center", "delete_transfer_all_center"),
-    validateIdParam,
-    deleteStockTransfer
-  );
-
-router.post(
-  "/:id/submit",
-  protect,
-  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
-  validateIdParam,
-  submitStockTransfer
+    submitStockTransfer
 );
 
 router.post(
-  "/:id/approve",
-  protect,
-  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center", "approval_transfer_center"),
-  validateIdParam,
-  validateConfirmation,
-  confirmStockTransfer
+    "/:id/approve",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_stock_transfer_own_center",
+        "manage_stock_transfer_all_center",
+        "approval_transfer_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    validateConfirmation,
+    confirmStockTransfer
 );
 
 router.post(
-  "/:id/reject",
-  protect,
-  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
-  validateIdParam,
-  validateRejectTransfer,
-  rejectStockTransfer
+    "/:id/reject",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_stock_transfer_own_center",
+        "manage_stock_transfer_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    validateRejectTransfer,
+    rejectStockTransfer
+);
+
+/*
+ * --------------------------------------------------------------------------
+ * Admin approval
+ * --------------------------------------------------------------------------
+ */
+
+router.patch(
+    "/:id/admin/approve",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_stock_transfer_own_center",
+        "manage_stock_transfer_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    validateAdminApproval,
+    approveStockTransferByAdmin
 );
 
 router.patch(
-  "/:id/admin/approve",
-  protect,
-  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
-  validateIdParam,
-  validateAdminApproval,
-  approveStockTransferByAdmin
+    "/:id/admin/reject",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_stock_transfer_own_center",
+        "manage_stock_transfer_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    validateAdminRejection,
+    rejectStockTransferByAdmin
+);
+
+/*
+ * --------------------------------------------------------------------------
+ * Shipping
+ * --------------------------------------------------------------------------
+ */
+
+router.post(
+    "/:id/ship",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_stock_transfer_own_center",
+        "manage_stock_transfer_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    validateShipping,
+    shipStockTransfer
 );
 
 router.patch(
-  "/:id/admin/reject",
-  protect,
-  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
-  validateIdParam,
-  validateAdminRejection,
-  rejectStockTransferByAdmin
+    "/:id/shipping-info",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_stock_transfer_own_center",
+        "manage_stock_transfer_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    validateUpdateShippingInfo,
+    updateShippingInfo
+);
+
+router.patch(
+    "/:id/reject-shipment",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_stock_transfer_own_center",
+        "manage_stock_transfer_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    validateRejectShipment,
+    rejectShipping
+);
+
+/*
+ * --------------------------------------------------------------------------
+ * Completion / incomplete transfer handling
+ * --------------------------------------------------------------------------
+ */
+
+router.post(
+    "/:id/complete",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_stock_transfer_own_center",
+        "manage_stock_transfer_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    validateCompletion,
+    completeStockTransfer
 );
 
 router.post(
-  "/:id/ship",
-  protect,
-  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
-  validateIdParam,
-  validateShipping,
-  shipStockTransfer
+    "/:id/mark-incomplete",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_stock_transfer_own_center",
+        "manage_stock_transfer_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    validateIncompleteTransfer,
+    markStockTransferAsIncomplete
 );
 
 router.patch(
-  "/:id/shipping-info",
-  protect,
-  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
-  validateIdParam,
-  validateUpdateShippingInfo,
-  updateShippingInfo
+    "/:id/complete-incomplete",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_stock_transfer_own_center",
+        "manage_stock_transfer_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    validateCompleteIncompleteTransfer,
+    completeIncompleteStockTransfer
 );
+
+/*
+ * --------------------------------------------------------------------------
+ * Approval quantity / serial updates
+ * --------------------------------------------------------------------------
+ */
 
 router.patch(
-  "/:id/reject-shipment",
-  protect,
-  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
-  validateIdParam,
-  validateRejectShipment,
-  rejectShipping
+    "/:id/approved-quantities",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_stock_transfer_own_center",
+        "manage_stock_transfer_all_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    validateUpdateApprovedQuantities,
+    updateApprovedQuantities
 );
 
-router.post(
-  "/:id/complete",
-  protect,
-  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
-  validateIdParam,
-  validateCompletion,
-  completeStockTransfer
-);
-
-router.post(
-  "/:id/mark-incomplete",
-  protect,
-  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
-  validateIdParam,
-  validateIncompleteTransfer,
-  markStockTransferAsIncomplete
-);
-
-router.patch(
-  "/:id/complete-incomplete",
-  protect,
-  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
-  completeIncompleteStockTransfer
-);
-
-router.patch(
-  "/:id/approved-quantities",
-  protect,
-  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
-  validateIdParam,
-  validateUpdateApprovedQuantities,
-  updateApprovedQuantities
-);
+/*
+ * --------------------------------------------------------------------------
+ * Admin pending approval
+ * --------------------------------------------------------------------------
+ */
 
 router.get(
-  "/admin/pending-approval",
-  protect,
-  authorizeAccess(MODULE, "indent_all_center", "indent_own_center"),
-  getPendingAdminApprovalTransfers
+    "/admin/pending-approval",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "indent_all_center",
+        "indent_own_center"
+    ),
+    attachAuthorizationContext(MODULE),
+    getPendingAdminApprovalTransfers
 );
 
 export default router;

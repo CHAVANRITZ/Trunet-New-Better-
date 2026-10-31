@@ -1,4 +1,4 @@
-import express from "express";
+﻿import express from "express";
 import {
   createStockClosing,
   getAllStockClosings,
@@ -8,7 +8,8 @@ import {
   updateStockClosingStatus,
   getMonthlyStockClosingStatus
 } from "../controllers/reportSubmissionController.js";
-import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
+import { authMiddleware as protect } from "../middlewares/authMiddleware.js";
+import { authorizeAccess } from "../middlewares/authorizationMiddleware.js";
 
 const router = express.Router();
 
@@ -30,6 +31,11 @@ router.get(
 router.get(
   "/monthly-submission-status",
   protect,
+  authorizeAccess(
+    MODULE,
+    "view_closing_stock_own_center",
+    "view_closing_stock_all_center"
+  ),
   getMonthlyStockClosingStatus
 );
 router.get(
@@ -60,3 +66,5 @@ router.delete(
 );
 
 export default router;
+
+

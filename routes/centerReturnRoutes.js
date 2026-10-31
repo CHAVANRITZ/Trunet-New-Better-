@@ -1,12 +1,16 @@
 
 import express from "express";
-import {
-  // acceptCenterReturn,
-  createCenterReturn,
-} from "../controllers/centerReturnController.js";
-import { protect } from "../middlewares/authMiddleware.js";
+import { createCenterReturn } from "../controllers/centerReturnController.js";
+import { authMiddleware } from "../middlewares/authMiddleware.js";
+import { authorizeAccess } from "../middlewares/authorizationMiddleware.js";
 
 const router = express.Router();
-router.post("/",protect, createCenterReturn);
-// router.put("/:returnId/accept", protect, acceptCenterReturn)
+
+router.post(
+  "/",
+  authMiddleware,
+  authorizeAccess("CenterReturn", "create_center_return"),
+  createCenterReturn
+);
+
 export default router;

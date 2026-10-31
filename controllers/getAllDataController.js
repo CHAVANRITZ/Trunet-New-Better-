@@ -1,201 +1,180 @@
-// import Building from '../models/Building.js';
-// import Customer from "../models/Customer.js";
-// import Center from "../models/Center.js";
-
-// export const getAllData = async (req, res) => {
-//   try {
-
-//     const [buildings, customers, centers] = await Promise.all([
-//       Building.find()
-//         .select('buildingName _id center')
-//         .populate('center', 'centerName centerCode _id')
-//         .lean(),
-
-//       Customer.find()
-//         .select('username name _id center')
-//         .populate('center', 'centerName centerCode _id')
-//         .lean(),
-      
-//       Center.find()
-//         .select('centerName centerCode _id')
-//         .lean()
-//     ]);
-
-//     const transformedData = {
-//       buildings: buildings.map(building => ({
-//         id: building._id,
-//         name: building.buildingName,
-//         center: building.center ? {
-//           id: building.center._id,
-//           name: building.center.centerName
-//         } : null
-//       })),
-      
-//       customers: customers.map(customer => ({
-//         id: customer._id,
-//         name: customer.name,
-//         username: customer.username,
-//         center: customer.center ? {
-//           id: customer.center._id,
-//           name: customer.center.centerName
-//         } : null
-//       })),
-      
-//       centers: centers.map(center => ({
-//         id: center._id,
-//         name: center.centerName,
-//         code: center.centerCode
-//       }))
-//     };
-
-//     return res.status(200).json({
-//       success: true,
-//       data: transformedData,
-//       counts: {
-//         buildings: transformedData.buildings.length,
-//         customers: transformedData.customers.length,
-//         centers: transformedData.centers.length
-//       }
-//     });
-
-//   } catch (error) {
-//     console.error("Error fetching data:", error);
-//     return res.status(500).json({
-//       success: false,
-//       message: "Failed to fetch data",
-//       error: error.message
-//     });
-//   }
-// };
-
-
-
-
-import Building from '../models/Building.js';
+import Building from "../models/Building.js";
 import Customer from "../models/Customer.js";
 import Center from "../models/Center.js";
 
 export const getAllData = async (req, res) => {
   try {
-  
-    const userPermissions = req.user.role?.permissions || [];
-  
-    const customerModule = userPermissions.find(
-      (perm) => perm.module === "Customer"
+    // Authentication middleware attaches the role and full user to req.user.
+    const role = req.user?.role;
+    const fullUser = req.user?.fullUser;
+
+    if (!role || !fullUser) {
+      return res.status(401).json({
+        success: false,
+        message: "Authenticated user information is missing.",
+      });
+    }
+
+    const userPermissions = Array.isArray(role.permissions)
+      ? role.permissions
+      : [];
+
+    const getModulePermissions = (moduleName) => {
+      const module = userPermissions.find(
+        (permission) => permission.module === moduleName
+      );
+
+      return Array.isArray(module?.permissions)
+        ? module.permissions
+        : [];
+    };
+
+    const customerPermissions = getModulePermissions("Customer");
+    const centerPermissions = getModulePermissions("Center");
+    const settingsPermissions = getModulePermissions("Settings");
+
+    const canViewAllCustomers = customerPermissions.includes(
+      "view_customer_all_center"
     );
-    const centerModule = userPermissions.find(
-      (perm) => perm.module === "Center"
-    );
-    const settingsModule = userPermissions.find(
-      (perm) => perm.module === "Settings"
+    const canViewOwnCustomers = customerPermissions.includes(
+      "view_customer_own_center"
     );
 
-    const canViewAllCustomers = customerModule && 
-      customerModule.permissions.includes("view_customer_all_center");
-    const canViewOwnCustomers = customerModule && 
-      customerModule.permissions.includes("view_customer_own_center");
-    
-    const canViewAllCenters = centerModule && 
-      centerModule.permissions.includes("view_all_center");
-    const canViewOwnCenters = centerModule && 
-      centerModule.permissions.includes("view_own_center");
-    
-    const canViewAllBuildings = settingsModule && 
-      settingsModule.permissions.includes("view_building_all_center");
-    const canViewOwnBuildings = settingsModule && 
-      settingsModule.permissions.includes("view_building_own_center");
+    const canViewAllCenters = centerPermissions.includes("view_all_center");
+    const canViewOwnCenters = centerPermissions.includes("view_own_center");
 
-    const hasCustomerPermission = canViewAllCustomers || canViewOwnCustomers;
-    const hasCenterPermission = canViewAllCenters || canViewOwnCenters;
-    const hasBuildingPermission = canViewAllBuildings || canViewOwnBuildings;
+    const canViewAllBuildings = settingsPermissions.includes(
+      "view_building_all_center"
+    );
+    const canViewOwnBuildings = settingsPermissions.includes(
+      "view_building_own_center"
+    );
+
+    const hasCustomerPermission =
+      canViewAllCustomers || canViewOwnCustomers;
+    const hasCenterPermission =
+      canViewAllCenters || canViewOwnCenters;
+    const hasBuildingPermission =
+      canViewAllBuildings || canViewOwnBuildings;
+
+    // The new auth middleware stores the database user in fullUser.
+    const userCenterId =
+      req.selectedCenterId ||
+      fullUser.center?._id ||
+      fullUser.center ||
+      null;
 
     const buildingFilter = {};
     const customerFilter = {};
     const centerFilter = {};
 
-    const userCenterId = req.user.center?._id || req.user.center;
-
-    if (hasBuildingPermission) {
-      if (canViewOwnBuildings && !canViewAllBuildings && userCenterId) {
-        buildingFilter.center = userCenterId;
+    // Apply center restrictions for own-center-only access.
+    if (hasBuildingPermission && !canViewAllBuildings) {
+      if (!userCenterId) {
+        return res.status(403).json({
+          success: false,
+          message: "User is not assigned to a center.",
+        });
       }
+
+      buildingFilter.center = userCenterId;
     }
 
-    if (hasCustomerPermission) {
-      if (canViewOwnCustomers && !canViewAllCustomers && userCenterId) {
-        customerFilter.center = userCenterId;
+    if (hasCustomerPermission && !canViewAllCustomers) {
+      if (!userCenterId) {
+        return res.status(403).json({
+          success: false,
+          message: "User is not assigned to a center.",
+        });
       }
+
+      customerFilter.center = userCenterId;
     }
 
-    if (hasCenterPermission) {
-      if (canViewOwnCenters && !canViewAllCenters && userCenterId) {
-        centerFilter._id = userCenterId;
+    if (hasCenterPermission && !canViewAllCenters) {
+      if (!userCenterId) {
+        return res.status(403).json({
+          success: false,
+          message: "User is not assigned to a center.",
+        });
       }
+
+      centerFilter._id = userCenterId;
     }
 
-    const [buildings, customers, centers] = await Promise.all([
-      hasBuildingPermission ? 
-        Building.find(buildingFilter)
-          .select('buildingName _id center')
-          .populate('center', 'centerName centerCode _id')
-          .lean() : Promise.resolve([]),
-
-      hasCustomerPermission ? 
-        Customer.find(customerFilter)
-          .select('username name _id center')
-          .populate('center', 'centerName centerCode _id')
-          .lean() : Promise.resolve([]),
-      
-      hasCenterPermission ? 
-        Center.find(centerFilter)
-          .select('centerName centerCode _id')
-          .lean() : Promise.resolve([])
-    ]);
-
-    const transformedData = {
-      buildings: buildings.map(building => ({
-        id: building._id,
-        name: building.buildingName,
-        center: building.center ? {
-          id: building.center._id,
-          name: building.center.centerName
-        } : null
-      })),
-      
-      customers: customers.map(customer => ({
-        id: customer._id,
-        name: customer.name,
-        username: customer.username,
-        center: customer.center ? {
-          id: customer.center._id,
-          name: customer.center.centerName
-        } : null
-      })),
-      
-      centers: centers.map(center => ({
-        id: center._id,
-        name: center.centerName,
-        code: center.centerCode
-      }))
-    };
-    const hasAnyData = hasBuildingPermission || hasCustomerPermission || hasCenterPermission;
-    
-    if (!hasAnyData) {
+    if (
+      !hasBuildingPermission &&
+      !hasCustomerPermission &&
+      !hasCenterPermission
+    ) {
       return res.status(403).json({
         success: false,
         message: "Access denied. No permissions to view any data.",
         data: {
           buildings: [],
           customers: [],
-          centers: []
+          centers: [],
         },
         counts: {
           buildings: 0,
           customers: 0,
-          centers: 0
-        }
+          centers: 0,
+        },
       });
     }
+
+    const [buildings, customers, centers] = await Promise.all([
+      hasBuildingPermission
+        ? Building.find(buildingFilter)
+            .select("buildingName _id center")
+            .populate("center", "centerName centerCode _id")
+            .lean()
+        : Promise.resolve([]),
+
+      hasCustomerPermission
+        ? Customer.find(customerFilter)
+            .select("username name _id center")
+            .populate("center", "centerName centerCode _id")
+            .lean()
+        : Promise.resolve([]),
+
+      hasCenterPermission
+        ? Center.find(centerFilter)
+            .select("centerName centerCode _id")
+            .lean()
+        : Promise.resolve([]),
+    ]);
+
+    const transformedData = {
+      buildings: buildings.map((building) => ({
+        id: building._id,
+        name: building.buildingName,
+        center: building.center
+          ? {
+              id: building.center._id,
+              name: building.center.centerName,
+            }
+          : null,
+      })),
+
+      customers: customers.map((customer) => ({
+        id: customer._id,
+        name: customer.name,
+        username: customer.username,
+        center: customer.center
+          ? {
+              id: customer.center._id,
+              name: customer.center.centerName,
+            }
+          : null,
+      })),
+
+      centers: centers.map((center) => ({
+        id: center._id,
+        name: center.centerName,
+        code: center.centerCode,
+      })),
+    };
 
     return res.status(200).json({
       success: true,
@@ -203,7 +182,7 @@ export const getAllData = async (req, res) => {
       counts: {
         buildings: transformedData.buildings.length,
         customers: transformedData.customers.length,
-        centers: transformedData.centers.length
+        centers: transformedData.centers.length,
       },
       permissions: {
         buildings: hasBuildingPermission,
@@ -212,22 +191,25 @@ export const getAllData = async (req, res) => {
         viewAll: {
           buildings: canViewAllBuildings,
           customers: canViewAllCustomers,
-          centers: canViewAllCenters
+          centers: canViewAllCenters,
         },
         viewOwn: {
           buildings: canViewOwnBuildings,
           customers: canViewOwnCustomers,
-          centers: canViewOwnCenters
-        }
-      }
+          centers: canViewOwnCenters,
+        },
+      },
     });
-
   } catch (error) {
-    console.error("Error fetching data:", error);
+    console.error("Get all available data error:", error);
+
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch data",
-      error: error.message
+      message: "Failed to fetch available data.",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
     });
   }
 };

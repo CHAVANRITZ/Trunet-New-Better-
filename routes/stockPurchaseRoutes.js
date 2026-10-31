@@ -1,157 +1,204 @@
 import express from "express";
-import {
-  createStockPurchase,
-  getAllStockPurchases,
-  getStockPurchaseById,
-  getAllProductsWithStock,
-  updateStockPurchase,
-  deleteStockPurchase,
-  getPurchasesByVendor,
-  getAvailableStock,
-  getOutletStockSummary,
-  getOutletSerialNumbers,
-  updateOutletSerialNumber,
-  deleteOutletSerialNumber,
-} from "../controllers/stockPurchaseController.js";
-import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
 import {
-  validateCreateStockPurchase,
-  validateUpdateStockPurchase,
-  validateIdParam,
-  validateVendorIdParam,
-  validateCenterIdParam,
-  validateStockPurchaseQuery,
-  validateProductQuery,
-  validateStockAvailabilityParams,
-  validateUpdateOutletSerial,
-  validateDeleteOutletSerial,
-} from "../validations/stockPurchaseValidations.js";
+    createStockPurchase,
+    getAllStockPurchases,
+    getStockPurchaseById,
+    getAllProductsWithStock,
+    updateStockPurchase,
+    deleteStockPurchase,
+    getPurchasesByVendor,
+    getAvailableStock,
+    getOutletStockSummary,
+    getOutletSerialNumbers,
+    updateOutletSerialNumber,
+    deleteOutletSerialNumber,
+} from "../controllers/stockPurchaseController.js";
+
+import { authMiddleware } from "../middlewares/authMiddleware.js";
+import {
+    authorizeAccess,
+} from "../middlewares/authorizationMiddleware.js";
+
+import { validationMiddleware } from "../middlewares/validationMiddleware.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+
+import {
+    createStockPurchaseValidator,
+    updateStockPurchaseValidator,
+    stockPurchaseIdValidator,
+    getStockPurchasesValidator,
+    vendorIdValidator,
+    productQueryValidator,
+    stockAvailabilityValidator,
+} from "../validators/stockPurchaseValidator.js";
 
 const router = express.Router();
 
 const MODULE = "Purchase";
 
+const ADD_PURCHASE_STOCK = "add_purchase_stock";
+const VIEW_OWN_PURCHASE_STOCK = "view_own_purchase_stock";
+const VIEW_ALL_PURCHASE_STOCK = "view_all_purchase_stock";
+
+/*
+ * Create Stock Purchase
+ */
 router.post(
-  "/",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "add_purchase_stock"
-  ),
-  validateCreateStockPurchase,
-  createStockPurchase
+    "/",
+    authMiddleware,
+    authorizeAccess(MODULE, ADD_PURCHASE_STOCK),
+    createStockPurchaseValidator,
+    validationMiddleware,
+    asyncHandler(createStockPurchase)
 );
 
+/*
+ * Get All Stock Purchases
+ */
 router.get(
-  "/",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "view_own_purchase_stock",
-    "view_all_purchase_stock"
-  ),
-  validateStockPurchaseQuery,
-  getAllStockPurchases
+    "/",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        VIEW_OWN_PURCHASE_STOCK,
+        VIEW_ALL_PURCHASE_STOCK
+    ),
+    getStockPurchasesValidator,
+    validationMiddleware,
+    asyncHandler(getAllStockPurchases)
 );
 
+/*
+ * Get Products With Stock
+ */
 router.get(
-  "/products/with-stock",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "view_own_purchase_stock",
-    "view_all_purchase_stock"
-  ),
-  validateProductQuery,
-  getAllProductsWithStock
+    "/products/with-stock",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        VIEW_OWN_PURCHASE_STOCK,
+        VIEW_ALL_PURCHASE_STOCK
+    ),
+    productQueryValidator,
+    validationMiddleware,
+    asyncHandler(getAllProductsWithStock)
 );
 
+/*
+ * Get Available Stock For Product
+ */
 router.get(
-  "/stock/available/:productId",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "view_own_purchase_stock",
-    "view_all_purchase_stock"
-  ),
-  validateStockAvailabilityParams,
-  getAvailableStock
+    "/stock/available/:productId",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        VIEW_OWN_PURCHASE_STOCK,
+        VIEW_ALL_PURCHASE_STOCK
+    ),
+    stockAvailabilityValidator,
+    validationMiddleware,
+    asyncHandler(getAvailableStock)
 );
 
+/*
+ * Get Stock Purchase By ID
+ */
 router.get(
-  "/:id",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "view_own_purchase_stock",
-    "view_all_purchase_stock"
-  ),
-  validateIdParam,
-  getStockPurchaseById
+    "/:id",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        VIEW_OWN_PURCHASE_STOCK,
+        VIEW_ALL_PURCHASE_STOCK
+    ),
+    stockPurchaseIdValidator,
+    validationMiddleware,
+    asyncHandler(getStockPurchaseById)
 );
 
+/*
+ * Update Stock Purchase
+ */
 router.put(
-  "/:id",
-  protect,
-  validateUpdateStockPurchase,
-  updateStockPurchase
+    "/:id",
+    authMiddleware,
+    updateStockPurchaseValidator,
+    validationMiddleware,
+    asyncHandler(updateStockPurchase)
 );
 
+/*
+ * Delete Stock Purchase
+ */
 router.delete(
-  "/:id",
-  protect,
-  validateIdParam,
-  deleteStockPurchase
+    "/:id",
+    authMiddleware,
+    stockPurchaseIdValidator,
+    validationMiddleware,
+    asyncHandler(deleteStockPurchase)
 );
 
+/*
+ * Get Purchases By Vendor
+ */
 router.get(
-  "/vendor/:vendorId",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "view_own_purchase_stock",
-    "view_all_purchase_stock"
-  ),
-  validateVendorIdParam,
-  getPurchasesByVendor
+    "/vendor/:vendorId",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        VIEW_OWN_PURCHASE_STOCK,
+        VIEW_ALL_PURCHASE_STOCK
+    ),
+    vendorIdValidator,
+    validationMiddleware,
+    asyncHandler(getPurchasesByVendor)
 );
 
+/*
+ * Get Outlet Stock Summary
+ */
 router.get(
-  "/stock/outlet-summary",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "view_own_purchase_stock",
-    "view_all_purchase_stock"
-  ),
-  getOutletStockSummary
+    "/stock/outlet-summary",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        VIEW_OWN_PURCHASE_STOCK,
+        VIEW_ALL_PURCHASE_STOCK
+    ),
+    asyncHandler(getOutletStockSummary)
 );
 
+/*
+ * Get Outlet Serial Numbers
+ */
 router.get(
-  "/serial-numbers/product/:outletId/:productId",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "view_own_purchase_stock",
-    "view_all_purchase_stock"
-  ),
-  getOutletSerialNumbers
+    "/serial-numbers/product/:outletId/:productId",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        VIEW_OWN_PURCHASE_STOCK,
+        VIEW_ALL_PURCHASE_STOCK
+    ),
+    asyncHandler(getOutletSerialNumbers)
 );
 
-
+/*
+ * Update Outlet Serial Number
+ */
 router.put(
-  "/serial-numbers/product/:productId/serial/:serialNumber",
-  protect,
-  validateUpdateOutletSerial,
-  updateOutletSerialNumber
+    "/serial-numbers/product/:productId/serial/:serialNumber",
+    authMiddleware,
+    asyncHandler(updateOutletSerialNumber)
 );
 
+/*
+ * Delete Outlet Serial Number
+ */
 router.delete(
-  "/serial-numbers/product/:productId/serial/:serialNumber",
-  protect,
-  validateDeleteOutletSerial,
-  deleteOutletSerialNumber
+    "/serial-numbers/product/:productId/serial/:serialNumber",
+    authMiddleware,
+    asyncHandler(deleteOutletSerialNumber)
 );
 
 export default router;

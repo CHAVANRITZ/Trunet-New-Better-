@@ -1,42 +1,53 @@
-import express from "express";
+﻿import express from "express";
+
 import {
   getCenterAllStock,
   getAllAvailableProductsWithStock,
-  getStockUsageByCenter
+  getStockUsageByCenter,
 } from "../controllers/availableReportController.js";
-import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
-import { getResellerAvailableStock } from "../controllers/resellerStockController.js";
+
+import { authMiddleware } from "../middlewares/authMiddleware.js";
+import { getResellerStockList } from "../controllers/resellerStockController.js";
+import {
+  authorizeAccess,
+  attachAuthorizationContext,
+} from "../middlewares/authorizationMiddleware.js";
 
 const router = express.Router();
+
 const MODULE = "Available Stock";
+
+const viewPermissions = [
+  "available_stock_own_center",
+  "available_stock_all_center",
+];
+
+const authorizeAvailableStock = (...permissions) => [
+  authMiddleware,
+  authorizeAccess(MODULE, ...permissions),
+  attachAuthorizationContext(MODULE),
+];
 
 router.get(
   "/centerstock",
-  protect,
-  authorizeAccess(MODULE, "available_stock_own_center", "available_stock_all_center"),
+  ...authorizeAvailableStock(...viewPermissions),
   getCenterAllStock
 );
 
 router.get(
-  "/availablestock",
-  protect,
-  authorizeAccess(MODULE, "available_stock_own_center", "available_stock_all_center"),
+  "/availableStock",
+  ...authorizeAvailableStock(...viewPermissions),
   getAllAvailableProductsWithStock
 );
 
 router.get(
   "/transactions",
-  protect,
-  authorizeAccess(MODULE, "available_stock_own_center", "available_stock_all_center"),
+  ...authorizeAvailableStock(...viewPermissions),
   getStockUsageByCenter
 );
-
 router.get(
   "/reseller",
-  protect,
-  authorizeAccess(MODULE, "available_stock_own_center", "available_stock_all_center"),
-  // getResellerProductsWithStock
-  getResellerAvailableStock
+  ...authorizeAvailableStock(...viewPermissions),
+  getResellerStockList
 );
-
 export default router;

@@ -1,74 +1,96 @@
 import express from "express";
+
 import {
-  createBuilding,
-  getBuildings,
-  getBuildingById,
-  updateBuilding,
-  deleteBuilding,
+    createBuilding,
+    getBuildings,
+    getBuildingById,
+    updateBuilding,
+    deleteBuilding,
 } from "../controllers/buildingController.js";
+
+import { authMiddleware } from "../middlewares/authMiddleware.js";
+import { authorizeAccess } from "../middlewares/authorizationMiddleware.js";
+
 import {
-  createBuildingValidator,
-  updateBuildingValidator,
-  buildingIdValidator,
-} from "../validations/buildingValidator.js";
-import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
+    createBuildingValidator,
+    updateBuildingValidator,
+    buildingIdValidator,
+} from "../validators/buildingValidator.js";
 
 const router = express.Router();
+
 const MODULE = "Settings";
 
+// Protect every Building route.
+router.use(authMiddleware);
+
+/**
+ * Create Building
+ */
 router.post(
-  "/",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "manage_building_all_center",
-    "manage_building_own_center"
-  ),
-  createBuildingValidator,
-  createBuilding
+    "/",
+    authorizeAccess(
+        MODULE,
+        "manage_building_all_center",
+        "manage_building_own_center"
+    ),
+    createBuildingValidator,
+    createBuilding
 );
+
+/**
+ * Get all Buildings
+ */
 router.get(
-  "/",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "view_building_own_center",
-    "view_building_all_center"
-  ),
-  getBuildings
+    "/",
+    authorizeAccess(
+        MODULE,
+        "view_building_own_center",
+        "view_building_all_center"
+    ),
+    getBuildings
 );
+
+/**
+ * Get Building by ID
+ */
 router.get(
-  "/:id",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "view_building_own_center",
-    "view_building_all_center"
-  ),
-  buildingIdValidator,
-  getBuildingById
+    "/:id",
+    authorizeAccess(
+        MODULE,
+        "view_building_own_center",
+        "view_building_all_center"
+    ),
+    buildingIdValidator,
+    getBuildingById
 );
+
+/**
+ * Update Building
+ */
 router.put(
-  "/:id",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "manage_building_all_center",
-    "manage_building_own_center"
-  ),
-  updateBuildingValidator,
-  updateBuilding
+    "/:id",
+    authorizeAccess(
+        MODULE,
+        "manage_building_own_center",
+        "manage_building_all_center"
+    ),
+    updateBuildingValidator,
+    updateBuilding
 );
+
+/**
+ * Delete Building
+ */
 router.delete(
-  "/:id",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "manage_building_all_center",
-    "manage_building_own_center"
-  ),
-  buildingIdValidator,
-  deleteBuilding
+    "/:id",
+    authorizeAccess(
+        MODULE,
+        "manage_building_all_center",
+        "manage_building_own_center"
+    ),
+    buildingIdValidator,
+    deleteBuilding
 );
 
 export default router;

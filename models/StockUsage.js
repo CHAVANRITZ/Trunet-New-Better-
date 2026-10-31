@@ -53,7 +53,7 @@ const stockUsageSchema = new mongoose.Schema(
     },
     onuCharges: {
       type: Number,
-      default: 0,    
+      default: 0,
     },
     installationCharges: {
       type: Number,
@@ -184,7 +184,7 @@ const stockUsageSchema = new mongoose.Schema(
 );
 
 stockUsageSchema.index({ center: 1, date: -1 });
-stockUsageSchema.index({ toCenter: 1 }); 
+stockUsageSchema.index({ toCenter: 1 });
 stockUsageSchema.index({ usageType: 1 });
 stockUsageSchema.index({ customer: 1 });
 stockUsageSchema.index({ fromBuilding: 1 });
@@ -414,7 +414,7 @@ stockUsageSchema.methods.reserveStockForDamage = async function () {
             serial.consumedBy = this.createdBy;
             serial.transferHistory.push({
               fromCenter: this.center,
-              toCenter: this.toCenter, 
+              toCenter: this.toCenter,
               transferDate: new Date(),
               transferType: "damage_reserved",
               usageType: this.usageType,
@@ -741,9 +741,9 @@ stockUsageSchema.methods.cancelStockUsage = async function () {
 
 //       if (faultyStock) {
 
-//         if (faultyStock.overallStatus === "damaged" || 
-//             faultyStock.overallStatus === "under_repair" || 
-//             faultyStock.overallStatus === "repaired" || 
+//         if (faultyStock.overallStatus === "damaged" ||
+//             faultyStock.overallStatus === "under_repair" ||
+//             faultyStock.overallStatus === "repaired" ||
 //             faultyStock.overallStatus === "irreparable") {
 
 //           if (product.trackSerialNumber === "Yes" && item.serialNumbers) {
@@ -752,16 +752,16 @@ stockUsageSchema.methods.cancelStockUsage = async function () {
 //               const serialInFaulty = faultyStock.serialNumbers.find(
 //                 sn => sn.serialNumber === serialNumber
 //               );
-              
-//               if (serialInFaulty && 
-//                   (serialInFaulty.status === "damaged" || 
-//                    serialInFaulty.status === "under_repair" || 
-//                    serialInFaulty.status === "repaired" || 
+
+//               if (serialInFaulty &&
+//                   (serialInFaulty.status === "damaged" ||
+//                    serialInFaulty.status === "under_repair" ||
+//                    serialInFaulty.status === "repaired" ||
 //                    serialInFaulty.status === "irreparable")) {
 //                 acceptedSerials.push(serialNumber);
 //               }
 //             }
-            
+
 //             if (acceptedSerials.length > 0) {
 //               throw new Error(
 //                 `Cannot revert product with serial number(s): ${acceptedSerials.join(', ')}. ` +
@@ -775,7 +775,7 @@ stockUsageSchema.methods.cancelStockUsage = async function () {
 //             );
 //           }
 //         }
-        
+
 //         console.log(`Faulty stock status: ${faultyStock.overallStatus} - Proceeding with reversion`);
 //       }
 
@@ -811,7 +811,7 @@ stockUsageSchema.methods.cancelStockUsage = async function () {
 //             if (!serial.transferHistory) {
 //               serial.transferHistory = [];
 //             }
-            
+
 //             serial.transferHistory.push({
 //               fromCenter: this.center,
 //               toCenter: this.center,
@@ -823,7 +823,7 @@ stockUsageSchema.methods.cancelStockUsage = async function () {
 //             });
 //           } else {
 //             const purchaseId = null;
-            
+
 //             centerStock.serialNumbers.push({
 //               serialNumber: serialNumber,
 //               purchaseId: purchaseId,
@@ -852,7 +852,7 @@ stockUsageSchema.methods.cancelStockUsage = async function () {
 //           0,
 //           (centerStock.damagedQuantity || 0) - item.quantity
 //         );
-    
+
 //         if (centerStock.totalQuantity !== undefined) {
 //           centerStock.totalQuantity = (centerStock.totalQuantity || 0) + item.quantity;
 //         }
@@ -878,7 +878,7 @@ stockUsageSchema.methods.cancelStockUsage = async function () {
 //           faultyStock.serialNumbers = faultyStock.serialNumbers.filter(
 //             sn => !item.serialNumbers.includes(sn.serialNumber)
 //           );
-          
+
 //           if (faultyStock.serialNumbers.length === 0) {
 //             await FaultyStock.findByIdAndDelete(faultyStock._id);
 //             console.log(`✓ Deleted faulty stock entry as all serials were reverted`);
@@ -893,7 +893,7 @@ stockUsageSchema.methods.cancelStockUsage = async function () {
 //             if (typeof faultyStock.updateQuantitiesAndStatus === 'function') {
 //               faultyStock.updateQuantitiesAndStatus();
 //             }
-            
+
 //             await faultyStock.save();
 //             console.log(`✓ Updated faulty stock, removed reverted serials`);
 //           }
@@ -909,7 +909,7 @@ stockUsageSchema.methods.cancelStockUsage = async function () {
 //           center: this.center,
 //           toCenter: this.toCenter
 //         });
-        
+
 //         if (altFaultyStock) {
 //           console.log(`✓ Removed faulty stock entry via alternative query`);
 //         }
@@ -923,7 +923,7 @@ stockUsageSchema.methods.cancelStockUsage = async function () {
 //     await this.save();
 
 //     console.log("✓ Damage entry reverted successfully");
-    
+
 //     return {
 //       success: true,
 //       message: "Damage entry reverted successfully. Stock restored and faulty stock removed."
@@ -961,7 +961,7 @@ stockUsageSchema.methods.revertDamage = async function (revertedBy, revertRemark
 
       if (faultyStock) {
         console.log(`Found pending_damage faulty stock: ${faultyStock._id}`);
-        
+
         // Check if this specific item can be reverted (only pending_damage)
         if (product.trackSerialNumber === "Yes" && item.serialNumbers && item.serialNumbers.length > 0) {
           // For serialized products, check each serial number is in pending_damage
@@ -972,7 +972,7 @@ stockUsageSchema.methods.revertDamage = async function (revertedBy, revertRemark
             const serialInFaulty = faultyStock.serialNumbers.find(
               sn => sn.serialNumber === serialNumber
             );
-            
+
             if (serialInFaulty && serialInFaulty.status === "pending_damage") {
               validSerials.push(serialNumber);
             } else if (serialInFaulty) {
@@ -1003,11 +1003,11 @@ stockUsageSchema.methods.revertDamage = async function (revertedBy, revertRemark
                 if (entry.status === "pending" && entry.serialNumbers && entry.serialNumbers.length > 0) {
                   // Check if this entry contains any of the reverted serials
                   const hasRevertedSerials = entry.serialNumbers.some(sn => validSerials.includes(sn));
-                  
+
                   if (hasRevertedSerials) {
                     // Remove reverted serials from this entry
                     entry.serialNumbers = entry.serialNumbers.filter(sn => !validSerials.includes(sn));
-                    
+
                     // If entry has no serials left, mark it as rejected
                     if (entry.serialNumbers.length === 0) {
                       entry.status = "rejected";
@@ -1052,9 +1052,9 @@ stockUsageSchema.methods.revertDamage = async function (revertedBy, revertRemark
 
               for (const entry of pendingEntries) {
                 if (remainingToRevert <= 0) break;
-                
+
                 const entryQuantity = entry.quantity || 0;
-                
+
                 if (entryQuantity <= remainingToRevert) {
                   // Revert this entire entry
                   entry.status = "rejected";
@@ -1072,7 +1072,7 @@ stockUsageSchema.methods.revertDamage = async function (revertedBy, revertRemark
 
             // Update faulty stock
             faultyStock.updateQuantitiesAndStatus();
-            
+
             // If all quantities are zero, delete the record
             if (faultyStock.quantity === 0 && faultyStock.pendingDamageQty === 0) {
               await FaultyStock.findByIdAndDelete(faultyStock._id);
@@ -1123,7 +1123,7 @@ stockUsageSchema.methods.revertDamage = async function (revertedBy, revertRemark
               if (!serial.transferHistory) {
                 serial.transferHistory = [];
               }
-              
+
               serial.transferHistory.push({
                 fromCenter: this.center,
                 toCenter: this.center,
@@ -1162,7 +1162,7 @@ stockUsageSchema.methods.revertDamage = async function (revertedBy, revertRemark
             0,
             (centerStock.damagedQuantity || 0) - item.serialNumbers.length
           );
-          
+
           if (centerStock.totalQuantity !== undefined) {
             centerStock.totalQuantity = (centerStock.totalQuantity || 0) + item.serialNumbers.length;
           }
@@ -1184,7 +1184,7 @@ stockUsageSchema.methods.revertDamage = async function (revertedBy, revertRemark
         console.log(`✓ Center stock updated for product: ${item.product}`);
       } else {
         console.log(`No pending_damage faulty stock found for product: ${item.product}`);
-        
+
         // Even if no faulty stock, we can still restore center stock if needed
         // This handles cases where the faulty stock might have been deleted already
         let centerStock = await CenterStock.findOne({
@@ -1217,7 +1217,7 @@ stockUsageSchema.methods.revertDamage = async function (revertedBy, revertRemark
                 });
               }
             }
-            
+
             centerStock.availableQuantity = (centerStock.availableQuantity || 0) + item.serialNumbers.length;
             centerStock.consumedQuantity = Math.max(0, (centerStock.consumedQuantity || 0) - item.serialNumbers.length);
             centerStock.damagedQuantity = Math.max(0, (centerStock.damagedQuantity || 0) - item.serialNumbers.length);
@@ -1226,13 +1226,13 @@ stockUsageSchema.methods.revertDamage = async function (revertedBy, revertRemark
             centerStock.consumedQuantity = Math.max(0, (centerStock.consumedQuantity || 0) - item.quantity);
             centerStock.damagedQuantity = Math.max(0, (centerStock.damagedQuantity || 0) - item.quantity);
           }
-          
+
           await centerStock.save();
           console.log(`✓ Center stock updated for product: ${item.product} (no pending_damage faulty stock)`);
         }
       }
     }
-    
+
     // Update the stock usage record
     this.status = "cancelled";
     this.revertedBy = revertedBy;
@@ -1241,7 +1241,7 @@ stockUsageSchema.methods.revertDamage = async function (revertedBy, revertRemark
     await this.save();
 
     console.log("✓ Damage entry reverted successfully");
-    
+
     return {
       success: true,
       message: "Damage entry reverted successfully. Only pending_damage items were reverted."

@@ -37,7 +37,7 @@ const stockRequestSchema = new mongoose.Schema(
       unique: true,
       trim: true,
     },
-    
+
     challanNo: {
       type: String,
       unique: true,
@@ -120,25 +120,25 @@ const stockRequestSchema = new mongoose.Schema(
         ],
         sourceBreakdown: {
           fromReseller: {
-            quantity: { 
-              type: Number, 
+            quantity: {
+              type: Number,
               default: 0,
               min: 0
             },
-            serials: [{ 
+            serials: [{
               type: String,
-              trim: true 
+              trim: true
             }],
           },
           fromOutlet: {
-            quantity: { 
-              type: Number, 
+            quantity: {
+              type: Number,
               default: 0,
               min: 0
             },
-            serials: [{ 
+            serials: [{
               type: String,
-              trim: true 
+              trim: true
             }],
           },
           totalApproved: {
@@ -186,7 +186,7 @@ const stockRequestSchema = new mongoose.Schema(
         type: String,
         trim: true,
       },
-    
+
       warehouseChallanApprovedAt: {
         type: Date,
       },
@@ -274,7 +274,7 @@ const stockRequestSchema = new mongoose.Schema(
         }
       ]
     },
-    
+
     rejectionInfo: {
       rejectedAt: {
         type: Date,
@@ -308,7 +308,7 @@ const stockRequestSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
-    
+
 invoiceInfo: {
   invoiceRaised: {
     type: Boolean,
@@ -332,7 +332,7 @@ invoiceInfo: {
   invoiceCancelledAt: Date,
   invoiceCancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   invoiceCancellationReason: String
-  
+
 }
   },
   {
@@ -379,7 +379,7 @@ stockRequestSchema.statics.generateChallanNumber = async function () {
   const lastChallan = await this.findOne({
     challanNo: new RegExp(`^${prefix}`)
   }).sort({ challanNo: -1 });
-  
+
   let sequence = 1;
   if (lastChallan && lastChallan.challanNo) {
     const lastSequence = parseInt(lastChallan.challanNo.split('/').pop());
@@ -387,7 +387,7 @@ stockRequestSchema.statics.generateChallanNumber = async function () {
       sequence = lastSequence + 1;
     }
   }
-  
+
   return `${prefix}${sequence.toString().padStart(4, '0')}`;
 };
 
@@ -399,10 +399,10 @@ stockRequestSchema.methods.approveRequest = async function (
   this.status = "Confirmed";
   this.approvalInfo.approvedBy = approvedBy;
   this.approvalInfo.approvedAt = new Date();
- 
+
   const StockRequest = mongoose.model("StockRequest");
   this.challanNo = await StockRequest.generateChallanNumber();
-  this.challanDate = new Date(); 
+  this.challanDate = new Date();
 
   if (productApprovals.length > 0) {
     this.products.forEach((product, index) => {
@@ -506,13 +506,13 @@ stockRequestSchema.methods.transferStockToCenter = async function (
         if (tracksSerialNumbers && Array.isArray(fromReseller.serials)) {
           // Get serials from reseller
           resellerSerialsToTransfer = fromReseller.serials.slice(0, resellerQtyToTransfer);
-          
+
           // Verify serials are available in reseller stock
           for (const serialNumber of resellerSerialsToTransfer) {
             const serial = resellerStock.serialNumbers.find(
               sn => sn.serialNumber === serialNumber && sn.status === "available"
             );
-            
+
             if (!serial) {
               throw new Error(`Serial number ${serialNumber} not available in reseller stock for product "${productDoc?.productTitle}"`);
             }
@@ -522,7 +522,7 @@ stockRequestSchema.methods.transferStockToCenter = async function (
             serial.consumedDate = new Date();
             serial.consumedBy = transferredBy;
             serial.currentLocation = this.center;
-            
+
             serial.transferHistory.push({
               fromCenter: null,
               toCenter: this.center,
@@ -533,7 +533,7 @@ stockRequestSchema.methods.transferStockToCenter = async function (
               referenceId: this._id
             });
           }
-          
+
           transferredSerials.push(...resellerSerialsToTransfer);
         } else {
           // Non-serialized products from reseller
@@ -582,7 +582,7 @@ stockRequestSchema.methods.transferStockToCenter = async function (
             const serial = outletStock.serialNumbers.find(
               sn => sn.serialNumber === serialNumber && sn.status === "in_transit"
             );
-            
+
             if (!serial) {
               throw new Error(`Serial number ${serialNumber} not in transit in outlet stock for product "${productDoc?.productTitle}"`);
             }
@@ -600,7 +600,7 @@ stockRequestSchema.methods.transferStockToCenter = async function (
               referenceId: this._id
             });
           }
-          
+
           transferredSerials.push(...outletSerialsToTransfer);
         } else {
           // Non-serialized products from outlet
@@ -638,7 +638,7 @@ stockRequestSchema.methods.transferStockToCenter = async function (
         }
 
         const totalTransferred = transferredFromReseller + transferredFromOutlet;
-        
+
         // Track how many serials were actually added (not just reactivated)
         let newlyAddedSerials = 0;
         let reactivatedSerials = 0;
@@ -654,13 +654,13 @@ stockRequestSchema.methods.transferStockToCenter = async function (
             if (existingSerialIndex !== -1) {
               // Serial already exists - update it
               const existingSerial = centerStock.serialNumbers[existingSerialIndex];
-              
+
               // Check if the serial is damaged
               if (existingSerial.status === "damaged" || existingSerial.status === "damage_pending") {
                 // Reactivate damaged serial
                 existingSerial.status = "available";
                 existingSerial.currentLocation = this.center;
-                
+
                 existingSerial.transferHistory.push({
                   fromCenter: null,
                   toCenter: this.center,
@@ -670,7 +670,7 @@ stockRequestSchema.methods.transferStockToCenter = async function (
                   referenceId: this._id,
                   transferredBy: transferredBy
                 });
-                
+
                 reactivatedSerials++;
                 console.log(`Reactivated damaged serial ${serialNumber} in center stock`);
               } else if (existingSerial.status === "available") {
@@ -693,7 +693,7 @@ stockRequestSchema.methods.transferStockToCenter = async function (
           // Update center stock quantities based on actual additions
           centerStock.totalQuantity += newlyAddedSerials;
           centerStock.availableQuantity += (newlyAddedSerials + reactivatedSerials);
-          
+
           console.log(`Added ${newlyAddedSerials} new serials and reactivated ${reactivatedSerials} damaged serials`);
         } else {
           // Non-serialized products
@@ -708,7 +708,7 @@ stockRequestSchema.methods.transferStockToCenter = async function (
           // Get purchaseId from outlet stock for outlet serials
           let purchaseId = null;
           let originalOutlet = this.warehouse;
-          
+
           // For reseller serials, we need to get the original purchaseId
           if (fromReseller.serials && fromReseller.serials.includes(serialNumber)) {
             // Try to find the serial in reseller stock to get transfer history
@@ -717,12 +717,12 @@ stockRequestSchema.methods.transferStockToCenter = async function (
               product: productId,
               "serialNumbers.serialNumber": serialNumber
             });
-            
+
             if (resellerStock) {
               const serial = resellerStock.serialNumbers.find(
                 sn => sn.serialNumber === serialNumber
               );
-              
+
               // Try to get original purchaseId from transfer history
               if (serial && serial.transferHistory && serial.transferHistory.length > 0) {
                 const originalTransfer = serial.transferHistory.find(
@@ -748,7 +748,7 @@ stockRequestSchema.methods.transferStockToCenter = async function (
               product: productId,
               "serialNumbers.serialNumber": serialNumber
             });
-            
+
             if (outletStock) {
               const serial = outletStock.serialNumbers.find(
                 sn => sn.serialNumber === serialNumber
@@ -836,10 +836,10 @@ stockRequestSchema.methods.validateSerialNumbers = async function (productApprov
       // Get the requesting center's reseller
       const center = await mongoose.model("Center").findById(this.center).populate("reseller");
       const resellerId = center?.reseller?._id;
-      
+
       let unavailableSerials = [];
       let availableSerials = [];
-      
+
       // Check both sources
       if (resellerId) {
         // Check reseller stock first
@@ -847,7 +847,7 @@ stockRequestSchema.methods.validateSerialNumbers = async function (productApprov
           reseller: resellerId,
           product: approval.productId,
         });
-        
+
         if (resellerStock) {
           for (const serialNumber of approval.approvedSerials) {
             const serial = resellerStock.serialNumbers.find(
@@ -859,18 +859,18 @@ stockRequestSchema.methods.validateSerialNumbers = async function (productApprov
           }
         }
       }
-      
+
       // Check outlet stock for remaining serials
       const remainingSerials = approval.approvedSerials.filter(
         sn => !availableSerials.includes(sn)
       );
-      
+
       if (remainingSerials.length > 0) {
         const outletStock = await OutletStock.findOne({
           outlet: this.warehouse,
           product: approval.productId,
         });
-        
+
         if (outletStock) {
           for (const serialNumber of remainingSerials) {
             const serial = outletStock.serialNumbers.find(
@@ -886,7 +886,7 @@ stockRequestSchema.methods.validateSerialNumbers = async function (productApprov
           unavailableSerials.push(...remainingSerials);
         }
       }
-      
+
       validationResults.push({
         productId: approval.productId,
         productName: productDoc.productTitle,
@@ -925,17 +925,17 @@ stockRequestSchema.methods.validateSerialNumbersForIncomplete = async function (
     if (tracksSerialNumbers && approval.approvedSerials) {
       const center = await mongoose.model("Center").findById(this.center).populate("reseller");
       const resellerId = center?.reseller?._id;
-      
+
       let unavailableSerials = [];
       let availableSerials = [];
-      
+
       // Check reseller stock
       if (resellerId) {
         const resellerStock = await ResellerStock.findOne({
           reseller: resellerId,
           product: approval.productId,
         });
-        
+
         if (resellerStock) {
           for (const serialNumber of approval.approvedSerials) {
             const serial = resellerStock.serialNumbers.find(
@@ -947,24 +947,24 @@ stockRequestSchema.methods.validateSerialNumbersForIncomplete = async function (
           }
         }
       }
-      
+
       // Check outlet stock for remaining serials
       const remainingSerials = approval.approvedSerials.filter(
         sn => !availableSerials.includes(sn)
       );
-      
+
       if (remainingSerials.length > 0) {
         const outletStock = await OutletStock.findOne({
           outlet: this.warehouse,
           product: approval.productId,
         });
-        
+
         if (outletStock) {
           for (const serialNumber of remainingSerials) {
             const serial = outletStock.serialNumbers.find(
               sn => sn.serialNumber === serialNumber
             );
-            
+
             if (serial) {
               // Accept both available AND in_transit for incomplete completion
               if (serial.status === "available" || serial.status === "in_transit") {
@@ -980,7 +980,7 @@ stockRequestSchema.methods.validateSerialNumbersForIncomplete = async function (
           unavailableSerials.push(...remainingSerials);
         }
       }
-      
+
       validationResults.push({
         productId: approval.productId,
         productName: productDoc.productTitle,

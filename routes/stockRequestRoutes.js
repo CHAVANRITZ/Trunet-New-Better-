@@ -1,4 +1,5 @@
 import express from "express";
+
 import {
   createStockRequest,
   getAllStockRequests,
@@ -20,8 +21,9 @@ import {
   getStockRequestNotifications,
   updateWarehouseChallanApproval,
   updateCenterChallanApproval,
-  exportStockRequestsToExcel
+  exportStockRequestsToExcel,
 } from "../controllers/stockRequestController.js";
+
 import {
   validateCreateStockRequest,
   validateUpdateStockRequest,
@@ -35,205 +37,312 @@ import {
   validateRejectShipment,
   validateMarkAsIncomplete,
   validateUpdateShippingInfo,
-} from "../validations/stockRequestValidations.js";
-import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
-import { bulkUploadStockRequests, downloadStockRequestSampleCSV } from "../controllers/bulkStockRequestController.js";
+} from "../validators/stockRequestValidations.js";
+
+import { authMiddleware } from "../middlewares/authMiddleware.js";
+import { authorizeAccess } from "../middlewares/authorizationMiddleware.js";
+import { validationMiddleware } from "../middlewares/validationMiddleware.js";
+
+import {
+  bulkUploadStockRequests,
+  downloadStockRequestSampleCSV,
+} from "../controllers/bulkStockRequestController.js";
+
 import upload from "../middlewares/upload.js";
 
 const router = express.Router();
 
 const MODULE = "Indent";
 
-// Create stock request
+/*
+ * CREATE
+ */
 router.post(
   "/",
-  protect,
+  authMiddleware,
   authorizeAccess(MODULE, "manage_indent"),
   validateCreateStockRequest,
+  validationMiddleware,
   createStockRequest
 );
 
-// Get all stock requests with filters
+/*
+ * LIST
+ */
 router.get(
   "/",
-  protect,
-  authorizeAccess(MODULE, "indent_all_center", "indent_own_center"),
+  authMiddleware,
+  authorizeAccess(
+    MODULE,
+    "indent_all_center",
+    "indent_own_center"
+  ),
   validateStockRequestQuery,
+  validationMiddleware,
   getAllStockRequests
 );
 
-// Export to Excel
+/*
+ * IMPORTANT:
+ * Static routes are placed BEFORE /:id routes.
+ */
+
+/*
+ * EXCEL
+ */
 router.get(
   "/export-excel",
-  protect,
-  authorizeAccess(MODULE, "indent_all_center", "indent_own_center"),
+  authMiddleware,
+  authorizeAccess(
+    MODULE,
+    "indent_all_center",
+    "indent_own_center"
+  ),
   exportStockRequestsToExcel
 );
 
-// Get stock request count
+/*
+ * COUNT
+ */
 router.get(
   "/indent-count",
-  protect,
+  authMiddleware,
   getStockRequestCount
 );
 
-// Get most recent order number
+/*
+ * RECENT ORDER NUMBER
+ */
 router.get(
   "/recent-order-number",
-  protect,
-  authorizeAccess(MODULE, "indent_all_center", "indent_own_center"),
+  authMiddleware,
+  authorizeAccess(
+    MODULE,
+    "indent_all_center",
+    "indent_own_center"
+  ),
   getMostRecentOrderNumber
 );
 
-// Get stock request notifications
+/*
+ * NOTIFICATIONS
+ */
 router.get(
   "/notifications",
-  protect,
+  authMiddleware,
   getStockRequestNotifications
 );
 
-// Get stock request by ID
+/*
+ * BULK UPLOAD
+ */
+router.post(
+  "/bulk-upload",
+  authMiddleware,
+  upload.single("file"),
+  bulkUploadStockRequests
+);
+
+/*
+ * SAMPLE DOWNLOAD
+ */
 router.get(
-  "/:id",
-  protect,
-  authorizeAccess(MODULE, "indent_all_center", "indent_own_center"),
-  validateIdParam,
-  getStockRequestById
+  "/download/sample",
+  downloadStockRequestSampleCSV
 );
 
-// Update stock request
-router.put(
-  "/:id",
-  protect,
-  authorizeAccess(MODULE, "manage_indent"),
-  validateUpdateStockRequest,
-  updateStockRequest
-);
-
-// Delete stock request
-router.delete(
-  "/:id",
-  protect,
-  authorizeAccess(MODULE, "delete_indent_own_center", "delete_indent_all_center"),
-  validateIdParam,
-  deleteStockRequest
-);
-
-// Approve stock request
-router.post(
-  "/:id/approve",
-  protect,
-  authorizeAccess(MODULE, "stock_transfer_approve_from_outlet", "manage_indent"),
-  approveStockRequest
-);
-
-// Ship stock request
-router.post(
-  "/:id/ship",
-  protect,
-  authorizeAccess(MODULE, "manage_indent"),
-  validateShipStockRequest,
-  shipStockRequest
-);
-
-// Complete stock request
-router.post(
-  "/:id/complete",
-  protect,
-  authorizeAccess(MODULE, "complete_indent", "manage_indent"),
-  validateCompleteStockRequest,
-  completeStockRequest
-);
-
-// Complete incomplete stock request
-router.patch(
-  "/:id/complete-incomplete",
-  protect,
-  authorizeAccess(MODULE, "manage_indent"),
-  validateCompleteIncompleteRequest,
-  completeIncompleteRequest
-);
-
-// Update shipping info
-router.patch(
-  "/:id/shipping-info",
-  protect,
-  authorizeAccess(MODULE, "manage_indent"),
-  validateUpdateShippingInfo,
-  updateShippingInfo
-);
-
-// Reject shipment
-router.post(
-  "/:id/reject-shipment",
-  protect,
-  authorizeAccess(MODULE, "manage_indent"),
-  validateRejectShipment,
-  rejectShipment
-);
-
-// Get center serial numbers for a product
+/*
+ * CENTER SERIAL NUMBERS
+ */
 router.get(
   "/serial-numbers/product/:productId",
-  protect,
-  authorizeAccess(MODULE, "indent_all_center", "indent_own_center"),
+  authMiddleware,
+  authorizeAccess(
+    MODULE,
+    "indent_all_center",
+    "indent_own_center"
+  ),
   getCenterSerialNumbers
 );
 
-// Mark stock request as incomplete
+/*
+ * GET BY ID
+ */
+router.get(
+  "/:id",
+  authMiddleware,
+  authorizeAccess(
+    MODULE,
+    "indent_all_center",
+    "indent_own_center"
+  ),
+  validateIdParam,
+  validationMiddleware,
+  getStockRequestById
+);
+
+/*
+ * UPDATE
+ */
+router.put(
+  "/:id",
+  authMiddleware,
+  authorizeAccess(MODULE, "manage_indent"),
+  validateUpdateStockRequest,
+  validationMiddleware,
+  updateStockRequest
+);
+
+/*
+ * DELETE
+ */
+router.delete(
+  "/:id",
+  authMiddleware,
+  authorizeAccess(
+    MODULE,
+    "delete_indent_own_center",
+    "delete_indent_all_center"
+  ),
+  validateIdParam,
+  validationMiddleware,
+  deleteStockRequest
+);
+
+/*
+ * APPROVE
+ */
+router.post(
+  "/:id/approve",
+  authMiddleware,
+  authorizeAccess(
+    MODULE,
+    "stock_transfer_approve_from_outlet",
+    "manage_indent"
+  ),
+  validateApproveStockRequest,
+  validationMiddleware,
+  approveStockRequest
+);
+
+/*
+ * SHIP
+ */
+router.post(
+  "/:id/ship",
+  authMiddleware,
+  authorizeAccess(MODULE, "manage_indent"),
+  validateShipStockRequest,
+  validationMiddleware,
+  shipStockRequest
+);
+
+/*
+ * COMPLETE
+ */
+router.post(
+  "/:id/complete",
+  authMiddleware,
+  authorizeAccess(
+    MODULE,
+    "complete_indent",
+    "manage_indent"
+  ),
+  validateCompleteStockRequest,
+  validationMiddleware,
+  completeStockRequest
+);
+
+/*
+ * COMPLETE INCOMPLETE
+ */
+router.patch(
+  "/:id/complete-incomplete",
+  authMiddleware,
+  authorizeAccess(MODULE, "manage_indent"),
+  validateCompleteIncompleteRequest,
+  validationMiddleware,
+  completeIncompleteRequest
+);
+
+/*
+ * SHIPPING INFO
+ */
+router.patch(
+  "/:id/shipping-info",
+  authMiddleware,
+  authorizeAccess(MODULE, "manage_indent"),
+  validateUpdateShippingInfo,
+  validationMiddleware,
+  updateShippingInfo
+);
+
+/*
+ * REJECT SHIPMENT
+ */
+router.post(
+  "/:id/reject-shipment",
+  authMiddleware,
+  authorizeAccess(MODULE, "manage_indent"),
+  validateRejectShipment,
+  validationMiddleware,
+  rejectShipment
+);
+
+/*
+ * MARK INCOMPLETE
+ */
 router.post(
   "/:id/mark-incomplete",
-  protect,
+  authMiddleware,
   authorizeAccess(MODULE, "manage_indent"),
   validateMarkAsIncomplete,
+  validationMiddleware,
   markAsIncomplete
 );
 
-// Update approved quantities
+/*
+ * APPROVED QUANTITIES
+ */
 router.patch(
   "/:id/approved-quantities",
-  protect,
+  authMiddleware,
   authorizeAccess(MODULE, "manage_indent"),
+  validateUpdateApprovedQuantities,
+  validationMiddleware,
   updateApprovedQuantities
 );
 
-// Update warehouse challan approval
+/*
+ * WAREHOUSE CHALLAN
+ */
 router.patch(
   "/:id/warehouse-challan-approval",
-  protect,
+  authMiddleware,
   authorizeAccess(MODULE, "manage_indent"),
   updateWarehouseChallanApproval
 );
 
-// Update center challan approval
+/*
+ * CENTER CHALLAN
+ */
 router.patch(
   "/:id/center-challan-approval",
-  protect,
+  authMiddleware,
   authorizeAccess(MODULE, "manage_indent"),
   updateCenterChallanApproval
 );
 
-// Update stock request status
+/*
+ * STATUS
+ */
 router.patch(
   "/:id/status",
-  protect,
+  authMiddleware,
   authorizeAccess(MODULE, "manage_indent"),
   validateIdParam,
+  validationMiddleware,
   updateStockRequestStatus
-);
-
-// Bulk upload stock requests
-router.post(
-  "/bulk-upload",
-  protect,
-  upload.single('file'),
-  bulkUploadStockRequests
-);
-
-// Download sample CSV for bulk upload
-router.get(
-  "/download/sample",
-  downloadStockRequestSampleCSV
 );
 
 export default router;

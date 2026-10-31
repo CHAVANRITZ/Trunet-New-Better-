@@ -1,275 +1,228 @@
+import mongoose from "mongoose";
 
-import Center from "../models/Center.js";
-import Reseller from "../models/Reseller.js";
-import { Parser } from 'json2csv';
+import {
+    createReseller as createResellerService,
+    getResellers as getResellersService,
+    getResellerById as getResellerByIdService,
+    updateReseller as updateResellerService,
+    deleteReseller as deleteResellerService,
+} from "../services/resellerService.js";
 
-const buildResellerSearchFilters = ({ search, city, state }) => {
-  const filters = {};
-
-  if (search) {
-    filters.$or = [
-      { resellerName: { $regex: search, $options: "i" } },
-      { name: { $regex: search, $options: "i" } },
-      { email: { $regex: search, $options: "i" } },
-      { mobile: { $regex: search, $options: "i" } },
-      { contactNumber: { $regex: search, $options: "i" } },
-      { gstNumber: { $regex: search, $options: "i" } },
-    ];
-  }
-
-  if (city) filters.city = { $regex: city, $options: "i" };
-  if (state) filters.state = { $regex: state, $options: "i" };
-
-  return filters;
+const sendError = (res, statusCode, message, error) => {
+    return res.status(statusCode).json({
+        success: false,
+        message,
+        ...(error ? { error: error.message || String(error) } : {}),
+    });
 };
 
-const generateCenterCode = async (businessName) => {
-  const baseCode = businessName
-    .replace(/\s+/g, '')
-    .substring(0, 4)
-    .toUpperCase();
-  
-  let counter = 1;
-  let centerCode = `${baseCode}${counter.toString().padStart(3, '0')}`;
-  
-  while (await Center.findOne({ centerCode })) {
-    counter++;
-    centerCode = `${baseCode}${counter.toString().padStart(3, '0')}`;
-  }
-  
-  return centerCode;
+const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
+
+const validateResellerId = (req, res) => {
+    if (!isValidObjectId(req.params.id)) {
+        sendError(res, 400, "Invalid reseller ID");
+        return false;
+    }
+
+    return true;
 };
 
 export const createReseller = async (req, res) => {
-  try {
+    try {
+        const result = await createResellerService(req.body);
 
-    const reseller = await Reseller.create(req.body);
+        return res.status(201).json({
+            success: true,
+            message: "Reseller created successfully with auto-generated outlet",
+            data: {
+                reseller: result.reseller,
+                center: result.center,
+            },
+        });
+    } catch (error) {
+        const statusCode =
+            error.code === 11000
+                ? 409
+                : error.name === "ValidationError"
+                    ? 400
+                    : 500;
 
-    const centerCode = await generateCenterCode(reseller.businessName);
-
-    const centerData = {
-      reseller: reseller._id,
-      centerType: "Outlet",
-      centerName: reseller.businessName,
-      centerCode:centerCode,
-      email: reseller.email || "",
-      mobile: reseller.mobile || reseller.contactNumber || "",
-      addressLine1: reseller.address1 || "",
-      addressLine2: reseller.address2 || "",
-      city: reseller.city || "",
-      state: reseller.state || "",
-      area: null,
-      status: "Enable"
-    };
-
-    const center = await Center.create(centerData);
-
-    res.status(201).json({
-      success: true,
-      message: "Reseller created successfully with auto-generated outlet",
-      data: {
-        reseller: reseller,
-        center: center
-      }
-    });
-  } catch (error) {
-    res.status(400).json({ 
-      success: false, 
-      message: "Error creating reseller", 
-      error: error.message 
-    });
-  }
+        return sendError(
+            res,
+            statusCode,
+            statusCode === 409
+                ? "Reseller already exists"
+                : statusCode === 400
+                    ? "Reseller validation failed"
+                    : "Error creating reseller",
+            error
+        );
+    }
 };
 
 export const getResellers = async (req, res) => {
-  try {
-    const {
-      search,
-      city,
-      state,
-      page = 1,
-      limit = 100,
-      sortBy = "createdAt",
-      sortOrder = "desc",
-    } = req.query;
+    try {
+        const {
+            search,
+            city,
+            state,
+            page = "1",
+            limit = "100",
+            sortBy = "createdAt",
+            sortOrder = "desc",
+        } = req.query;
 
-    const filters = buildResellerSearchFilters({ search, city, state });
+        const parsedPage = Number(page);
+        const parsedLimit = Number(limit);
 
-    const skip = (page - 1) * limit;
-    const sort = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
+        if (
+            !Number.isInteger(parsedPage) ||
+            parsedPage < 1 ||
+            !Number.isInteger(parsedLimit) ||
+            parsedLimit < 1 ||
+            parsedLimit > 500
+        ) {
+            return sendError(
+                res,
+                400,
+                "page must be a positive integer and limit must be between 1 and 500"
+            );
+        }
 
-    const [totalResellers, resellers] = await Promise.all([
-      Reseller.countDocuments(filters),
-      Reseller.find(filters)
-        .sort(sort)
-        .skip(skip)
-        .limit(Number(limit))
-        .select("-__v"),
-    ]);
+        const normalizedSortOrder = String(sortOrder).toLowerCase();
 
-    const totalPages = Math.ceil(totalResellers / limit);
+        if (!["asc", "desc"].includes(normalizedSortOrder)) {
+            return sendError(
+                res,
+                400,
+                "sortOrder must be either asc or desc"
+            );
+        }
 
-    res.status(200).json({
-      success: true,
-      data: resellers,
-      pagination: {
-        currentPage: Number(page),
-        totalPages,
-        totalResellers,
-        limit: Number(limit),
-        hasNextPage: Number(page) < totalPages,
-        hasPrevPage: Number(page) > 1,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Error fetching resellers",
-      error: error.message,
-    });
-  }
+        const result = await getResellersService({
+            search,
+            city,
+            state,
+            page: parsedPage,
+            limit: parsedLimit,
+            sortBy,
+            sortOrder: normalizedSortOrder,
+        });
+
+        return res.status(200).json({
+            success: true,
+            data: result.resellers,
+            pagination: {
+                currentPage: parsedPage,
+                totalPages: result.pagination.totalPages,
+                totalResellers: result.pagination.totalResellers,
+                limit: parsedLimit,
+                hasNextPage: result.pagination.hasNextPage,
+                hasPrevPage: result.pagination.hasPrevPage,
+            },
+        });
+    } catch (error) {
+        console.error("[getResellers]", error.message);
+
+        return sendError(
+            res,
+            500,
+            "Error fetching resellers",
+            error
+        );
+    }
 };
 
-// Get Single Reseller by ID
 export const getResellerById = async (req, res) => {
-  try {
-    const reseller = await Reseller.findById(req.params.id);
-    if (!reseller) {
-      return res.status(404).json({ success: false, message: "Reseller not found" });
+    try {
+        if (!validateResellerId(req, res)) return;
+
+        const reseller = await getResellerByIdService(req.params.id);
+
+        if (!reseller) {
+            return sendError(res, 404, "Reseller not found");
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: reseller,
+        });
+    } catch (error) {
+        console.error("[getResellerById]", error.message);
+
+        return sendError(
+            res,
+            500,
+            "Error fetching reseller",
+            error
+        );
     }
-    res.status(200).json({ success: true, data: reseller });
-  } catch (error) {
-    res.status(500).json({ success: false, message: "Error fetching reseller", error });
-  }
 };
 
-// Update Reseller
 export const updateReseller = async (req, res) => {
-  try {
-    const reseller = await Reseller.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!reseller) {
-      return res.status(404).json({ success: false, message: "Reseller not found" });
-    }
-    res.status(200).json({
-      success: true,
-      message: "Reseller updated successfully",
-      data: reseller
-    });
-  } catch (error) {
-    res.status(400).json({ success: false, message: "Error updating reseller", error });
-  }
-};
+    try {
+        if (!validateResellerId(req, res)) return;
 
-//*********************   Delete Reseller    ******************/
+        const reseller = await updateResellerService(
+            req.params.id,
+            req.body
+        );
+
+        if (!reseller) {
+            return sendError(res, 404, "Reseller not found");
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Reseller updated successfully",
+            data: reseller,
+        });
+    } catch (error) {
+        console.error("[updateReseller]", error.message);
+
+        const statusCode =
+            error.name === "ValidationError" ||
+            error.name === "CastError"
+                ? 400
+                : error.code === 11000
+                    ? 409
+                    : 500;
+
+        return sendError(
+            res,
+            statusCode,
+            statusCode === 409
+                ? "Reseller already exists"
+                : statusCode === 400
+                    ? "Invalid reseller data"
+                    : "Error updating reseller",
+            error
+        );
+    }
+};
 
 export const deleteReseller = async (req, res) => {
-  try {
-    const reseller = await Reseller.findByIdAndDelete(req.params.id);
-    if (!reseller) {
-      return res.status(404).json({ success: false, message: "Reseller not found" });
+    try {
+        if (!validateResellerId(req, res)) return;
+
+        const reseller = await deleteResellerService(req.params.id);
+
+        if (!reseller) {
+            return sendError(res, 404, "Reseller not found");
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Reseller deleted successfully",
+        });
+    } catch (error) {
+        console.error("[deleteReseller]", error.message);
+
+        return sendError(
+            res,
+            500,
+            "Error deleting reseller",
+            error
+        );
     }
-    res.status(200).json({ success: true, message: "Reseller deleted successfully" });
-  } catch (error) {
-    res.status(500).json({ success: false, message: "Error deleting reseller", error });
-  }
-};
-
-
-/**
- * Download all resellers data as CSV
- */
-export const downloadResellersCSV = async (req, res) => {
-  try {
-    const {
-      search,
-      city,
-      state,
-    } = req.query;
-
-    const filters = buildResellerSearchFilters({ search, city, state });
-
-    // Get all resellers without pagination
-    const resellers = await Reseller.find(filters)
-      .sort({ businessName: 1 })
-      .lean();
-
-    if (resellers.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "No resellers found to export"
-      });
-    }
-
-    // Get center counts for each reseller
-    const resellerIds = resellers.map(r => r._id);
-    const centerCounts = await Center.aggregate([
-      { $match: { reseller: { $in: resellerIds } } },
-      { $group: { _id: "$reseller", count: { $sum: 1 } } }
-    ]);
-
-    // Create a map of reseller ID to center count
-    const centerCountMap = {};
-    centerCounts.forEach(item => {
-      centerCountMap[item._id.toString()] = item.count;
-    });
-
-    // Prepare data for CSV
-    const csvData = resellers.map(reseller => ({
-      'Reseller ID': reseller._id.toString(),
-      'Business Name': reseller.businessName || '',
-      'Contact Person Name': reseller.name || '',
-      'Contact Number': reseller.contactNumber || '',
-      'Mobile': reseller.mobile || '',
-      'Email': reseller.email || '',
-      'GST Number': reseller.gstNumber || '',
-      'PAN Number': reseller.panNumber || '',
-      'Address Line 1': reseller.address1 || '',
-      'Address Line 2': reseller.address2 || '',
-      'City': reseller.city || '',
-      'State': reseller.state || '',
-      'Logo': reseller.logo || '',
-      'Total Centers': centerCountMap[reseller._id.toString()] || 0,
-      'Created At': reseller.createdAt ? new Date(reseller.createdAt).toLocaleString() : '',
-      'Updated At': reseller.updatedAt ? new Date(reseller.updatedAt).toLocaleString() : ''
-    }));
-
-    // Define CSV fields
-    const fields = [
-      'Reseller ID',
-      'Business Name',
-      'Contact Person Name',
-      'Contact Number',
-      'Mobile',
-      'Email',
-      'GST Number',
-      'PAN Number',
-      'Address Line 1',
-      'Address Line 2',
-      'City',
-      'State',
-      'Logo',
-      'Total Centers',
-      'Created At',
-      'Updated At'
-    ];
-
-    // Convert to CSV
-    const json2csvParser = new Parser({ fields });
-    const csv = json2csvParser.parse(csvData);
-
-    // Set headers for file download
-    const filename = `resellers_export_${new Date().toISOString().split('T')[0]}.csv`;
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    
-    res.status(200).send(csv);
-
-  } catch (error) {
-    console.error('Download resellers CSV error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error exporting resellers data',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
 };

@@ -12,10 +12,13 @@ const counterSchema = new mongoose.Schema({
   sequence: {
     type: Number,
     default: 0,
-  }
+  },
 });
 
 // Compound index to ensure unique combination
-counterSchema.index({ name: 1, financialYear: 1 }, { unique: true });
+counterSchema.index(
+  { name: 1, financialYear: 1 },
+  { unique: true }
+);
 
 export default mongoose.model("Counter", counterSchema);

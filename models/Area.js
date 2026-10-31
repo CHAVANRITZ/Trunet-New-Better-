@@ -1,21 +1,21 @@
 import mongoose from "mongoose";
 
 const areaSchema = new mongoose.Schema(
-  {
-    reseller: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Reseller",
-      required: [true, "Reseller ID is required"],
+    {
+        reseller: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Reseller",
+            required: [true, "Reseller ID is required"],
+        },
+        areaName: {
+            type: String,
+            required: [true, "Area name is required"],
+            trim: true,
+            minlength: [3, "Area name must be at least 3 characters"],
+            maxlength: [50, "Area name cannot exceed 50 characters"],
+        },
     },
-    areaName: {
-      type: String,
-      required: [true, "Area name is required"],
-      trim: true,
-      minlength: [3, "Area name must be at least 3 characters"],
-      maxlength: [50, "Area name cannot exceed 50 characters"],
-    },
-  },
-  { timestamps: true }
+    { timestamps: true }
 );
 
 export default mongoose.model("Area", areaSchema);

@@ -1,74 +1,134 @@
 import express from "express";
-import upload from '../middlewares/upload.js';
+
 import {
-  createCustomer,
-  getCustomers,
-  getCustomerById,
-  updateCustomer,
-  deleteCustomer,
-  importCustomers,
-  getCustomersWithoutPagination,
-  
+    createCustomer,
+    getCustomers,
+    getCustomersWithoutPagination,
+    getCustomerById,
+    updateCustomer,
+    deleteCustomer,
+    importCustomers,
 } from "../controllers/customerController.js";
-import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
+
+import { authMiddleware } from "../middlewares/authMiddleware.js";
+import { authorizeAccess } from "../middlewares/authorizationMiddleware.js";
+
+import {
+    memoryUpload,
+} from "../config/multer.js";
 
 const router = express.Router();
+
 const MODULE = "Customer";
+
+/**
+ * Create Customer
+ *
+ * Legacy permissions:
+ * - manage_customer_all_center
+ * - manage_customer_own_center
+ */
 router.post(
-  "/",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "manage_customer_all_center",
-    "manage_customer_own_center"
-  ),
-  createCustomer
-);
-router.post(
-  '/import',
-  upload.single('file'),
-  importCustomers
-);
-router.get(
-  "/",
-  protect,
-  authorizeAccess(MODULE, "view_customer_own_center","view_customer_all_center"),
-  getCustomers
-);
-router.get(
-  "/all",
-  protect,
-  authorizeAccess(MODULE, "view_customer_own_center","view_customer_all_center"),
-  getCustomersWithoutPagination
+    "/",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_customer_all_center",
+        "manage_customer_own_center"
+    ),
+    createCustomer
 );
 
-router.get(
-  "/:id",
-  protect,
-  authorizeAccess(MODULE, "view_customer_own_center","view_customer_all_center"),
-  getCustomerById
+/**
+ * Import Customers from CSV
+ *
+ * IMPORTANT:
+ * Legacy route did NOT use authentication
+ * or authorization middleware here.
+ *
+ * Keep this behavior unchanged.
+ *
+ * Uses the existing project memoryUpload
+ * middleware.
+ */
+router.post(
+    "/import",
+    memoryUpload.single("file"),
+    importCustomers
 );
 
+/**
+ * Get Customers with pagination
+ *
+ * Legacy permissions:
+ * - view_customer_own_center
+ * - view_customer_all_center
+ */
+router.get(
+    "/",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_customer_own_center",
+        "view_customer_all_center"
+    ),
+    getCustomers
+);
+
+/**
+ * Get all Customers without pagination
+ */
+router.get(
+    "/all",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_customer_own_center",
+        "view_customer_all_center"
+    ),
+    getCustomersWithoutPagination
+);
+
+/**
+ * Get Customer by ID
+ */
+router.get(
+    "/:id",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "view_customer_own_center",
+        "view_customer_all_center"
+    ),
+    getCustomerById
+);
+
+/**
+ * Update Customer
+ */
 router.put(
-  "/:id",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "manage_customer_all_center",
-    "manage_customer_own_center"
-  ),
-  updateCustomer
+    "/:id",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_customer_all_center",
+        "manage_customer_own_center"
+    ),
+    updateCustomer
 );
 
+/**
+ * Delete Customer
+ */
 router.delete(
-  "/:id",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "manage_customer_all_center",
-    "manage_customer_own_center"
-  ),
-  deleteCustomer
+    "/:id",
+    authMiddleware,
+    authorizeAccess(
+        MODULE,
+        "manage_customer_all_center",
+        "manage_customer_own_center"
+    ),
+    deleteCustomer
 );
 
 export default router;

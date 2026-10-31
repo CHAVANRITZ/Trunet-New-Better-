@@ -1,887 +1,388 @@
-import Center from "../models/Center.js";
-import Area from "../models/Area.js";
-import Reseller from "../models/Reseller.js";
-import { checkPermission, isSuperAdmin } from "../utils/checkPermissions.js";
-import { Parser } from 'json2csv';
+import {
+    createCenter as createCenterService,
+    getCenters as getCentersService,
+    getCenterById as getCenterByIdService,
+    updateCenter as updateCenterService,
+    deleteCenter as deleteCenterService,
+    getCentersByReseller as getCentersByResellerService,
+    getCentersByArea as getCentersByAreaService,
+    getAllCentersBasic as getAllCentersBasicService,
+    getCentersByResellerId as getCentersByResellerIdService,
+    downloadCentersCSV as downloadCentersCSVService,
+} from "../services/centerService.js";
 
+/**
+ * Create a new Center.
+ */
 export const createCenter = async (req, res) => {
-  try {
-    // Permission check
-    if (!isSuperAdmin(req.user) && !checkPermission(req.user, "Center", "manage_all_center")) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. manage_all_center permission required to create centers.",
-      });
-    }
+    try {
+        const center =
+            await createCenterService(
+                req.body
+            );
 
-    const {
-      resellerId,
-      areaId,
-      centerType,
-      centerName,
-      centerCode,
-      email,
-      mobile,
-      status,
-      addressLine1,
-      addressLine2,
-      city,
-      state,
-      stockVerified,
-    } = req.body;
-
-    // Validate required fields based on center type
-    if (centerType === "Center") {
-      if (!resellerId) {
-        return res.status(400).json({
-          success: false,
-          message: "Reseller ID is required for Center type",
+        return res.status(201).json({
+            success: true,
+            data: center,
+            message:
+                "Center created successfully",
         });
-      }
+    } catch (error) {
+        console.error(
+            "Error creating center:",
+            error
+        );
 
-      if (!areaId) {
-        return res.status(400).json({
-          success: false,
-          message: "Area ID is required for Center type",
-        });
-      }
-
-      // Validate both reseller and area exist
-      const [reseller, area] = await Promise.all([
-        Reseller.findById(resellerId),
-        Area.findById(areaId)
-      ]);
-
-      if (!reseller) {
-        return res.status(404).json({ 
-          success: false, 
-          message: "Reseller not found" 
-        });
-      }
-
-      if (!area) {
-        return res.status(404).json({ 
-          success: false, 
-          message: "Area not found" 
-        });
-      }
-    } else if (centerType === "Outlet") {
-      // For Outlet type, reseller and area are not required
-      // But we still validate if they are provided
-      if (resellerId) {
-        const reseller = await Reseller.findById(resellerId);
-        if (!reseller) {
-          return res.status(404).json({ 
-            success: false, 
-            message: "Reseller not found" 
-          });
-        }
-      }
-
-      if (areaId) {
-        const area = await Area.findById(areaId);
-        if (!area) {
-          return res.status(404).json({ 
-            success: false, 
-            message: "Area not found" 
-          });
-        }
-      }
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid center type. Must be 'Center' or 'Outlet'",
-      });
-    }
-
-    // Check for duplicate centerCode
-    if (centerCode) {
-      const existingCenter = await Center.findOne({ centerCode: centerCode.toUpperCase() });
-      if (existingCenter) {
-        return res.status(400).json({
-          success: false,
-          message: `Center with code ${centerCode} already exists`,
-        });
-      }
-    }
-
-    // Prepare center data
-    const centerData = {
-      centerType,
-      centerName,
-      centerCode: centerCode?.toUpperCase(),
-      email,
-      mobile,
-      status: status || "Enable",
-      addressLine1,
-      addressLine2,
-      city,
-      state,
-      stockVerified: stockVerified || "",
-    };
-
-    // Only add reseller and area if they are provided
-    if (resellerId) {
-      centerData.reseller = resellerId;
-    }
-
-    if (areaId) {
-      centerData.area = areaId;
-    }
-
-    const center = new Center(centerData);
-    await center.save();
-
-    // Populate the response
-    const populatedCenter = await Center.findById(center._id)
-      .populate("reseller", "businessName")
-      .populate("area", "areaName");
-
-    res.status(201).json({ 
-      success: true, 
-      data: populatedCenter,
-      message: "Center created successfully"
-    });
-  } catch (error) {
-    console.error("Error creating center:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
-    });
-  }
-};
-
-export const getCenters = async (req, res) => {
-  try {
-    const {
-      centerType,
-      page = 1,
-      limit = 100,
-      search,
-      sortBy = "centerName",
-      sortOrder = "asc",
-      reseller,
-      area, 
-      status,
-    } = req.query;
-
-    const filter = {};
-
-    const userPermissions = req.user.role?.permissions || [];
-    const centerModule = userPermissions.find(
-      (perm) => perm.module === "Center"
-    );
-
-    const canViewAll =
-      centerModule && centerModule.permissions.includes("view_all_center");
-    const canViewOwn =
-      centerModule && centerModule.permissions.includes("view_own_center");
-
-    if (!canViewAll && !canViewOwn) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. view_own_center or view_all_center permission required.",
-      });
-    }
-
-    if (canViewOwn && !canViewAll && req.user.center) {
-      filter._id = req.user.center._id || req.user.center;
-    }
-
-    if (centerType) {
-      filter.centerType = centerType;
-    }
-
-    if (reseller) {
-      filter.reseller = reseller;
-    } 
-
-    if (area) {
-      filter.area = area;
-    }
-
-    if (status) {
-      filter.status = status;
-    }
-
-    if (search) {
-      filter.$or = [
-        { centerName: { $regex: search, $options: "i" } },
-        { centerCode: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-        { mobile: { $regex: search, $options: "i" } },
-      ];
-    }
-
-    const sortOptions = {};
-    const validSortFields = [
-      "centerName",
-      "centerCode",
-      "centerType",
-      "createdAt",
-      "updatedAt",
-      "status",
-    ];
-    const actualSortBy = validSortFields.includes(sortBy)
-      ? sortBy
-      : "centerName";
-    sortOptions[actualSortBy] = sortOrder === "desc" ? -1 : 1;
-
-    const centers = await Center.find(filter)
-      .populate("reseller", "businessName")
-      .populate("area", "areaName")
-      .sort(sortOptions)
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
-
-    const total = await Center.countDocuments(filter);
-
-    const centerTypeCounts = await Center.aggregate([
-      { $match: filter },
-      {
-        $group: {
-          _id: "$centerType",
-          count: { $sum: 1 },
-        },
-      },
-    ]);
-
-    const centerTypeStats = {};
-    centerTypeCounts.forEach((stat) => {
-      centerTypeStats[stat._id] = stat.count;
-    });
-
-    res.status(200).json({
-      success: true,
-      message: "Centers retrieved successfully",
-      data: centers,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
-        totalItems: total,
-        itemsPerPage: parseInt(limit),
-        hasNextPage: page < Math.ceil(total / limit),
-        hasPrevPage: page > 1,
-      },
-      filters: {
-        centerType: centerTypeStats,
-        total: total,
-      },
-    });
-  } catch (error) {
-    console.error("Error retrieving centers:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error retrieving centers",
-      error: process.env.NODE_ENV === "development" ? error.message : "Internal server error",
-    });
-  }
-};
-
-export const getCenterById = async (req, res) => {
-  try {
-    const center = await Center.findById(req.params.id)
-      .populate("reseller", "businessName")
-      .populate("area", "areaName");
-      
-    if (!center) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "Center not found" 
-      });
-    }
-
-    const userPermissions = req.user.role?.permissions || [];
-    const centerModule = userPermissions.find(
-      (perm) => perm.module === "Center"
-    );
-
-    const canViewAll =
-      centerModule && centerModule.permissions.includes("view_all_center");
-    const canViewOwn =
-      centerModule && centerModule.permissions.includes("view_own_center");
-
-    if (canViewOwn && !canViewAll && req.user.center) {
-      const userCenterId = req.user.center._id || req.user.center;
-      if (center._id.toString() !== userCenterId.toString()) {
-        return res.status(403).json({
-          success: false,
-          message: "Access denied. You can only view your own center.",
-        });
-      }
-    }
-
-    res.status(200).json({ 
-      success: true, 
-      data: center 
-    });
-  } catch (error) {
-    console.error("Error retrieving center:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
-    });
-  }
-};
-
-export const updateCenter = async (req, res) => {
-  try {
-    const center = await Center.findById(req.params.id);
-
-    if (!center) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "Center not found" 
-      });
-    }
-
-    const userPermissions = req.user.role?.permissions || [];
-    const centerModule = userPermissions.find(
-      (perm) => perm.module === "Center"
-    );
-
-    const canManageAll =
-      centerModule && centerModule.permissions.includes("manage_all_center");
-    const canManageOwn =
-      centerModule && centerModule.permissions.includes("manage_own_center");
-
-    if (!canManageAll && !canManageOwn) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. manage_own_center or manage_all_center permission required.",
-      });
-    }
-
-    if (canManageOwn && !canManageAll && req.user.center) {
-      const userCenterId = req.user.center._id || req.user.center;
-      if (center._id.toString() !== userCenterId.toString()) {
-        return res.status(403).json({
-          success: false,
-          message: "Access denied. You can only manage your own center.",
-        });
-      }
-    }
-
-    const {
-      resellerId,
-      areaId,
-      centerType,
-      centerName,
-      centerCode,
-      email,
-      mobile,
-      status,
-      addressLine1,
-      addressLine2,
-      city,
-      state,
-      stockVerified,
-    } = req.body;
-
-    // Prepare update data
-    const updateData = {};
-
-    // Handle centerType validation
-    if (centerType !== undefined) {
-      if (!["Center", "Outlet"].includes(centerType)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid center type. Must be 'Center' or 'Outlet'",
-        });
-      }
-      updateData.centerType = centerType;
-    }
-
-    // Handle reseller and area validation based on centerType
-    const finalCenterType = centerType || center.centerType;
-
-    if (finalCenterType === "Center") {
-      // For Center type, reseller and area are required
-      if (resellerId !== undefined) {
-        if (!resellerId) {
-          return res.status(400).json({
+        return res.status(
+            error.statusCode || 500
+        ).json({
             success: false,
-            message: "Reseller ID is required for Center type",
-          });
-        }
-        const reseller = await Reseller.findById(resellerId);
-        if (!reseller) {
-          return res.status(404).json({ 
-            success: false, 
-            message: "Reseller not found" 
-          });
-        }
-        updateData.reseller = resellerId;
-      } else if (!center.reseller) {
-        // If reseller is not provided and center doesn't have one, it's required
-        return res.status(400).json({
-          success: false,
-          message: "Reseller ID is required for Center type",
+            message:
+                error.message ||
+                "Error creating center",
         });
-      }
-
-      if (areaId !== undefined) {
-        if (!areaId) {
-          return res.status(400).json({
-            success: false,
-            message: "Area ID is required for Center type",
-          });
-        }
-        const area = await Area.findById(areaId);
-        if (!area) {
-          return res.status(404).json({ 
-            success: false, 
-            message: "Area not found" 
-          });
-        }
-        updateData.area = areaId;
-      } else if (!center.area) {
-        // If area is not provided and center doesn't have one, it's required
-        return res.status(400).json({
-          success: false,
-          message: "Area ID is required for Center type",
-        });
-      }
-    } else if (finalCenterType === "Outlet") {
-      // For Outlet type, reseller and area are optional
-      if (resellerId !== undefined) {
-        if (resellerId) {
-          const reseller = await Reseller.findById(resellerId);
-          if (!reseller) {
-            return res.status(404).json({ 
-              success: false, 
-              message: "Reseller not found" 
-            });
-          }
-          updateData.reseller = resellerId;
-        } else {
-          // If resellerId is explicitly set to null or empty string, remove the field
-          updateData.reseller = null;
-        }
-      }
-
-      if (areaId !== undefined) {
-        if (areaId) {
-          const area = await Area.findById(areaId);
-          if (!area) {
-            return res.status(404).json({ 
-              success: false, 
-              message: "Area not found" 
-            });
-          }
-          updateData.area = areaId;
-        } else {
-          // If areaId is explicitly set to null or empty string, remove the field
-          updateData.area = null;
-        }
-      }
     }
-
-    // Handle other fields
-    if (centerName !== undefined) updateData.centerName = centerName;
-    
-    if (centerCode !== undefined) {
-      const upperCode = centerCode.toUpperCase();
-      // Check for duplicate centerCode (excluding current center)
-      const existingCenter = await Center.findOne({ 
-        centerCode: upperCode,
-        _id: { $ne: req.params.id }
-      });
-      if (existingCenter) {
-        return res.status(400).json({
-          success: false,
-          message: `Center with code ${centerCode} already exists`,
-        });
-      }
-      updateData.centerCode = upperCode;
-    }
-    
-    if (email !== undefined) updateData.email = email;
-    if (mobile !== undefined) updateData.mobile = mobile;
-    if (status !== undefined) {
-      if (!["Enable", "Disable"].includes(status)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid status. Must be 'Enable' or 'Disable'",
-        });
-      }
-      updateData.status = status;
-    }
-    if (addressLine1 !== undefined) updateData.addressLine1 = addressLine1;
-    if (addressLine2 !== undefined) updateData.addressLine2 = addressLine2;
-    if (city !== undefined) updateData.city = city;
-    if (state !== undefined) updateData.state = state;
-    if (stockVerified !== undefined) {
-      if (stockVerified && !["Yes", "No"].includes(stockVerified)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid stockVerified value. Must be 'Yes' or 'No'",
-        });
-      }
-      updateData.stockVerified = stockVerified;
-    }
-
-    // Update the center
-    const updatedCenter = await Center.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      {
-        new: true,
-        runValidators: true,
-      }
-    )
-      .populate("reseller", "businessName")
-      .populate("area", "areaName");
-
-    res.status(200).json({ 
-      success: true, 
-      data: updatedCenter,
-      message: "Center updated successfully"
-    });
-  } catch (error) {
-    console.error("Error updating center:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
-    });
-  }
-};
-
-export const deleteCenter = async (req, res) => {
-  try {
-    const center = await Center.findById(req.params.id);
-
-    if (!center) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "Center not found" 
-      });
-    }
-
-    const userPermissions = req.user.role?.permissions || [];
-    const centerModule = userPermissions.find(
-      (perm) => perm.module === "Center"
-    );
-
-    if (!centerModule || !centerModule.permissions.includes("manage_all_center")) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. manage_all_center permission required to delete centers.",
-      });
-    }
-
-    await Center.findByIdAndDelete(req.params.id);
-    res.status(200).json({ 
-      success: true, 
-      message: "Center deleted successfully" 
-    });
-  } catch (error) {
-    console.error("Error deleting center:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
-    });
-  }
-};
-
-export const getCentersByReseller = async (req, res) => {
-  try {
-    const isAdmin = req.user.role?.roleTitle?.toLowerCase().includes('admin');
-
-    let filter = {};
-
-    if (isAdmin) {
-      filter = {};
-    } else {
-      const userCenter = await Center.findById(req.user.center?._id || req.user.center);
-      
-      if (!userCenter) {
-        return res.status(404).json({
-          success: false,
-          message: "User center not found",
-        });
-      }
-
-      filter = { reseller: userCenter.reseller };
-    }
-
-    const centers = await Center.find(filter)
-      .populate("reseller", "businessName")
-      .populate("area", "areaName")
-      .select("_id centerName centerCode centerType status reseller area")
-      .sort({ centerName: 1 });
-
-    res.status(200).json({ 
-      success: true, 
-      data: centers,
-      message: `Found ${centers.length} centers${isAdmin ? ' (all centers)' : ' for your reseller'}`
-    });
-  } catch (error) {
-    console.error("Error fetching centers by reseller:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Error fetching centers",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined
-    });
-  }
-};
-
-export const getCentersByArea = async (req, res) => {
-  try {
-    const userPermissions = req.user.role?.permissions || [];
-    const centerModule = userPermissions.find(
-      (perm) => perm.module === "Center"
-    );
-
-    const canViewAll =
-      centerModule && centerModule.permissions.includes("view_all_center");
-    const canViewOwn =
-      centerModule && centerModule.permissions.includes("view_own_center");
-
-    let filter = { area: req.params.areaId };
-
-    if (canViewOwn && !canViewAll && req.user.center) {
-      const userCenter = await Center.findById(req.user.center);
-      if (!userCenter || userCenter.area?.toString() !== req.params.areaId) {
-        return res.status(403).json({
-          success: false,
-          message: "Access denied. You can only view centers in your area.",
-        });
-      }
-      filter._id = req.user.center._id || req.user.center;
-    }
-
-    const centers = await Center.find(filter)
-      .populate("reseller", "businessName")
-      .populate("area", "areaName");
-
-    res.status(200).json({ 
-      success: true, 
-      data: centers,
-      message: `Found ${centers.length} centers in area`
-    });
-  } catch (error) {
-    console.error("Error fetching centers by area:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
-    });
-  }
-};
-
-export const getAllCentersBasic = async (req, res) => {
-  try {
-    const { centerType } = req.query;
-    
-    const filter = {};
-    if (centerType) {
-      filter.centerType = centerType;
-    }
-
-    const centers = await Center.find(filter)
-      .populate("reseller", "businessName")
-      .populate("area", "areaName")
-      .select("_id centerName centerCode centerType status reseller area")
-      .sort({ centerName: 1 });
-
-    res.status(200).json({
-      success: true,
-      message: "All centers retrieved successfully",
-      data: centers,
-      total: centers.length
-    });
-  } catch (error) {
-    console.error("Error retrieving all centers:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error retrieving all centers",
-      error: error.message
-    });
-  }
-};
-
-export const getCentersByResellerId = async (req, res) => {
-  try {
-    const { resellerId } = req.params;
-
-    if (!resellerId) {
-      return res.status(400).json({
-        success: false,
-        message: "Reseller ID is required",
-      });
-    }
-
-    // Check if reseller exists
-    const reseller = await Reseller.findById(resellerId);
-    if (!reseller) {
-      return res.status(404).json({
-        success: false,
-        message: "Reseller not found",
-      });
-    }
-
-    // Check user permissions
-    const userPermissions = req.user.role?.permissions || [];
-    const centerModule = userPermissions.find(
-      (perm) => perm.module === "Center"
-    );
-
-    const canViewAll = centerModule && centerModule.permissions.includes("view_all_center");
-    const canViewOwn = centerModule && centerModule.permissions.includes("view_own_center");
-
-    if (!canViewAll && !canViewOwn) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. view_own_center or view_all_center permission required.",
-      });
-    }
-
-    // Build filter
-    const filter = { reseller: resellerId };
-
-    // Apply user-specific filters
-    if (canViewOwn && !canViewAll && req.user.center) {
-      // Users with view_own_center can only see their own center
-      filter._id = req.user.center._id || req.user.center;
-    }
-
-    // Execute query - Get all centers for this reseller
-    const centers = await Center.find(filter)
-      .populate("reseller", "businessName contactPerson mobile email")
-      .populate("area", "areaName")
-      .sort({ centerName: 1 });
-
-    // Response
-    res.status(200).json({
-      success: true,
-      message: `Found ${centers.length} centers for reseller: ${reseller.businessName}`,
-      data: centers,
-      resellerInfo: {
-        id: reseller._id,
-        businessName: reseller.businessName,
-        totalCenters: centers.length,
-      }
-    });
-  } catch (error) {
-    console.error("Error fetching centers by reseller ID:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error fetching centers",
-      error: process.env.NODE_ENV === "development" ? error.message : "Internal server error",
-    });
-  }
 };
 
 /**
- * Download all centers data as CSV
+ * Get Centers.
  */
-export const downloadCentersCSV = async (req, res) => {
-  try {
-    // Check permissions
-    const userPermissions = req.user.role?.permissions || [];
-    const centerModule = userPermissions.find(
-      (perm) => perm.module === "Center"
-    );
+export const getCenters = async (
+    req,
+    res
+) => {
+    try {
+        const result =
+            await getCentersService(
+                req.query,
+                req.user
+            );
 
-    const canViewAll = centerModule && centerModule.permissions.includes("view_all_center");
-    const canViewOwn = centerModule && centerModule.permissions.includes("view_own_center");
+        return res.status(200).json({
+            success: true,
+            message:
+                "Centers retrieved successfully",
+            data: result.centers,
+            pagination:
+                result.pagination,
+            filters:
+                result.filters,
+        });
+    } catch (error) {
+        console.error(
+            "Error retrieving centers:",
+            error
+        );
 
-    if (!canViewAll && !canViewOwn) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. view_own_center or view_all_center permission required."
-      });
+        return res.status(
+            error.statusCode || 500
+        ).json({
+            success: false,
+            message:
+                error.message ||
+                "Error retrieving centers",
+        });
     }
+};
 
-    // Build filter based on permissions
-    const filter = {};
-    if (canViewOwn && !canViewAll && req.user.center) {
-      filter._id = req.user.center._id || req.user.center;
+/**
+ * Get Center by ID.
+ */
+export const getCenterById = async (
+    req,
+    res
+) => {
+    try {
+        const center =
+            await getCenterByIdService(
+                req.params.id,
+                req.user
+            );
+
+        return res.status(200).json({
+            success: true,
+            data: center,
+        });
+    } catch (error) {
+        console.error(
+            "Error retrieving center:",
+            error
+        );
+
+        return res.status(
+            error.statusCode || 500
+        ).json({
+            success: false,
+            message:
+                error.message ||
+                "Error retrieving center",
+        });
     }
+};
 
-    // Get centers with populated data
-    const centers = await Center.find(filter)
-      .populate("reseller", "businessName name email mobile contactNumber")
-      .populate("area", "areaName")
-      .lean()
-      .sort({ centerName: 1 });
+/**
+ * Update Center.
+ */
+export const updateCenter = async (
+    req,
+    res
+) => {
+    try {
+        const center =
+            await updateCenterService(
+                req.params.id,
+                req.body,
+                req.user
+            );
 
-    if (centers.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "No centers found to export"
-      });
+        return res.status(200).json({
+            success: true,
+            data: center,
+            message:
+                "Center updated successfully",
+        });
+    } catch (error) {
+        console.error(
+            "Error updating center:",
+            error
+        );
+
+        return res.status(
+            error.statusCode || 500
+        ).json({
+            success: false,
+            message:
+                error.message ||
+                "Error updating center",
+        });
     }
+};
 
-    // Prepare data for CSV
-    const csvData = centers.map(center => ({
-      'Center ID': center._id.toString(),
-      'Center Name': center.centerName || '',
-      'Center Code': center.centerCode || '',
-      'Center Type': center.centerType || '',
-      'Status': center.status || '',
-      'Email': center.email || '',
-      'Mobile': center.mobile || '',
-      'Address Line 1': center.addressLine1 || '',
-      'Address Line 2': center.addressLine2 || '',
-      'City': center.city || '',
-      'State': center.state || '',
-      'Stock Verified': center.stockVerified || '',
-      'Reseller ID': center.reseller?._id?.toString() || '',
-      'Reseller Business Name': center.reseller?.businessName || '',
-      'Reseller Name': center.reseller?.name || '',
-      'Reseller Email': center.reseller?.email || '',
-      'Reseller Mobile': center.reseller?.mobile || '',
-      'Reseller Contact': center.reseller?.contactNumber || '',
-      'Area ID': center.area?._id?.toString() || '',
-      'Area Name': center.area?.areaName || '',
-      'Created At': center.createdAt ? new Date(center.createdAt).toLocaleString() : '',
-      'Updated At': center.updatedAt ? new Date(center.updatedAt).toLocaleString() : ''
-    }));
+/**
+ * Delete Center.
+ */
+export const deleteCenter = async (
+    req,
+    res
+) => {
+    try {
+        await deleteCenterService(
+            req.params.id,
+            req.user
+        );
 
-    // Define CSV fields
-    const fields = [
-      'Center ID',
-      'Center Name',
-      'Center Code',
-      'Center Type',
-      'Status',
-      'Email',
-      'Mobile',
-      'Address Line 1',
-      'Address Line 2',
-      'City',
-      'State',
-      'Stock Verified',
-      'Reseller ID',
-      'Reseller Business Name',
-      'Reseller Name',
-      'Reseller Email',
-      'Reseller Mobile',
-      'Reseller Contact',
-      'Area ID',
-      'Area Name',
-      'Created At',
-      'Updated At'
-    ];
+        return res.status(200).json({
+            success: true,
+            message:
+                "Center deleted successfully",
+        });
+    } catch (error) {
+        console.error(
+            "Error deleting center:",
+            error
+        );
 
-    // Convert to CSV
-    const json2csvParser = new Parser({ fields });
-    const csv = json2csvParser.parse(csvData);
+        return res.status(
+            error.statusCode || 500
+        ).json({
+            success: false,
+            message:
+                error.message ||
+                "Error deleting center",
+        });
+    }
+};
 
-    // Set headers for file download
-    const filename = `centers_export_${new Date().toISOString().split('T')[0]}.csv`;
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    
-    res.status(200).send(csv);
+/**
+ * Get centers related to logged-in user's reseller.
+ */
+export const getCentersByReseller = async (
+    req,
+    res
+) => {
+    try {
+        const centers =
+            await getCentersByResellerService(
+                req.user
+            );
 
-  } catch (error) {
-    console.error('Download centers CSV error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error exporting centers data',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
+        return res.status(200).json({
+            success: true,
+            data: centers,
+            message: `Found ${centers.length} centers`,
+        });
+    } catch (error) {
+        console.error(
+            "Error fetching centers by reseller:",
+            error
+        );
+
+        return res.status(
+            error.statusCode || 500
+        ).json({
+            success: false,
+            message:
+                error.message ||
+                "Error fetching centers",
+        });
+    }
+};
+
+/**
+ * Get centers by Area.
+ */
+export const getCentersByArea = async (
+    req,
+    res
+) => {
+    try {
+        const centers =
+            await getCentersByAreaService(
+                req.params.areaId,
+                req.user
+            );
+
+        return res.status(200).json({
+            success: true,
+            data: centers,
+            message: `Found ${centers.length} centers in area`,
+        });
+    } catch (error) {
+        console.error(
+            "Error fetching centers by area:",
+            error
+        );
+
+        return res.status(
+            error.statusCode || 500
+        ).json({
+            success: false,
+            message:
+                error.message ||
+                "Error fetching centers",
+        });
+    }
+};
+
+/**
+ * Get basic list of all centers.
+ */
+export const getAllCentersBasic = async (
+    req,
+    res
+) => {
+    try {
+        const centers =
+            await getAllCentersBasicService(
+                req.query.centerType
+            );
+
+        return res.status(200).json({
+            success: true,
+            message:
+                "All centers retrieved successfully",
+            data: centers,
+            total: centers.length,
+        });
+    } catch (error) {
+        console.error(
+            "Error retrieving all centers:",
+            error
+        );
+
+        return res.status(
+            error.statusCode || 500
+        ).json({
+            success: false,
+            message:
+                error.message ||
+                "Error retrieving all centers",
+        });
+    }
+};
+
+/**
+ * Get centers by specific reseller ID.
+ */
+export const getCentersByResellerId = async (
+    req,
+    res
+) => {
+    try {
+        const result =
+            await getCentersByResellerIdService(
+                req.params.resellerId,
+                req.user
+            );
+
+        return res.status(200).json({
+            success: true,
+            message: `Found ${result.centers.length} centers for reseller: ${result.reseller.businessName}`,
+            data: result.centers,
+            resellerInfo: {
+                id: result.reseller._id,
+                businessName:
+                    result.reseller.businessName,
+                totalCenters:
+                    result.centers.length,
+            },
+        });
+    } catch (error) {
+        console.error(
+            "Error fetching centers by reseller ID:",
+            error
+        );
+
+        return res.status(
+            error.statusCode || 500
+        ).json({
+            success: false,
+            message:
+                error.message ||
+                "Error fetching centers",
+        });
+    }
+};
+
+/**
+ * Download Centers as CSV.
+ */
+export const downloadCentersCSV = async (
+    req,
+    res
+) => {
+    try {
+        const result =
+            await downloadCentersCSVService(
+                req.user
+            );
+
+        res.setHeader(
+            "Content-Type",
+            "text/csv"
+        );
+
+        res.setHeader(
+            "Content-Disposition",
+            `attachment; filename="${result.filename}"`
+        );
+
+        return res.status(200).send(
+            result.csv
+        );
+    } catch (error) {
+        console.error(
+            "Download centers CSV error:",
+            error
+        );
+
+        return res.status(
+            error.statusCode || 500
+        ).json({
+            success: false,
+            message:
+                error.message ||
+                "Error exporting centers data",
+        });
+    }
 };

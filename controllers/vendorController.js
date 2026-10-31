@@ -1,285 +1,234 @@
-import Vendor from "../models/Vendor.js";
-import { validationResult } from "express-validator";
+import fs from "fs/promises";
 import path from "path";
-import fs from "fs";
 
-const deleteOldImage = async (imagePath) => {
-  if (imagePath && !imagePath.startsWith("http")) {
-    const fullPath = path.join(process.cwd(), imagePath);
-    try {
-      if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
-      }
-    } catch (error) {
-      console.error("Error deleting old image:", error);
-    }
-  }
-};
+import {
+    createVendor as createVendorService,
+    getVendors as getVendorsService,
+    getVendorById as getVendorByIdService,
+    updateVendor as updateVendorService,
+    deleteVendor as deleteVendorService
+} from "../services/vendorService.js";
 
-export const createVendor = async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: "Validation failed",
-      errors: errors.array(),
-    });
-  }
+import { ApiError } from "../utils/ApiError.js";
 
-  try {
-    let vendorLogo = "";
-    if (req.file) {
-      vendorLogo = `uploads/vendors/${req.file.filename}`;
-    }
+/**
+ * Creates a new vendor.
+ *
+ * The uploaded logo is stored under the vendor upload directory,
+ * while MongoDB stores only the relative application path.
+ *
+ * The logo value is controlled by the server to preserve the
+ * legacy Vendor API behavior.
+ */
+export async function createVendor(req, res) {
+    let uploadedLogoPath = null;
 
     const vendorData = {
-      ...req.body,
-      logo: vendorLogo,
+        ...req.body,
+        logo: ""
     };
 
-    const vendor = await Vendor.create(vendorData);
-    res.status(201).json({
-      success: true,
-      message: "Vendor created successfully",
-      data: vendor,
-    });
-  } catch (error) {
     if (req.file) {
-      await deleteOldImage(`uploads/vendors/${req.file.filename}`);
+        uploadedLogoPath = `uploads/vendors/${req.file.filename}`;
+        vendorData.logo = uploadedLogoPath;
     }
 
-    const errorResponse = handleVendorError(error, req.body);
-    res.status(errorResponse.statusCode).json(errorResponse);
-  }
-};
+    try {
+        const vendor = await createVendorService(vendorData);
 
-const handleVendorError = (error, bodyData = {}) => {
-  let statusCode = 500;
-  let message = "Internal server error";
+        return res.status(201).json({
+            success: true,
+            message: "Vendor created successfully.",
+            data: vendor
+        });
+    } catch (error) {
+        /*
+         * If database creation fails after the logo has already
+         * been written to disk, remove the unused file.
+         */
+        if (uploadedLogoPath) {
+            const absoluteLogoPath = path.join(
+                process.cwd(),
+                uploadedLogoPath
+            );
 
-  if (error.code === 11000) {
-    statusCode = 409;
-    const duplicateField = Object.keys(error.keyPattern || {})[0];
-    const duplicateValue = bodyData[duplicateField];
+            await fs.unlink(absoluteLogoPath).catch(() => {});
+        }
 
-    if (duplicateField === "email") {
-      message = `Email ${duplicateValue} is already registered. Please use a different email.`;
-    } else if (duplicateField === "mobile") {
-      message = `Mobile number ${duplicateValue} is already registered.`;
-    } else {
-      message = `This ${duplicateField} already exists in the system.`;
+        /*
+         * Preserve the legacy duplicate-email behavior.
+         */
+        if (error.code === 11000 && error.keyPattern?.email) {
+            throw new ApiError(
+                409,
+                `Email ${vendorData.email} is already registered. Please use a different email.`
+            );
+        }
+    if (error.name === "ValidationError") {
+        throw new ApiError(400, "Invalid vendor data provided");
+}
+        throw error;
     }
-  } else if (error.name === "ValidationError") {
-    statusCode = 400;
-    message = "Invalid vendor data provided";
-  } else if (error.name === "CastError") {
-    statusCode = 400;
-    message = "Invalid data format";
-  }
+}
 
-  return {
-    success: false,
-    message,
-    statusCode,
-    ...(process.env.NODE_ENV === "development" && { debug: error.message }),
-  };
-};
+/**
+ * Retrieves vendors using the legacy listing, filtering,
+ * pagination, and sorting behavior.
+ */
+export async function getVendors(req, res) {
+    const result = await getVendorsService(req.query);
 
-const buildVendorSearchFilters = (queryParams) => {
-  const { search, city, state, status, hasGst } = queryParams;
-
-  const filters = {};
-
-  if (search) {
-    filters.$or = [
-      { businessName: { $regex: search, $options: "i" } },
-      { name: { $regex: search, $options: "i" } },
-      { email: { $regex: search, $options: "i" } },
-      { contactNumber: { $regex: search, $options: "i" } },
-      { mobile: { $regex: search, $options: "i" } },
-      { gstNumber: { $regex: search, $options: "i" } },
-    ];
-  }
-
-  if (city) {
-    filters.city = { $regex: city, $options: "i" };
-  }
-
-  if (state) {
-    filters.state = { $regex: state, $options: "i" };
-  }
-
-  if (status && ["Active", "Inactive"].includes(status)) {
-    filters.status = status;
-  }
-
-  if (hasGst === "true") {
-    filters.gstNumber = { $exists: true, $ne: "" };
-  } else if (hasGst === "false") {
-    filters.$or = [
-      { gstNumber: { $exists: false } },
-      { gstNumber: "" },
-      { gstNumber: null },
-    ];
-  }
-
-  return filters;
-};
-
-export const getAllVendors = async (req, res) => {
-  try {
-    const {
-      search,
-      city,
-      state,
-      status,
-      hasGst,
-      page = 1,
-      limit = 100,
-      sortBy = "createdAt",
-      sortOrder = "desc",
-    } = req.query;
-
-    const filters = buildVendorSearchFilters({
-      search,
-      city,
-      state,
-      status,
-      hasGst,
+    return res.status(200).json({
+        success: true,
+        data: result.vendors,
+        pagination: result.pagination
     });
+}
 
-    const skip = (page - 1) * limit;
-    const sort = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
+/**
+ * Retrieves a single vendor by its MongoDB ID.
+ */
+export async function getVendorById(req, res) {
+    try {
+        const vendor = await getVendorByIdService(req.params.id);
 
-    const [totalVendors, vendors] = await Promise.all([
-      Vendor.countDocuments(filters),
-      Vendor.find(filters)
-        .sort(sort)
-        .skip(skip)
-        .limit(Number(limit))
-        .select("-__v"),
-    ]);
+        if (!vendor) {
+            throw new ApiError(404, "Vendor not found.");
+        }
 
-    const totalPages = Math.ceil(totalVendors / limit);
+        return res.status(200).json({
+            success: true,
+            data: vendor
+        });
+    } catch (error) {
+        if (error.name === "CastError") {
+            throw new ApiError(400, "Invalid data format");
+        }
 
-    res.status(200).json({
-      success: true,
-      data: vendors,
-      pagination: {
-        currentPage: Number(page),
-        totalPages,
-        totalVendors,
-        hasNextPage: page < totalPages,
-        hasPrevPage: page > 1,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Error fetching vendors",
-      error: error.message,
-    });
-  }
-};
+        throw error;
+    }
+}
 
-export const getVendorById = async (req, res) => {
-  try {
-    const vendor = await Vendor.findById(req.params.id);
-    if (!vendor) {
-      return res.status(404).json({
-        success: false,
-        message: "Vendor not found",
-      });
+/**
+ * Updates an existing vendor.
+ *
+ * When no new logo is uploaded, the existing logo is preserved.
+ * When a new logo is uploaded, the old logo is removed only
+ * after the database update succeeds.
+ */
+export async function updateVendor(req, res) {
+    let existingVendor;
+
+    try {
+        existingVendor = await getVendorByIdService(req.params.id);
+    } catch (error) {
+        if (error.name === "CastError") {
+            throw new ApiError(400, "Invalid data format");
+        }
+
+        throw error;
     }
 
-    res.status(200).json({
-      success: true,
-      data: vendor,
-    });
-  } catch (error) {
-    const errorResponse = handleVendorError(error);
-    res.status(errorResponse.statusCode).json(errorResponse);
-  }
-};
-
-export const updateVendor = async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: "Validation failed",
-      errors: errors.array(),
-    });
-  }
-
-  try {
-    const vendor = await Vendor.findById(req.params.id);
-    if (!vendor) {
-      if (req.file) {
-        await deleteOldImage(`uploads/vendors/${req.file.filename}`);
-      }
-      return res.status(404).json({
-        success: false,
-        message: "Vendor not found",
-      });
+    if (!existingVendor) {
+        throw new ApiError(404, "Vendor not found.");
     }
 
-    let vendorLogo = vendor.logo;
-    if (req.file) {
-      if (vendor.logo) {
-        await deleteOldImage(vendor.logo);
-      }
-      vendorLogo = `uploads/vendors/${req.file.filename}`;
-    }
+    let uploadedLogoPath = null;
 
-    const updateData = {
-      ...req.body,
-      logo: vendorLogo,
+    const vendorData = {
+        ...req.body,
+        logo: existingVendor.logo || ""
     };
 
-    const updatedVendor = await Vendor.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      { new: true, runValidators: true }
-    );
-
-    res.status(200).json({
-      success: true,
-      message: "Vendor updated successfully",
-      data: updatedVendor,
-    });
-  } catch (error) {
     if (req.file) {
-      await deleteOldImage(`uploads/vendors/${req.file.filename}`);
+        uploadedLogoPath = `uploads/vendors/${req.file.filename}`;
+        vendorData.logo = uploadedLogoPath;
     }
 
-    const errorResponse = handleVendorError(error, req.body);
-    res.status(errorResponse.statusCode).json(errorResponse);
-  }
-};
+    try {
+        const vendor = await updateVendorService(
+            req.params.id,
+            vendorData
+        );
 
-export const deleteVendor = async (req, res) => {
-  try {
-    const vendor = await Vendor.findById(req.params.id);
+        if (
+            req.file &&
+            existingVendor.logo &&
+            existingVendor.logo !== uploadedLogoPath
+        ) {
+            const oldLogoPath = path.join(
+                process.cwd(),
+                existingVendor.logo
+            );
+
+            await fs.unlink(oldLogoPath).catch(() => {});
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Vendor updated successfully.",
+            data: vendor
+        });
+    } catch (error) {
+        if (uploadedLogoPath) {
+            const absoluteLogoPath = path.join(
+                process.cwd(),
+                uploadedLogoPath
+            );
+
+            await fs.unlink(absoluteLogoPath).catch(() => {});
+        }
+
+        if (error.code === 11000 && error.keyPattern?.email) {
+            throw new ApiError(
+                409,
+                `Email ${vendorData.email} is already registered. Please use a different email.`
+            );
+        }
+
+        if (error.name === "ValidationError") {
+            throw new ApiError(400, "Invalid vendor data provided");
+        }
+
+        if (error.name === "CastError") {
+            throw new ApiError(400, "Invalid data format");
+        }
+
+        throw error;
+    }
+}
+
+/**
+ * Deletes a vendor and its associated logo file.
+ */
+export async function deleteVendor(req, res) {
+    let vendor;
+
+    try {
+        vendor = await deleteVendorService(req.params.id);
+    } catch (error) {
+        if (error.name === "CastError") {
+            throw new ApiError(400, "Invalid data format");
+        }
+
+        throw error;
+    }
+
     if (!vendor) {
-      return res.status(404).json({
-        success: false,
-        message: "Vendor not found",
-      });
+        throw new ApiError(404, "Vendor not found.");
     }
 
     if (vendor.logo) {
-      await deleteOldImage(vendor.logo);
+        const logoPath = path.join(
+            process.cwd(),
+            vendor.logo
+        );
+
+        await fs.unlink(logoPath).catch(() => {});
     }
 
-    await Vendor.findByIdAndDelete(req.params.id);
-
-    res.status(200).json({
-      success: true,
-      message: "Vendor deleted successfully",
+    return res.status(200).json({
+        success: true,
+        message: "Vendor deleted successfully."
     });
-  } catch (error) {
-    const errorResponse = handleVendorError(error);
-    res.status(errorResponse.statusCode).json(errorResponse);
-  }
-};
+}

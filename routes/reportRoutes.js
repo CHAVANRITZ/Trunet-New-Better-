@@ -1,5 +1,4 @@
-
-import express from "express";
+﻿import express from "express";
 import {
   getAllStockPurchasesReports,
   getAllStockRequestsReports,
@@ -14,11 +13,18 @@ import {
   getReplacementRecords,
   getAllFilledStock
 } from "../controllers/reportController.js";
-import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
+import { getUsageSummary } from "../controllers/usageSummaryController.js";
+import { authMiddleware as protect } from "../middlewares/authMiddleware.js";
+import { authorizeAccess } from "../middlewares/authorizationMiddleware.js";
 
 const router = express.Router();
 const MODULE = "Report";
-
+router.get(
+  "/indent-usage-summary",
+  protect,
+  authorizeAccess(MODULE, "view_own_report", "view_all_report"),
+  getUsageSummary
+);
 router.get(
   "/requests",
   protect,

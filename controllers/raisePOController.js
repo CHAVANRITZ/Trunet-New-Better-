@@ -1,578 +1,133 @@
-import OutletStock from "../models/OutletStock.js";
-import RaisePO from "../models/RaisePO.js";
-import User from "../models/User.js";
 
-const checkStockPurchasePermissions = (req, requiredPermissions = []) => {
-  const userPermissions = req.user.role?.permissions || [];
-  const purchaseModule = userPermissions.find(
-    (perm) => perm.module === "Purchase"
-  );
+import {
+    createRaisePO,
+    getAllRaisePO,
+    changeRejectedToPending,
+    approveRaisePO,
+    rejectRaisePO,
+    deletePO,
+    getNextVoucherNo,
+} from "../services/raisePOService.js";
 
-  if (!purchaseModule) {
-    return { hasAccess: false, permissions: {} };
-  }
+import { asyncHandler } from "../utils/asyncHandler.js";
 
-  const permissions = {
-    add_purchase_stock:
-      purchaseModule.permissions.includes("add_purchase_stock"),
-    view_own_purchase_stock: purchaseModule.permissions.includes(
-      "view_own_purchase_stock"
-    ),
-    view_all_purchase_stock: purchaseModule.permissions.includes(
-      "view_all_purchase_stock"
-    ),
-  };
+/**
+ * Create Raise PO.
+ */
+export const createRaisePOController = asyncHandler(
+    async (req, res) => {
+        const raisePO = await createRaisePO(req.user, req.body);
 
-  const hasRequiredPermission = requiredPermissions.some(
-    (perm) => permissions[perm]
-  );
-
-  return {
-    hasAccess: hasRequiredPermission,
-    permissions,
-    userCenter: req.user.center,
-  };
-};
-
-const isAdmin = (req) => {
-  return req.user.role?.roleTitle?.toLowerCase() === "admin" || req.user.role?.isAdmin === true;
-};
-
-const getUserOutletId = async (userId) => {
-  if (!userId) {
-    throw new Error("User ID is required");
-  }
-
-  const user = await User.findById(userId).populate(
-    "center",
-    "centerName centerCode centerType"
-  );
-
-  if (!user) {
-    throw new Error("User not found");
-  }
-
-  if (!user.center) {
-    throw new Error("User center information not found");
-  }
-
-  return user.center._id;
-};
-
-const validateUserOutletAccess = async (userId) => {
-  if (!userId) {
-    throw new Error("User authentication required");
-  }
-
-  const user = await User.findById(userId).populate(
-    "center",
-    "centerName centerCode centerType"
-  );
-
-  if (!user) {
-    throw new Error("User not found");
-  }
-
-  if (!user.center) {
-    throw new Error("User is not associated with any center");
-  }
-
-  return user.center._id;
-};
-
-// Auto-generates a unique voucher number like STELE/01/26-27 at save time
-const generateVoucherNo = async () => {
-  const currentDate = new Date();
-  const currentYear = currentDate.getFullYear();
-  const currentMonth = currentDate.getMonth() + 1;
-
-  // Financial year: April to March
-  let financialYear = "";
-  if (currentMonth >= 4) {
-    financialYear = `${currentYear.toString().slice(-2)}-${(currentYear + 1).toString().slice(-2)}`;
-  } else {
-    financialYear = `${(currentYear - 1).toString().slice(-2)}-${currentYear.toString().slice(-2)}`;
-  }
-
-  // Find all existing vouchers for this financial year
-  const existingVouchers = await RaisePO.find({
-    voucherNo: { $regex: `^STELE\\/\\d{2}\\/${financialYear}$` },
-  })
-    .select("voucherNo")
-    .lean();
-
-  // Extract max sequence number used
-  let maxSequence = 0;
-  for (const v of existingVouchers) {
-    const match = v.voucherNo.match(/^STELE\/(\d{2})\//);
-    if (match) {
-      const seq = parseInt(match[1]);
-      if (seq > maxSequence) maxSequence = seq;
+        return res.status(201).json({
+            success: true,
+            message:
+                "Purchase Order created successfully and pending approval",
+            data: raisePO,
+        });
     }
-  }
+);
 
-  // Try next sequence numbers until a unique one is found
-  let nextSequence = maxSequence + 1;
-  let voucherNo = "";
-  let isUnique = false;
+/**
+ * Get all Raise POs.
+ */
+export const getAllRaisePOController = asyncHandler(
+    async (req, res) => {
+        const result = await getAllRaisePO(req.user, req.query);
 
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const padded = nextSequence.toString().padStart(2, "0");
-    const candidate = `STELE/${padded}/${financialYear}`;
-    const exists = await RaisePO.findOne({ voucherNo: candidate }).lean();
-    if (!exists) {
-      voucherNo = candidate;
-      isUnique = true;
-      break;
-    }
-    nextSequence++;
-  }
-
-  if (!isUnique) {
-    throw new Error(
-      "Unable to generate a unique voucher number. Please contact support."
-    );
-  }
-
-  return voucherNo;
-};
-
-const stockPurchasePopulateOptions = [
-  {
-    path: "vendor",
-    select: "_id businessName contactPerson phone email gstNumber state",
-  },
-  { path: "outlet", select: "_id centerName centerCode centerType" },
-  {
-    path: "products.product",
-    select:
-      "_id productTitle productCode productImage productCategory trackSerialNumber",
-  },
-  { path: "createdBy", select: "_id fullName email" },
-  { path: "approvedBy", select: "_id fullName email" },
-];
-
-export const createRaisePO = async (req, res) => {
-  try {
-    const { hasAccess } = checkStockPurchasePermissions(req, [
-      "add_purchase_stock",
-    ]);
-
-    if (!hasAccess) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. add_purchase_stock permission required.",
-      });
-    }
-
-    const { date, vendor, outlet, products } = req.body;
-
-    let outletId = outlet;
-    if (!outletId) {
-      outletId = await getUserOutletId(req.user._id);
-    }
-
-    // Auto-generate voucher number on save — not passed from frontend
-    const voucherNo = await generateVoucherNo();
-
-    const processedProducts = products.map((product) => ({
-      product: product.product,
-      price: product.price,
-      purchasedQuantity: product.purchasedQuantity,
-      availableQuantity: product.purchasedQuantity,
-    }));
-
-    const raisePO = new RaisePO({
-      date: date || new Date(),
-      voucherNo,
-      vendor,
-      outlet: outletId,
-      products: processedProducts,
-      createdBy: req.user._id,
-      status: "pending",
-    });
-
-    const savedPO = await raisePO.save();
-
-    const populatedPO = await RaisePO.findById(savedPO._id)
-      .populate("vendor", "businessName name email mobile gstNumber")
-      .populate("outlet", "_id centerName centerCode centerType")
-      .populate("products.product", "productTitle productCode productPrice")
-      .populate("createdBy", "name email");
-
-    res.status(201).json({
-      success: true,
-      message: "Purchase Order created successfully and pending approval",
-      data: populatedPO,
-    });
-  } catch (error) {
-    console.error("Error creating purchase order:", error);
-    handleControllerError(error, res);
-  }
-};
-
-export const changeRejectedToPending = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const raisePO = await RaisePO.findById(id)
-      .populate("vendor")
-      .populate("outlet")
-      .populate("products.product")
-      .populate("createdBy")
-      .populate("approvedBy");
-
-    if (!raisePO) {
-      return res.status(404).json({
-        success: false,
-        message: "Purchase Order not found",
-      });
-    }
-
-    if (raisePO.status !== "rejected" && raisePO.status !== "approved") {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot change status from '${raisePO.status}' to pending. Only rejected or approved POs can be changed to pending.`,
-      });
-    }
-
-    raisePO.status = "pending";
-    raisePO.approvedBy = undefined;
-    raisePO.approvedAt = undefined;
-    raisePO.updatedAt = new Date();
-
-    await raisePO.save();
-
-    const updatedPO = await RaisePO.findById(id)
-      .populate("vendor")
-      .populate("outlet")
-      .populate("products.product")
-      .populate("createdBy")
-      .populate("approvedBy")
-      .lean();
-
-    res.status(200).json({
-      success: true,
-      message: "Purchase Order status changed to pending successfully",
-      data: updatedPO,
-    });
-  } catch (error) {
-    console.error("Error changing PO status:", error);
-    handleControllerError(error, res);
-  }
-};
-
-export const getAllRaisePO = async (req, res) => {
-  try {
-    const { hasAccess, permissions } = checkStockPurchasePermissions(req, [
-      "view_own_purchase_stock",
-      "view_all_purchase_stock",
-    ]);
-
-    if (!hasAccess) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
-      });
-    }
-
-    const {
-      page = 1,
-      limit = 100,
-      search,
-      outlet,
-      startDate,
-      endDate,
-      ...otherParams
-    } = req.query;
-
-    const filter = {};
-
-    if (permissions.view_all_purchase_stock && outlet) {
-      filter.outlet = outlet;
-    } else if (
-      permissions.view_own_purchase_stock &&
-      !permissions.view_all_purchase_stock
-    ) {
-      const userOutletId = await validateUserOutletAccess(req.user._id);
-      filter.outlet = userOutletId;
-    } else if (outlet) {
-      filter.outlet = outlet;
-    }
-
-    if (startDate || endDate) {
-      filter.date = {};
-      if (startDate) filter.date.$gte = new Date(startDate);
-      if (endDate) {
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        filter.date.$lte = end;
-      }
-    }
-
-    if (search) {
-      filter.$or = [
-        { voucherNo: { $regex: search, $options: "i" } },
-        { "vendor.businessName": { $regex: search, $options: "i" } },
-        { "vendor.name": { $regex: search, $options: "i" } },
-        { "vendor.email": { $regex: search, $options: "i" } },
-        { "vendor.mobile": { $regex: search, $options: "i" } },
-        { "outlet.centerName": { $regex: search, $options: "i" } },
-        { "outlet.centerCode": { $regex: search, $options: "i" } },
-        { "products.product.productTitle": { $regex: search, $options: "i" } },
-        { "products.product.productCode": { $regex: search, $options: "i" } },
-        {
-          "products.serialNumbers.serialNumber": {
-            $regex: search,
-            $options: "i",
-          },
-        },
-      ];
-    }
-
-    if (otherParams.type) filter.type = otherParams.type;
-    if (otherParams.vendor) filter.vendor = otherParams.vendor;
-
-    const total = await RaisePO.countDocuments(filter);
-
-    const purchases = await RaisePO.find(filter)
-      .populate(stockPurchasePopulateOptions)
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit))
-      .lean();
-
-    if (purchases.length === 0) {
-      return res.status(200).json({
-        success: true,
-        message: "No raise po found",
-        data: [],
-        pagination: {
-          currentPage: parseInt(page),
-          totalPages: 0,
-          totalItems: 0,
-          itemsPerPage: parseInt(limit),
-        },
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      message: "Data retrieved successfully",
-      data: purchases,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
-        totalItems: total,
-        itemsPerPage: parseInt(limit),
-      },
-    });
-  } catch (error) {
-    console.error("Error retrieving raise po:", error);
-    handleControllerError(error, res);
-  }
-};
-
-export const deletePO = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const outletId = await validateUserOutletAccess(req.user._id);
-
-    const purchase = await RaisePO.findOne({ _id: id, outlet: outletId });
-
-    if (!purchase) {
-      return res.status(404).json({
-        success: false,
-        message: "Stock purchase not found or access denied",
-      });
-    }
-
-    const hasTransfers = purchase.products.some(
-      (product) => product.availableQuantity < product.purchasedQuantity
-    );
-
-    if (hasTransfers) {
-      return res.status(400).json({
-        success: false,
-        message: "Cannot delete stock purchase that has transferred stock",
-      });
-    }
-
-    for (const productItem of purchase.products) {
-      await OutletStock.findOneAndUpdate(
-        { outlet: outletId, product: productItem.product },
-        {
-          $inc: {
-            totalQuantity: -productItem.purchasedQuantity,
-            availableQuantity: -productItem.purchasedQuantity,
-          },
-          $pull: {
-            serialNumbers: { purchaseId: purchase._id },
-          },
+        if (result.data.length === 0) {
+            return res.status(200).json({
+                success: true,
+                message: "No raise po found",
+                data: [],
+                pagination: result.pagination,
+            });
         }
-      );
+
+        return res.status(200).json({
+            success: true,
+            message: "Data retrieved successfully",
+            data: result.data,
+            pagination: result.pagination,
+        });
     }
+);
 
-    await RaisePO.findOneAndDelete({ _id: id, outlet: outletId });
+/**
+ * Change rejected/approved PO back to pending.
+ */
+export const changeRejectedToPendingController = asyncHandler(
+    async (req, res) => {
+        const raisePO = await changeRejectedToPending(
+            req.user,
+            req.params.id
+        );
 
-    res.status(200).json({
-      success: true,
-      message: "PO deleted successfully",
+        return res.status(200).json({
+            success: true,
+            message:
+                "Purchase Order status changed to pending successfully",
+            data: raisePO,
+        });
+    }
+);
+
+/**
+ * Approve Raise PO.
+ */
+export const approveRaisePOController = asyncHandler(
+    async (req, res) => {
+        const raisePO = await approveRaisePO(
+            req.user,
+            req.params.id
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "Purchase Order approved successfully",
+            data: raisePO,
+        });
+    }
+);
+
+/**
+ * Reject Raise PO.
+ */
+export const rejectRaisePOController = asyncHandler(
+    async (req, res) => {
+        const raisePO = await rejectRaisePO(
+            req.user,
+            req.params.id
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "Purchase Order rejected successfully",
+            data: raisePO,
+        });
+    }
+);
+
+export const getNextVoucherNoController = async (req, res) => {
+    const voucherNo = await getNextVoucherNo();
+
+    return res.status(200).json({
+        success: true,
+        voucherNo,
+        data: { voucherNo },
+        message: "Voucher number generated successfully",
     });
-  } catch (error) {
-    console.error("Error deleting po data:", error);
-    handleControllerError(error, res);
-  }
 };
 
-const handleControllerError = (error, res) => {
-  console.error("Controller Error:", error);
+/**
+ * Delete Raise PO.
+ */
+export const deletePOController = asyncHandler(
+    async (req, res) => {
+        await deletePO(req.user, req.params.id);
 
-  if (
-    error.message.includes("User center information not found") ||
-    error.message.includes("User authentication required") ||
-    error.message.includes("User not found") ||
-    error.message.includes("User ID is required") ||
-    error.message.includes("Unable to generate a unique voucher number")
-  ) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-    });
-  }
-
-  if (error.name === "ValidationError") {
-    const errors = Object.values(error.errors).map((err) => err.message);
-    return res.status(400).json({
-      success: false,
-      message: "Validation error",
-      errors,
-    });
-  }
-
-  if (error.code === 11000) {
-    return res.status(400).json({
-      success: false,
-      message: "Duplicate invoice number found",
-    });
-  }
-
-  if (error.name === "CastError") {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid ID format",
-    });
-  }
-
-  res.status(500).json({
-    success: false,
-    message: "Internal server error",
-    error:
-      process.env.NODE_ENV === "development"
-        ? error.message
-        : "Internal server error",
-  });
-};
-
-export const approveRaisePO = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!isAdmin(req)) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. Only admin can approve POs.",
-      });
+        return res.status(200).json({
+            success: true,
+            message: "PO deleted successfully",
+        });
     }
-
-    const po = await RaisePO.findById(id);
-    if (!po) {
-      return res.status(404).json({
-        success: false,
-        message: "Purchase order not found",
-      });
-    }
-
-    if (po.status !== "pending") {
-      return res.status(400).json({
-        success: false,
-        message: `PO is already ${po.status}`,
-      });
-    }
-
-    po.status = "approved";
-    po.approvedBy = req.user._id;
-    po.approvedAt = new Date();
-
-    const approvedPO = await po.save();
-
-    for (const productItem of approvedPO.products) {
-      await OutletStock.updateStock(
-        po.outlet,
-        productItem.product,
-        productItem.purchasedQuantity,
-        approvedPO._id
-      );
-    }
-
-    const populatedPO = await RaisePO.findById(approvedPO._id)
-      .populate("vendor", "businessName name email mobile gstNumber")
-      .populate("outlet", "_id centerName centerCode centerType")
-      .populate("products.product", "productTitle productCode productPrice")
-      .populate("createdBy", "name email")
-      .populate("approvedBy", "name email");
-
-    res.status(200).json({
-      success: true,
-      message: "Purchase Order approved successfully",
-      data: populatedPO,
-    });
-  } catch (error) {
-    console.error("Error approving purchase order:", error);
-    handleControllerError(error, res);
-  }
-};
-
-export const rejectRaisePO = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!isAdmin(req)) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. Only admin can reject POs.",
-      });
-    }
-
-    const po = await RaisePO.findById(id);
-    if (!po) {
-      return res.status(404).json({
-        success: false,
-        message: "Purchase order not found",
-      });
-    }
-
-    if (po.status !== "pending") {
-      return res.status(400).json({
-        success: false,
-        message: `PO is already ${po.status}`,
-      });
-    }
-
-    po.status = "rejected";
-    po.approvedBy = req.user._id;
-    po.approvedAt = new Date();
-
-    const rejectedPO = await po.save();
-
-    res.status(200).json({
-      success: true,
-      message: "Purchase Order rejected successfully",
-      data: rejectedPO,
-    });
-  } catch (error) {
-    console.error("Error rejecting purchase order:", error);
-    handleControllerError(error, res);
-  }
-};
+);

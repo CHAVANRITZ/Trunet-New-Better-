@@ -1,73 +1,80 @@
 import express from "express";
+
 import {
-  controlRoomIdValidator,
-  createControlRoomValidator,
-  updateControlRoomValidator,
-} from "../validations/controlRoomValidator.js";
-import {
-  createControlRoom,
-  deleteControlRoom,
-  getControlRoomById,
-  getControlRooms,
-  updateControlRoom,
+    createControlRoom,
+    getControlRooms,
+    getControlRoomById,
+    updateControlRoom,
+    deleteControlRoom,
 } from "../controllers/controlRoomController.js";
-import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
-const MODULE = "Settings";
+
+import { authMiddleware } from "../middlewares/authMiddleware.js";
+import { authorizeAccess } from "../middlewares/authorizationMiddleware.js";
+
+import {
+    createControlRoomValidator,
+    updateControlRoomValidator,
+    controlRoomIdValidator,
+} from "../validators/controlRoomValidator.js";
+
 const router = express.Router();
 
+const MODULE = "Settings";
+
+router.use(authMiddleware);
+
 router.post(
-  "/",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "manage_control_room_all_center",
-    "manage_control_room_own_center"
-  ),
-  createControlRoomValidator,
-  createControlRoom
+    "/",
+    authorizeAccess(
+        MODULE,
+        "manage_control_room_all_center",
+        "manage_control_room_own_center"
+    ),
+    createControlRoomValidator,
+    createControlRoom
 );
-router.get(
-  "/",  protect,
-  authorizeAccess(
-    MODULE,
-    "view_control_room_own_center",
-    "view_control_room_all_center"
-  ),
 
-  getControlRooms
-);
 router.get(
-  "/:id",  protect,
-  authorizeAccess(
-    MODULE,
-    "view_control_room_own_center",
-    "view_control_room_all_center"
-  ),
-
-  controlRoomIdValidator,
-  getControlRoomById
+    "/",
+    authorizeAccess(
+        MODULE,
+        "view_control_room_own_center",
+        "view_control_room_all_center"
+    ),
+    getControlRooms
 );
+
+router.get(
+    "/:id",
+    authorizeAccess(
+        MODULE,
+        "view_control_room_own_center",
+        "view_control_room_all_center"
+    ),
+    controlRoomIdValidator,
+    getControlRoomById
+);
+
 router.put(
-  "/:id",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "manage_control_room_all_center",
-    "manage_control_room_own_center"
-  ),
-  updateControlRoomValidator,
-  updateControlRoom
+    "/:id",
+    authorizeAccess(
+        MODULE,
+        "manage_control_room_own_center",
+        "manage_control_room_all_center"
+    ),
+    updateControlRoomValidator,
+    updateControlRoom
 );
+
 router.delete(
-  "/:id",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "manage_control_room_all_center",
-    "manage_control_room_own_center"
-  ),
-  controlRoomIdValidator,
-  deleteControlRoom
+    "/:id",
+    authorizeAccess(
+        MODULE,
+        "manage_control_room_all_center",
+        "manage_control_room_own_center"
+    ),
+    controlRoomIdValidator,
+    deleteControlRoom
 );
 
 export default router;

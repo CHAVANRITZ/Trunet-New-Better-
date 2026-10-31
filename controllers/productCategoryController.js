@@ -1,111 +1,80 @@
-import ProductCategory from "../models/ProductCategory.js";
+import {
+    createProductCategory,
+    getProductCategories,
+    getProductCategoryById,
+    updateProductCategory,
+    deleteProductCategory
+} from "../services/productCategoryService.js";
 
-export const createProductCategory = async (req, res) => {
-  try {
-    const { productCategory, remark } = req.body;
+import { sendSuccess } from "../utils/responseHandler.js";
 
-    const existingCategory = await ProductCategory.findOne({ productCategory });
-    if (existingCategory) {
-      return res
-        .status(400)
-        .json({ message: "Product category already exists" });
-    }
+/**
+ * Creates a new product category.
+ *
+ * The controller is intentionally thin: it extracts HTTP input,
+ * delegates business logic to the service, and formats the response.
+ */
+export const createProductCategoryController = async (req, res) => {
+    const category = await createProductCategory(req.body);
 
-    const category = await ProductCategory.create({ productCategory, remark });
-    res.status(201).json({ success: true, data: category });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-export const getAllCategories = async (req, res) => {
-  try {
-    const {
-      search,
-      page = 1,
-      limit = 100,
-      sortBy = "createdAt",
-      sortOrder = "desc",
-    } = req.query;
-
-    const filter = {};
-
-    if (search?.trim()) {
-      const searchTerm = search.trim();
-      filter.$or = [
-        { name: { $regex: searchTerm, $options: "i" } },
-        { description: { $regex: searchTerm, $options: "i" } },
-      ];
-    }
-
-    const skip = (page - 1) * limit;
-    const sort = { [sortBy]: sortOrder === "asc" ? 1 : -1 };
-
-    const [categories, totalCategories] = await Promise.all([
-      ProductCategory.find(filter)
-        .sort(sort)
-        .skip(skip)
-        .limit(Number(limit))
-        .select("-__v"),
-
-      ProductCategory.countDocuments(filter),
-    ]);
-
-    const totalPages = Math.ceil(totalCategories / limit);
-
-    res.json({
-      success: true,
-      data: categories,
-      pagination: {
-        currentPage: Number(page),
-        totalPages,
-        totalCategories,
-      },
+    return sendSuccess(res, {
+        statusCode: 201,
+        message: "Product category created successfully.",
+        data: category
     });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Error fetching categories",
-      error: error.message,
+};
+
+/**
+ * Returns a paginated list of product categories.
+ */
+export const getProductCategoriesController = async (req, res) => {
+    const result = await getProductCategories(req.query);
+
+    return sendSuccess(res, {
+        statusCode: 200,
+        message: "Product categories retrieved successfully.",
+        data: result
     });
-  }
 };
 
-export const getCategoryById = async (req, res) => {
-  try {
-    const category = await ProductCategory.findById(req.params.id);
-    if (!category)
-      return res.status(404).json({ message: "Category not found" });
-    res.status(200).json({ success: true, data: category });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
+/**
+ * Returns a single product category.
+ */
+export const getProductCategoryByIdController = async (req, res) => {
+    const category = await getProductCategoryById(req.params.id);
+
+    return sendSuccess(res, {
+        statusCode: 200,
+        message: "Product category retrieved successfully.",
+        data: category
+    });
 };
 
-export const updateCategory = async (req, res) => {
-  try {
-    const category = await ProductCategory.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true }
+/**
+ * Updates an existing product category.
+ */
+export const updateProductCategoryController = async (req, res) => {
+    const category = await updateProductCategory(
+        req.params.id,
+        req.body
     );
-    if (!category)
-      return res.status(404).json({ message: "Category not found" });
-    res.status(200).json({ success: true, data: category });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
+
+    return sendSuccess(res, {
+        statusCode: 200,
+        message: "Product category updated successfully.",
+        data: category
+    });
 };
 
-export const deleteCategory = async (req, res) => {
-  try {
-    const category = await ProductCategory.findByIdAndDelete(req.params.id);
-    if (!category)
-      return res.status(404).json({ message: "Category not found" });
-    res
-      .status(200)
-      .json({ success: true, message: "Category deleted successfully" });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
+/**
+ * Deletes an existing product category.
+ */
+export const deleteProductCategoryController = async (req, res) => {
+    const category = await deleteProductCategory(req.params.id);
+
+    return sendSuccess(res, {
+        statusCode: 200,
+        message: "Product category deleted successfully.",
+        data: category
+    });
 };

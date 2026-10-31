@@ -2,123 +2,1035 @@ import mongoose from "mongoose";
 import StockUsage from "../models/StockUsage.js";
 import StockRequest from "../models/StockRequest.js";
 import StockTransfer from "../models/StockTransfer.js";
-import StockClosing from "../models/ReportSubmission.js";
+import StockClosing from "../models/StockClosing.js";
 import DamageReturn from "../models/DamageReturn.js";
 import ReplacementRecord from "../models/ReplacementRecord.js";
-import Center from "../models/Center.js";
 import ReturnRecord from "../models/ReturnRecord.js";
+import CenterReturn from "../models/CenterReturn.js";
+import Center from "../models/Center.js";
+import Product from "../models/Product.js";
 
-// ============================================================
-// MOVEMENT FIELDS - Excludes opening and closing
-// ============================================================
-const MOVEMENT_FIELDS = [
-  'purchase', 'distributed', 'transferReceive', 'replaceReturn', 'usage',
-  'transferGiven', 'nc', 'convert', 'shifting', 'buildingUsage', 'buildingDamage',
-  'other', 'return', 'repair', 'damage', 'replaceDamage', 'stolenCenter', 'stolenField'
+/* ============================================================================
+ * INDENT USAGE SUMMARY  -  LEDGER BASED
+ * ----------------------------------------------------------------------------
+ * Closing is NEVER read from live CenterStock. It is always computed as
+ *
+ *     closing = opening + inflow columns - outflow columns
+ *
+ * and opening itself is built from the very same event list (everything that
+ * happened before the report start), so  opening + movements == closing  holds
+ * by construction for every row.
+ *
+ * When stock really moves (matches the stock services/models):
+ *   Stock request   -> center gains stock only on RECEIPT (Completed, or a
+ *                      partial receipt that was credited). Confirmed/Shipped
+ *                      do NOT touch center stock.
+ *   Stock transfer  -> source reserves stock at Confirm (released again on
+ *                      Reject/Incomplete), destination gains only on Completed.
+ *   Stock usage     -> available stock drops when the usage is saved
+ *                      (completed). "Damage Return" usages are reserved while
+ *                      pending and also count.
+ *   Return record   -> serial goes back to available (completed only).
+ *   Center return  -> stock leaves the center to the reseller when the return
+ *                      is created (any status), counted under Transfer Given.
+ *   Damage return doc / Replacement record -> net ZERO on available stock
+ *                      (consumed -> damage_pending, old serial back +1 / new
+ *                      serial out -1). Shown for information, not in closing.
+ * ========================================================================== */
+
+// ---------------------------------------------------------------------------
+// Column definitions
+// ---------------------------------------------------------------------------
+// Only these three columns increase closing stock
+const INFLOW_FIELDS = [
+  "purchase",
+  "transferReceive",
+];
+const OUTFLOW_FIELDS = [
+  "return",
+  "distributed",
+  "transferGiven",
+  "usage",
+  "nc",
+  "convert",
+  "shifting",
+  "buildingUsage",
+  "buildingDamage",
+  "other",
+  "repair",
+  "damage",
+  "stolenCenter",
+  "stolenField",
 ];
 
+// Informational columns don't affect closing stock
+const INFO_FIELDS = [
+  "replaceReturn",
+  "replaceDamage",
+];
+
+const MOVEMENT_FIELDS = [
+  ...INFLOW_FIELDS,
+  ...OUTFLOW_FIELDS,
+  ...INFO_FIELDS,
+];
+// ---------------------------------------------------------------------------
+// Timezone handling (default IST, +05:30). Override with
+// REPORT_TZ_OFFSET_MINUTES; empty / invalid values fall back to IST.
+// ---------------------------------------------------------------------------
+const TZ_OFFSET_MINUTES = (() => {
+  const raw = process.env.REPORT_TZ_OFFSET_MINUTES;
+  if (raw === undefined || raw === null || String(raw).trim() === "") {
+    return 330;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : 330;
+})();
+
+const OFFSET_MS = TZ_OFFSET_MINUTES * 60 * 1000;
+
+const startOfDayTZ = (y, m, d) =>
+  new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0) - OFFSET_MS);
+
+const endOfDayTZ = (y, m, d) =>
+  new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999) - OFFSET_MS);
+
+const endOfDayTZOf = (date) => {
+  const shifted = new Date(new Date(date).getTime() + OFFSET_MS);
+  return endOfDayTZ(
+    shifted.getUTCFullYear(),
+    shifted.getUTCMonth() + 1,
+    shifted.getUTCDate()
+  );
+};
+
+class ReportInputError extends Error {}
+
+// Accepts DD-MM-YYYY or YYYY-MM-DD. Returns {y, m, d} or null.
+const parseDateParts = (value) => {
+  if (!value || typeof value !== "string") return null;
+
+  const text = value.trim();
+  let y;
+  let m;
+  let d;
+
+  let match = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (match) {
+    y = Number(match[1]);
+    m = Number(match[2]);
+    d = Number(match[3]);
+  } else {
+    match = text.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+    if (!match) return null;
+    d = Number(match[1]);
+    m = Number(match[2]);
+    y = Number(match[3]);
+  }
+
+  const check = new Date(Date.UTC(y, m - 1, d));
+  if (
+    check.getUTCFullYear() !== y ||
+    check.getUTCMonth() !== m - 1 ||
+    check.getUTCDate() !== d
+  ) {
+    return null;
+  }
+
+  return { y, m, d };
+};
+
+const getDateRange = (startDate, endDate, month, year) => {
+  if (startDate && endDate) {
+    const s = parseDateParts(startDate);
+    const e = parseDateParts(endDate);
+
+    if (!s || !e) {
+      throw new ReportInputError(
+        `Invalid date format. Expected DD-MM-YYYY, got startDate="${startDate}", endDate="${endDate}"`
+      );
+    }
+
+    const start = startOfDayTZ(s.y, s.m, s.d);
+    const end = endOfDayTZ(e.y, e.m, e.d);
+
+    if (start > end) {
+      throw new ReportInputError("startDate cannot be after endDate");
+    }
+
+    return { startDate: start, endDate: end };
+  }
+
+  let y;
+  let m;
+
+  if (month && year) {
+    m = parseInt(month, 10);
+    y = parseInt(year, 10);
+
+    if (!m || m < 1 || m > 12 || !y) {
+      throw new ReportInputError(
+        `Invalid month/year: month=${month}, year=${year}`
+      );
+    }
+  } else {
+    const nowShifted = new Date(Date.now() + OFFSET_MS);
+    y = nowShifted.getUTCFullYear();
+    m = nowShifted.getUTCMonth() + 1;
+  }
+
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+
+  return {
+    startDate: startOfDayTZ(y, m, 1),
+    endDate: endOfDayTZ(y, m, lastDay),
+  };
+};
+
+// ---------------------------------------------------------------------------
+// Access control: which centers may this user see?
+// ---------------------------------------------------------------------------
+
+const getTargetCenters = async (requestedCenterId, user) => {
+  if (!user) {
+    throw new Error("Authentication required");
+  }
+
+  const isSuperAdmin =
+    user.isSuperAdmin === true ||
+    user.fullUser?.isSuperAdmin === true ||
+    user.role?.isSuperAdmin === true;
+
+  const assignedCenter =
+    user.selectedCenterId ||
+    user.fullUser?.center?._id ||
+    user.fullUser?.center ||
+    user.center?._id ||
+    user.center ||
+    null;
+
+  const centerFields = "centerName centerCode centerType";
+
+  // Only Super Admin can request all centers.
+  if (requestedCenterId === "all") {
+    if (!isSuperAdmin) {
+      throw new Error(
+        "Access denied: all-center usage summary requires Super Admin access"
+      );
+    }
+
+    return Center.find({})
+      .select(centerFields)
+      .lean();
+  }
+
+  // Every non-Super Admin is restricted to their authorized center,
+  // regardless of whether they have view-own or view-all permission.
+  if (!isSuperAdmin) {
+    if (!assignedCenter) {
+      throw new Error("User is not associated with a center");
+    }
+
+    const assignedCenterId = String(assignedCenter);
+
+    if (!mongoose.Types.ObjectId.isValid(assignedCenterId)) {
+      throw new Error("Invalid authorized center ID");
+    }
+
+    if (requestedCenterId) {
+      if (!mongoose.Types.ObjectId.isValid(requestedCenterId)) {
+        throw new Error("Invalid center ID");
+      }
+
+      if (String(requestedCenterId) !== assignedCenterId) {
+        throw new Error("Access denied to the requested center");
+      }
+    }
+
+    const center = await Center.findById(assignedCenterId)
+      .select(centerFields)
+      .lean();
+
+    return center ? [center] : [];
+  }
+
+  // Preserve existing Super Admin behavior for a specific center.
+  if (requestedCenterId) {
+    if (!mongoose.Types.ObjectId.isValid(requestedCenterId)) {
+      throw new Error("Invalid center ID");
+    }
+
+    const center = await Center.findById(requestedCenterId)
+      .select(centerFields)
+      .lean();
+
+    return center ? [center] : [];
+  }
+
+  // Same as legacy: no centerId -> the user's own center (not all centers).
+  const ownCenterId = user.center?._id || user.center;
+  if (!ownCenterId) return [];
+
+  const ownCenter = await Center.findById(ownCenterId)
+    .select(centerFields)
+    .lean();
+
+  return ownCenter ? [ownCenter] : [];
+};
+
+
+// ---------------------------------------------------------------------------
+// Usage type -> report column
+// ---------------------------------------------------------------------------
+const usageField = (usageType, connectionType) => {
+  switch (usageType) {
+    case "Customer":
+      switch (connectionType) {
+        case "NC":
+          return "nc";
+        case "Convert":
+          return "convert";
+        case "Shifting":
+          return "shifting";
+        case "Repair":
+          return "repair";
+        default:
+          return "usage";
+      }
+    case "Building":
+    case "Control Room":
+      return "buildingUsage";
+    case "Building to Building":
+      return "shifting";
+    case "Damage":
+    case "Damage Return":
+      return "damage";
+    case "Stolen from Center":
+      return "stolenCenter";
+    case "Stolen from Field":
+      return "stolenField";
+    case "Other":
+      return "other";
+    default:
+      return "usage";
+  }
+};
+
+// ---------------------------------------------------------------------------
+// <ledger-core>  (pure functions, no database access)
+// ---------------------------------------------------------------------------
+const toNumber = (value) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const createEmptyRow = (productName, productId) => ({
+  productName: productName || "Unknown Product",
+  productId,
+  opening: 0,
+  purchase: 0,
+  distributed: 0,
+  transferReceive: 0,
+  replaceReturn: 0,
+  usage: 0,
+  transferGiven: 0,
+  nc: 0,
+  convert: 0,
+  shifting: 0,
+  buildingUsage: 0,
+  buildingDamage: 0,
+  other: 0,
+  return: 0,
+  repair: 0,
+  damage: 0,
+  replaceDamage: 0,
+  stolenCenter: 0,
+  stolenField: 0,
+  closing: 0,
+  closingDate: null,
+  closingSource: "ledger",
+  openingAdjustment: 0,
+  center: null,
+});
+
+const signedQuantity = (field, qty) => {
+  if (INFLOW_FIELDS.includes(field)) return qty;
+  if (OUTFLOW_FIELDS.includes(field)) return -qty;
+  return 0;
+};
+
+const dayKey = (date) =>
+  Math.floor((new Date(date).getTime() + OFFSET_MS) / 86400000);
+
+/**
+ * events   : [{ pid, date, field, qty }]  stock movements AND info rows
+ * baseline : Map<pid, qty>  approved snapshot quantity (or empty)
+ * start    : Date           report start; events before it build the opening
+ * end      : Date           report end;   events after it are ignored
+ *
+ * floorOpening: replay pre-start events in date order. If stock would drop
+ * below zero, some inflow has no record (CSV import, repair return, manual
+ * correction). The missing amount is added to the opening and exposed in
+ * row.openingAdjustment instead of showing negative stock.
+ */
+const assembleRows = ({
+  events,
+  baseline,
+  start,
+  end,
+  productFilter,
+  floorOpening = true,
+}) => {
+  const pre = new Map();
+  const rows = new Map();
+
+  const ensureRow = (pid) => {
+    if (!rows.has(pid)) rows.set(pid, createEmptyRow(null, pid));
+    return rows.get(pid);
+  };
+
+  for (const event of events) {
+    const pid = String(event.pid);
+    const when = new Date(event.date).getTime();
+    const qty = toNumber(event.qty);
+
+    if (productFilter && pid !== String(productFilter)) continue;
+    if (!qty) continue;
+    if (when > end.getTime()) continue;
+
+    if (when < start.getTime()) {
+      if (!pre.has(pid)) pre.set(pid, []);
+      pre.get(pid).push({ ...event, qty });
+      continue;
+    }
+
+    ensureRow(pid)[event.field] += qty;
+  }
+
+  const openingByPid = new Map();
+  const adjustmentByPid = new Map();
+  const pids = new Set([...pre.keys(), ...(baseline ? baseline.keys() : [])]);
+
+  for (const pid of pids) {
+    let balance = toNumber(baseline?.get(pid));
+    let adjustment = 0;
+
+    const list = (pre.get(pid) || []).sort((a, b) => {
+      const byDay = dayKey(a.date) - dayKey(b.date);
+      if (byDay !== 0) return byDay;
+      // Same day: inflows first so same-day receipt + usage never goes negative.
+      return signedQuantity(b.field, 1) - signedQuantity(a.field, 1);
+    });
+
+    for (const event of list) {
+      balance += signedQuantity(event.field, event.qty);
+
+      if (floorOpening && balance < 0) {
+        adjustment += -balance;
+        balance = 0;
+      }
+    }
+
+    openingByPid.set(pid, balance);
+    adjustmentByPid.set(pid, adjustment);
+  }
+
+  for (const [pid, qty] of openingByPid) {
+    if (qty !== 0 || (productFilter && pid === String(productFilter))) {
+      ensureRow(pid);
+    }
+  }
+
+  if (productFilter) ensureRow(String(productFilter));
+
+  const result = [];
+
+  for (const [pid, row] of rows) {
+    row.opening = openingByPid.get(pid) || 0;
+    row.openingAdjustment = adjustmentByPid.get(pid) || 0;
+
+    row.closing =
+      row.opening +
+      INFLOW_FIELDS.reduce((sum, key) => sum + row[key], 0) -
+      OUTFLOW_FIELDS.reduce((sum, key) => sum + row[key], 0);
+
+    const hasActivity =
+      row.opening !== 0 ||
+      MOVEMENT_FIELDS.some((key) => row[key] !== 0) ||
+      (productFilter && pid === String(productFilter));
+
+    if (hasActivity) result.push(row);
+  }
+
+  return result;
+};
+// </ledger-core>
+
+// ---------------------------------------------------------------------------
+// Data access: every query returns plain events { pid, date, field, qty }
+// ---------------------------------------------------------------------------
+const oid = (value) => new mongoose.Types.ObjectId(String(value));
+
+const dateWindow = (field, lower, upper) => {
+  const condition = { $lte: upper };
+  if (lower) condition.$gt = lower;
+  return { [field]: condition };
+};
+
+const receiptDateExpr = {
+  $ifNull: [
+    "$receivingInfo.receivedAt",
+    { $ifNull: ["$completionInfo.completedOn", "$date"] },
+  ],
+};
+
+const receivedQtyExpr = (path = "$products") => ({
+  $ifNull: [
+    `${path}.receivedQuantity`,
+    { $ifNull: [`${path}.approvedQuantity`, `${path}.quantity`] },
+  ],
+});
+
+const approvedQtyExpr = (path = "$products") => ({
+  $ifNull: [`${path}.approvedQuantity`, `${path}.quantity`],
+});
+
+const fetchRequestEvents = async (centerId, productId, lower, upper) => {
+  const rows = await StockRequest.aggregate([
+    {
+      $match: {
+        $or: [{ center: centerId }, { warehouse: centerId }],
+        // Stock reaches the center only on receipt.
+        $and: [
+          {
+            $or: [
+              { status: "Completed" },
+              { status: "Incompleted", stockTransferStatus: "completed" },
+            ],
+          },
+        ],
+      },
+    },
+    { $addFields: { effDate: receiptDateExpr } },
+    { $match: dateWindow("effDate", lower, upper) },
+    { $unwind: "$products" },
+    ...(productId ? [{ $match: { "products.product": productId } }] : []),
+    {
+      $project: {
+        pid: "$products.product",
+        date: "$effDate",
+        qty: receivedQtyExpr(),
+        isReceiver: { $eq: ["$center", centerId] },
+      },
+    },
+  ]);
+
+  return rows.map((r) => ({
+    pid: String(r.pid),
+    date: r.date,
+    qty: toNumber(r.qty),
+    field: r.isReceiver ? "purchase" : "distributed",
+  }));
+};
+
+const fetchTransferEvents = async (centerId, productId, lower, upper) => {
+  const rows = await StockTransfer.aggregate([
+    {
+      $match: {
+        $or: [{ fromCenter: centerId }, { toCenter: centerId }],
+        status: { $in: ["Confirmed", "Shipped", "Completed"] },
+      },
+    },
+    {
+      $addFields: {
+        isFrom: { $eq: ["$fromCenter", centerId] },
+        receiptDate: receiptDateExpr,
+      },
+    },
+    // Destination gains stock only when the transfer is Completed.
+    { $match: { $or: [{ isFrom: true }, { status: "Completed" }] } },
+    {
+      $addFields: {
+        effDate: { $cond: ["$isFrom", "$date", "$receiptDate"] },
+      },
+    },
+    { $match: dateWindow("effDate", lower, upper) },
+    { $unwind: "$products" },
+    ...(productId ? [{ $match: { "products.product": productId } }] : []),
+    {
+      $project: {
+        pid: "$products.product",
+        date: "$effDate",
+        isFrom: 1,
+        qty: {
+          $cond: [
+            "$isFrom",
+            {
+              // Source: reserved approved qty at Confirm; once Completed the
+              // un-received part is released, so net = received qty.
+              $cond: [
+                { $eq: ["$status", "Completed"] },
+                receivedQtyExpr(),
+                approvedQtyExpr(),
+              ],
+            },
+            receivedQtyExpr(),
+          ],
+        },
+      },
+    },
+  ]);
+
+  return rows.map((r) => ({
+    pid: String(r.pid),
+    date: r.date,
+    qty: toNumber(r.qty),
+    field: r.isFrom ? "transferGiven" : "transferReceive",
+  }));
+};
+
+const fetchUsageEvents = async (centerId, productId, lower, upper) => {
+  const rows = await StockUsage.aggregate([
+    {
+      $match: {
+        // Same as legacy: usages where this center is the source OR the toCenter
+        $or: [{ center: centerId }, { toCenter: centerId }],
+        status: { $in: ["completed", "pending"] },
+        ...dateWindow("date", lower, upper),
+      },
+    },
+    { $unwind: "$items" },
+    ...(productId ? [{ $match: { "items.product": productId } }] : []),
+    {
+      $project: {
+        pid: "$items.product",
+        date: 1,
+        qty: "$items.quantity",
+        usageType: 1,
+        connectionType: 1,
+      },
+    },
+  ]);
+
+  return rows.map((r) => ({
+    pid: String(r.pid),
+    date: r.date,
+    qty: toNumber(r.qty),
+    field: usageField(r.usageType, r.connectionType),
+  }));
+};
+
+const fetchReturnEvents = async (centerId, productId, lower, upper) => {
+  const rows = await ReturnRecord.aggregate([
+    {
+      $match: {
+        center: centerId,
+        status: "completed",
+        ...dateWindow("date", lower, upper),
+      },
+    },
+    { $unwind: "$items" },
+    ...(productId ? [{ $match: { "items.product": productId } }] : []),
+    { $project: { pid: "$items.product", date: 1, qty: "$items.quantity" } },
+  ]);
+
+  return rows.map((r) => ({
+    pid: String(r.pid),
+    date: r.date,
+    qty: toNumber(r.qty),
+    field: "return",
+  }));
+};
+
+const fetchCenterReturnEvents = async (centerId, productId, lower, upper) => {
+  const rows = await CenterReturn.aggregate([
+    { $match: { center: centerId, ...dateWindow("returnDate", lower, upper) } },
+    { $unwind: "$products" },
+    ...(productId ? [{ $match: { "products.product": productId } }] : []),
+    {
+      $project: {
+        pid: "$products.product",
+        date: "$returnDate",
+        qty: "$products.quantity",
+      },
+    },
+  ]);
+
+  return rows.map((r) => ({
+    pid: String(r.pid),
+    date: r.date,
+    qty: toNumber(r.qty),
+    field: "transferGiven",
+  }));
+};
+
+// Informational columns - do not change available stock.
+const fetchInfoEvents = async (centerId, productId, lower, upper) => {
+  const [damageReturns, replacements] = await Promise.all([
+    DamageReturn.aggregate([
+      {
+        $match: {
+          $or: [{ center: centerId }, { toCenter: centerId }],
+          status: { $in: ["approved", "pending", "replaced"] },
+          ...(productId ? { product: productId } : {}),
+          ...dateWindow("date", lower, upper),
+        },
+      },
+      { $project: { pid: "$product", date: 1, qty: "$quantity" } },
+    ]),
+    ReplacementRecord.aggregate([
+      {
+        $match: {
+          center: centerId,
+          ...(productId ? { product: productId } : {}),
+          ...dateWindow("date", lower, upper),
+        },
+      },
+      { $project: { pid: "$product", date: 1, qty: "$qty" } },
+    ]),
+  ]);
+
+  return [
+    ...damageReturns.map((r) => ({
+      pid: String(r.pid),
+      date: r.date,
+      qty: toNumber(r.qty) || 1,
+      field: "replaceReturn",
+    })),
+    ...replacements.map((r) => ({
+      pid: String(r.pid),
+      date: r.date,
+      qty: toNumber(r.qty) || 1,
+      field: "replaceDamage",
+    })),
+  ];
+};
+
+// Latest submitted/verified physical closing strictly before the report start.
+// Treated as the stock at the END of that (IST) day.
+const getBaseline = async (centerId, start, productId) => {
+  const snapshot = await StockClosing.findOne({
+    status: { $in: ["Submitted", "Verified"] },
+    date: { $lt: start },
+    $or: [{ center: centerId }, { closingCenter: centerId }],
+  })
+    .sort({ date: -1, createdAt: -1, _id: -1 })
+    .select("date products")
+    .lean();
+
+  if (!snapshot) return { baseline: new Map(), after: null };
+
+  const baseline = new Map();
+
+  for (const item of snapshot.products || []) {
+    const pid = String(item.product);
+    if (productId && pid !== String(productId)) continue;
+    baseline.set(pid, toNumber(item.productQty));
+  }
+
+  return { baseline, after: endOfDayTZOf(snapshot.date) };
+};
+
+const getPeriodClosingSnapshot = async (centerId, start, end) => {
+  // Only use a physical closing snapshot when the report ends
+  // at the end of a calendar day in the configured report timezone.
+  const endShifted = new Date(end.getTime() + OFFSET_MS);
+  const finalDayStart = startOfDayTZ(
+    endShifted.getUTCFullYear(),
+    endShifted.getUTCMonth() + 1,
+    endShifted.getUTCDate()
+  );
+  const finalDayEnd = endOfDayTZ(
+    endShifted.getUTCFullYear(),
+    endShifted.getUTCMonth() + 1,
+    endShifted.getUTCDate()
+  );
+
+  if (end.getTime() < finalDayEnd.getTime() - 1) {
+    return null;
+  }
+
+  const snapshot = await StockClosing.findOne({
+    status: { $in: ["Submitted", "Verified"] },
+    date: { $gte: finalDayStart, $lte: finalDayEnd },
+    $or: [{ center: centerId }, { closingCenter: centerId }],
+  })
+    .sort({ date: -1, createdAt: -1, _id: -1 })
+    .select("date products totalProductQty")
+    .lean();
+
+  return snapshot || null;
+};
+
+
+const tag = (list, source) => list.map((event) => ({ ...event, source }));
+
+const buildCenterSummary = async (center, dateRange, productId, debug = false) => {
+  const centerId = oid(center._id);
+  const productObjectId = productId ? oid(productId) : null;
+
+  const { baseline, after } = await getBaseline(
+    centerId,
+    dateRange.startDate,
+    productId
+  );
+
+  const lower = after;
+  const upper = dateRange.endDate;
+
+  const [requests, transfers, usages, returns, centerReturns, info] =
+    await Promise.all([
+      fetchRequestEvents(centerId, productObjectId, lower, upper),
+      fetchTransferEvents(centerId, productObjectId, lower, upper),
+      fetchUsageEvents(centerId, productObjectId, lower, upper),
+      fetchReturnEvents(centerId, productObjectId, lower, upper),
+      fetchCenterReturnEvents(centerId, productObjectId, lower, upper),
+      fetchInfoEvents(centerId, productObjectId, lower, upper),
+    ]);
+
+  const events = [
+    ...tag(requests, "stockRequest"),
+    ...tag(transfers, "stockTransfer"),
+    ...tag(usages, "stockUsage"),
+    ...tag(returns, "returnRecord"),
+    ...tag(centerReturns, "centerReturn"),
+    ...tag(info, "damageReturn/replacement (info only)"),
+  ];
+
+  const floorOpening = process.env.USAGE_SUMMARY_FLOOR_OPENING !== "false";
+
+  const rows = assembleRows({
+    events,
+    baseline,
+    start: dateRange.startDate,
+    end: dateRange.endDate,
+    productFilter: productId || null,
+    floorOpening,
+  });
+ const closingSnapshot = await getPeriodClosingSnapshot(
+  centerId,
+  dateRange.startDate,
+  dateRange.endDate
+);
+
+
+if (closingSnapshot) {
+  const snapshotProducts = new Map(
+    (closingSnapshot.products || [])
+      .filter(
+        (item) =>
+          !productId ||
+          String(item.product) === String(productId)
+      )
+      .map((item) => [
+        String(item.product),
+        toNumber(item.productQty),
+      ])
+  );
+
+  // Reset closing for all rows because this snapshot
+  // is the authoritative closing for the selected date.
+  for (const row of rows) {
+    row.closing = 0;
+    row.closingDate = closingSnapshot.date;
+    row.closingSource = "submitted_snapshot";
+  }
+
+  // Apply snapshot quantities.
+  for (const [pid, quantity] of snapshotProducts) {
+    let row = rows.find(
+      (item) => String(item.productId) === pid
+    );
+
+    if (!row) {
+      row = createEmptyRow(null, pid);
+      rows.push(row);
+    }
+
+    row.closing = quantity;
+    row.closingDate = closingSnapshot.date;
+    row.closingSource = "submitted_snapshot";
+  }
+}
+
+  const debugInfo =
+    debug && productId
+      ? {
+          center: center.centerName,
+          snapshotBaseline: Object.fromEntries(baseline),
+          eventsAfter: lower,
+          events: events
+            .filter((e) => String(e.pid) === String(productId))
+            .sort((a, b) => new Date(a.date) - new Date(b.date))
+            .map((e) => ({
+              date: e.date,
+              source: e.source,
+              column: e.field,
+              qty: e.qty,
+              effect: signedQuantity(e.field, e.qty),
+              period:
+                new Date(e.date) < dateRange.startDate ? "before start" : "in range",
+            })),
+        }
+      : null;
+
+  if (rows.length === 0) return { rows, debugInfo };
+
+  const products = await Product.find({
+    _id: { $in: rows.map((r) => oid(r.productId)) },
+  })
+    .select("productTitle")
+    .lean();
+
+  const names = new Map(products.map((p) => [String(p._id), p.productTitle]));
+
+  const centerInfo = {
+    id: center._id,
+    name: center.centerName,
+    code: center.centerCode,
+    type: center.centerType,
+  };
+
+  for (const row of rows) {
+    row.productName = names.get(String(row.productId)) || "Unknown Product";
+    row.center = centerInfo;
+  }
+
+  return { rows, debugInfo };
+};
+
+// ---------------------------------------------------------------------------
+// Response helpers
+// ---------------------------------------------------------------------------
+const getTotalQuantity = (item) =>
+  MOVEMENT_FIELDS.reduce((sum, key) => sum + (Number(item[key]) || 0), 0);
+
+
+const generateSummaryStats = (rows) => ({
+  totalProducts: rows.length,
+
+  // Legacy-compatible quantity total across movement columns.
+  totalTransactions: rows.reduce(
+    (sum, row) => sum + getTotalQuantity(row),
+    0
+  ),
+
+  totalQuantity: rows.reduce(
+    (sum, row) => sum + getTotalQuantity(row),
+    0
+  ),
+
+  totals: {
+    opening: rows.reduce((sum, row) => sum + row.opening, 0),
+    closing: rows.reduce((sum, row) => sum + row.closing, 0),
+    openingAdjustment: rows.reduce(
+      (sum, row) => sum + (row.openingAdjustment || 0),
+      0
+    ),
+  },
+
+  centers: [...new Set(rows.map((row) => row.center?.name).filter(Boolean))],
+});
+
+
+const CLIENT_ERRORS_400 = [
+  "Invalid center ID",
+  "Invalid product ID",
+  "Invalid month/year",
+  "Invalid date format",
+  "startDate cannot be after endDate",
+];
+
+// ---------------------------------------------------------------------------
+// Controller
+// ---------------------------------------------------------------------------
 export const getUsageSummary = async (req, res) => {
   try {
-    const { 
-      startDate, 
-      endDate, 
-      centerId, 
-      productId, 
+    const {
+      startDate,
+      endDate,
+      centerId,
+      productId,
       month,
       year,
       page = 1,
-      limit = 100
+      limit = 100,
+      debug,
     } = req.query;
-    
-    const user = req.user;
-    let dateRange = getDateRange(startDate, endDate, month, year);
-    
-    let targetCenters = await getTargetCenters(centerId, user);
-    
+
+    if (productId && !mongoose.Types.ObjectId.isValid(productId)) {
+      throw new ReportInputError("Invalid product ID");
+    }
+
+    const fullUser = req.user?.fullUser;
+
+    const user = {
+      ...fullUser,
+      ...req.user,
+      id: req.user?.id ?? fullUser?._id?.toString(),
+      center: fullUser?.center ?? req.user?.center ?? null,
+      selectedCenterId: req.selectedCenterId ?? null,
+    };
+
+    const dateRange = getDateRange(startDate, endDate, month, year);
+
+    const targetCenters = await getTargetCenters(centerId, user);
+
     if (!targetCenters || targetCenters.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "Center information not found"
+        message: "Center information not found",
       });
     }
 
-    console.log(`Processing data for ${targetCenters.length} centers, productId: ${productId}`);
+    const allRows = [];
+    const debugOutput = [];
 
-    const allCenterData = [];
-    
     for (const center of targetCenters) {
-      console.log(`Processing center: ${center.centerName} (${center._id})`);
-      
-      const [
-        stockRequests,
-        stockTransfers,
-        stockUsages,
-        damageReturns,
-        replacementRecords,
-        stockClosings,
-        returnRecords, 
-        openingStock
-      ] = await Promise.all([
-        getStockRequestData(center._id, dateRange, productId),
-        getStockTransferData(center._id, dateRange, productId),
-        getStockUsageData(center._id, dateRange, productId),
-        getDamageReturnData(center._id, dateRange, productId),
-        getReplacementRecordData(center._id, dateRange, productId),
-        getStockClosingData(center._id, dateRange, productId),
-        getReturnRecordData(center._id, dateRange, productId),
-        getOpeningStockData(center._id, dateRange.startDate, productId) 
-      ]);
-      
-      const usageSummary = processUsageSummary({
-        stockRequests,
-        stockTransfers,
-        stockUsages,
-        damageReturns,
-        replacementRecords,
-        stockClosings,
-        returnRecords,
-        openingStock
-      }, center._id, center, productId);
-
-      allCenterData.push(...usageSummary);
+      const { rows, debugInfo } = await buildCenterSummary(
+        center,
+        dateRange,
+        productId,
+        debug === "1" || debug === "true"
+      );
+      allRows.push(...rows);
+      if (debugInfo) debugOutput.push(debugInfo);
     }
 
-    const currentPage = parseInt(page);
-    const pageSize = parseInt(limit);
+    allRows.sort(
+      (a, b) =>
+        String(a.center?.name || "").localeCompare(String(b.center?.name || "")) ||
+        String(a.productName).localeCompare(String(b.productName))
+    );
+
+    const currentPage = Math.max(parseInt(page, 10) || 1, 1);
+    const pageSize = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 1000);
     const startIndex = (currentPage - 1) * pageSize;
-    const endIndex = startIndex + pageSize;
-    
-    const paginatedData = allCenterData.slice(startIndex, endIndex);
-    const totalRecords = allCenterData.length;
+
+    const paginatedData = allRows.slice(startIndex, startIndex + pageSize);
+    const totalRecords = allRows.length;
     const totalPages = Math.ceil(totalRecords / pageSize);
 
-    // Prepare filters response
     const filters = {
       dateRange: {
         startDate: dateRange.startDate,
-        endDate: dateRange.endDate
+        endDate: dateRange.endDate,
       },
       productId,
-      month: month || 'current',
-      year: year || new Date().getFullYear()
+      month: month || "current",
+      year: year || new Date(Date.now() + OFFSET_MS).getUTCFullYear(),
+      center:
+        targetCenters.length === 1
+          ? {
+              id: targetCenters[0]._id,
+              name: targetCenters[0].centerName,
+              code: targetCenters[0].centerCode,
+              type: targetCenters[0].centerType,
+            }
+          : { id: "all", name: "All Centers", code: "ALL", type: "Multiple" },
     };
-    if (targetCenters.length === 1) {
-      filters.center = {
-        id: targetCenters[0]._id,
-        name: targetCenters[0].centerName,
-        code: targetCenters[0].centerCode,
-        type: targetCenters[0].centerType
-      };
-    } else {
-      filters.center = {
-        id: 'all',
-        name: 'All Centers',
-        code: 'ALL',
-        type: 'Multiple'
-      };
-    }
 
-    res.json({
+    return res.json({
       success: true,
       data: paginatedData,
       pagination: {
@@ -127,1320 +1039,47 @@ export const getUsageSummary = async (req, res) => {
         totalRecords,
         totalPages,
         hasNextPage: currentPage < totalPages,
-        hasPrevPage: currentPage > 1
+        hasPrevPage: currentPage > 1,
       },
-      summary: generateSummaryStats(allCenterData),
+      summary: generateSummaryStats(allRows),
       filters,
       metadata: {
         generatedAt: new Date(),
         recordCount: paginatedData.length,
-        totalQuantity: paginatedData.reduce((sum, item) => sum + getTotalQuantity(item), 0),
-        centersProcessed: targetCenters.length
-      }
+        totalQuantity: paginatedData.reduce(
+          (sum, item) => sum + getTotalQuantity(item),
+          0
+        ),
+        centersProcessed: targetCenters.length,
+      },
+      ...(debugOutput.length ? { debug: debugOutput } : {}),
     });
-
   } catch (error) {
     console.error("Get usage summary error:", error);
-    res.status(500).json({
+
+    const message = error?.message || "";
+
+    if (message === "Authentication required") {
+      return res.status(401).json({ success: false, message });
+    }
+
+    if (
+      message.startsWith("Access denied") ||
+      message === "User is not associated with a center"
+    ) {
+      return res.status(403).json({ success: false, message });
+    }
+
+    if (
+      error instanceof ReportInputError ||
+      CLIENT_ERRORS_400.some((prefix) => message.startsWith(prefix))
+    ) {
+      return res.status(400).json({ success: false, message });
+    }
+
+    return res.status(500).json({
       success: false,
       message: "Failed to generate usage summary",
-      error: error.message
     });
   }
 };
-
-const getReturnRecordData = async (centerId, dateRange, productId) => {
-  console.log(`Fetching return records for center: ${centerId}, date range: ${dateRange.startDate} to ${dateRange.endDate}, product: ${productId}`);
-  
-  const matchStage = {
-    center: new mongoose.Types.ObjectId(centerId),
-    status: "completed",
-    date: {
-      $gte: dateRange.startDate,
-      $lte: dateRange.endDate
-    }
-  };
-
-  if (productId) {
-    matchStage['items.product'] = new mongoose.Types.ObjectId(productId);
-  }
-
-  const results = await ReturnRecord.aggregate([
-    { $match: matchStage },
-    { $unwind: "$items" },
-    {
-      $lookup: {
-        from: "products",
-        localField: "items.product",
-        foreignField: "_id",
-        as: "productInfo"
-      }
-    },
-    {
-      $lookup: {
-        from: "centers",
-        localField: "center",
-        foreignField: "_id",
-        as: "centerInfo"
-      }
-    },
-    {
-      $lookup: {
-        from: "stockusages",
-        localField: "originalUsageId",
-        foreignField: "_id",
-        as: "originalUsage"
-      }
-    },
-    {
-      $project: {
-        _id: 1,
-        date: 1,
-        type: "Return",
-        usageType: 1,
-        center: { $arrayElemAt: ["$centerInfo", 0] },
-        product: "$items.product",
-        productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
-        quantity: "$items.quantity",
-        serialNumber: "$items.serialNumber",
-        originalUsageType: { $arrayElemAt: ["$originalUsage.usageType", 0] },
-        originalConnectionType: { $arrayElemAt: ["$originalUsage.connectionType", 0] },
-        remark: 1,
-        status: 1
-      }
-    }
-  ]);
-
-  console.log(`Found ${results.length} return records`);
-  results.forEach((record, index) => {
-    console.log(`Return record ${index + 1}: Product=${record.productName}, Qty=${record.quantity}, Type=${record.type}`);
-  });
-
-  return results;
-};
-const getTargetCenters = async (requestedCenterId, user) => {
-  try {
-    if (!requestedCenterId) {
-      const userCenterId = user.center?._id || user.center;
-      if (!userCenterId) {
-        console.log("No user center found");
-        return [];
-      }
-      const center = await Center.findById(userCenterId).select("centerName centerCode centerType");
-      return center ? [center] : [];
-    }
-
-    if (requestedCenterId === 'all') {
-      console.log("Fetching all centers");
-      return await Center.find({}).select("centerName centerCode centerType");
-    }
-
-    if (mongoose.Types.ObjectId.isValid(requestedCenterId)) {
-      const center = await Center.findById(requestedCenterId).select("centerName centerCode centerType");
-      if (!center) {
-        console.log(`Center not found with ID: ${requestedCenterId}`);
-        return [];
-      }
-      return [center];
-    }
-
-    console.log(`Invalid center ID format: ${requestedCenterId}`);
-    return [];
-    
-  } catch (error) {
-    console.error("Error in getTargetCenters:", error);
-    return [];
-  }
-};
-
-// Helper: Parse DD-MM-YYYY string into a proper Date object
-function parseDDMMYYYY(dateStr) {
-  if (!dateStr) return null;
-  
-  // Check if it's already a valid ISO date string like YYYY-MM-DD
-  const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (isoMatch) {
-    const d = new Date(dateStr);
-    if (!isNaN(d.getTime())) return d;
-  }
-  
-  // Try DD-MM-YYYY format (this is the format your API uses)
-  const parts = dateStr.split("-");
-  if (parts.length !== 3) return null;
-  
-  const [day, month, year] = parts.map(Number);
-  
-  if (!day || !month || !year || day < 1 || day > 31 || month < 1 || month > 12) {
-    return null;
-  }
-  
-  const parsed = new Date(year, month - 1, day);
-  
-  // Guard against JS auto-correcting invalid dates (e.g., 31-02-2026 -> March 3)
-  if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) {
-    return null;
-  }
-  
-  return parsed;
-}
-
-const getDateRange = (startDate, endDate, month, year) => {
-  let start, end;
-  
-  if (startDate && endDate) {
-    start = parseDDMMYYYY(startDate);
-    end = parseDDMMYYYY(endDate);
-    
-    if (!start || !end) {
-      throw new Error(`Invalid date format. Expected DD-MM-YYYY, got startDate="${startDate}", endDate="${endDate}"`);
-    }
-    
-    if (start > end) {
-      throw new Error("startDate cannot be after endDate");
-    }
-    
-    // Include the entire end day (23:59:59.999)
-    end.setHours(23, 59, 59, 999);
-  } else if (month && year) {
-    const m = parseInt(month);
-    const y = parseInt(year);
-    
-    if (!m || m < 1 || m > 12 || !y) {
-      throw new Error(`Invalid month/year: month=${month}, year=${year}`);
-    }
-    
-    start = new Date(y, m - 1, 1, 0, 0, 0, 0);
-    end = new Date(y, m, 0, 23, 59, 59, 999);
-  } else {
-    // Default: current month
-    const now = new Date();
-    start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-    end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-  }
-  
-  return { startDate: start, endDate: end };
-};
-
-const getStockRequestData = async (centerId, dateRange, productId) => {
-  const matchStage = {
-    $or: [
-      { center: new mongoose.Types.ObjectId(centerId) },
-      { warehouse: new mongoose.Types.ObjectId(centerId) }
-    ],
-    status: { $in: ["Completed", "Confirmed", "Shipped"] },
-    date: {
-      $gte: dateRange.startDate,
-      $lte: dateRange.endDate
-    }
-  };
-
-  if (productId) {
-    matchStage['products.product'] = new mongoose.Types.ObjectId(productId);
-  }
-
-  const results = await StockRequest.aggregate([
-    { $match: matchStage },
-    { $unwind: "$products" },
-    {
-      $lookup: {
-        from: "products",
-        localField: "products.product",
-        foreignField: "_id",
-        as: "productInfo"
-      }
-    },
-    {
-      $lookup: {
-        from: "centers",
-        localField: "center",
-        foreignField: "_id",
-        as: "centerInfo"
-      }
-    },
-    {
-      $lookup: {
-        from: "centers",
-        localField: "warehouse",
-        foreignField: "_id",
-        as: "warehouseInfo"
-      }
-    },
-    {
-      $project: {
-        _id: 1,
-        date: 1,
-        orderNumber: 1,
-        type: "Purchase",
-        center: { $arrayElemAt: ["$centerInfo", 0] },
-        warehouse: { $arrayElemAt: ["$warehouseInfo", 0] },
-        product: "$products.product",
-        productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
-        quantity: {
-          $cond: {
-            if: { $ifNull: ["$products.receivedQuantity", null] },
-            then: "$products.receivedQuantity",
-            else: {
-              $cond: {
-                if: { $ifNull: ["$products.approvedQuantity", null] },
-                then: "$products.approvedQuantity",
-                else: "$products.quantity"
-              }
-            }
-          }
-        },
-        approvedQuantity: "$products.approvedQuantity",
-        receivedQuantity: "$products.receivedQuantity",
-        status: 1
-      }
-    }
-  ]);
-
-  console.log(`[StockRequest] Found ${results.length} records`);
-  results.forEach(r => {
-    console.log(`  - ${r.productName}: ${r.quantity} (approved: ${r.approvedQuantity}, received: ${r.receivedQuantity})`);
-  });
-
-  return results;
-};
-
-const getStockTransferData = async (centerId, dateRange, productId) => {
-  const matchStage = {
-    $or: [
-      { fromCenter: new mongoose.Types.ObjectId(centerId) },
-      { toCenter: new mongoose.Types.ObjectId(centerId) }
-    ],
-    status: { $in: ["Completed", "Shipped", "Confirmed"] },
-    date: {
-      $gte: dateRange.startDate,
-      $lte: dateRange.endDate
-    }
-  };
-
-  if (productId) {
-    matchStage['products.product'] = new mongoose.Types.ObjectId(productId);
-  }
-
-  const results = await StockTransfer.aggregate([
-    { $match: matchStage },
-    { $unwind: "$products" },
-    {
-      $lookup: {
-        from: "products",
-        localField: "products.product",
-        foreignField: "_id",
-        as: "productInfo"
-      }
-    },
-    {
-      $lookup: {
-        from: "centers",
-        localField: "fromCenter",
-        foreignField: "_id",
-        as: "fromCenterInfo"
-      }
-    },
-    {
-      $lookup: {
-        from: "centers",
-        localField: "toCenter",
-        foreignField: "_id",
-        as: "toCenterInfo"
-      }
-    },
-    {
-      $project: {
-        _id: 1,
-        date: 1,
-        transferNumber: 1,
-        type: {
-          $cond: {
-            if: { $eq: ["$fromCenter", new mongoose.Types.ObjectId(centerId)] },
-            then: "Transfer Given",
-            else: "Transfer Receive"
-          }
-        },
-        fromCenter: { $arrayElemAt: ["$fromCenterInfo", 0] },
-        toCenter: { $arrayElemAt: ["$toCenterInfo", 0] },
-        product: "$products.product",
-        productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
-        // FIX: Use appropriate quantity based on transfer direction
-        quantity: {
-          $cond: [
-            { $eq: ["$fromCenter", new mongoose.Types.ObjectId(centerId)] },
-            { $ifNull: ["$products.approvedQuantity", "$products.quantity"] }, // Transfer Given uses approved/quantity
-            { $ifNull: ["$products.receivedQuantity", { $ifNull: ["$products.approvedQuantity", "$products.quantity"] }] } // Transfer Receive uses received
-          ]
-        },
-        approvedQuantity: "$products.approvedQuantity",
-        receivedQuantity: "$products.receivedQuantity",
-        status: 1
-      }
-    }
-  ]);
-
-  console.log(`[StockTransfer] Found ${results.length} records`);
-  results.forEach(r => {
-    console.log(`  - ${r.productName}: ${r.quantity} (Type: ${r.type})`);
-  });
-
-  return results;
-};
-
-const getStockUsageData = async (centerId, dateRange, productId) => {
-  const matchStage = {
-    $or: [
-      { center: new mongoose.Types.ObjectId(centerId) },
-      { toCenter: new mongoose.Types.ObjectId(centerId) }
-    ],
-    status: { $in: ["completed", "pending"] },
-    date: {
-      $gte: dateRange.startDate,
-      $lte: dateRange.endDate
-    }
-  };
-  if (productId) {
-    matchStage['items.product'] = new mongoose.Types.ObjectId(productId);
-  }
-
-  console.log(`🔍 Querying StockUsage for center ${centerId} with date range: ${dateRange.startDate} to ${dateRange.endDate}`);
-  console.log(`🔍 MatchStage:`, JSON.stringify(matchStage, null, 2));
-
-const usageData = await StockUsage.aggregate([
-    { $match: matchStage },
-    { $unwind: "$items" },
-    {
-      $lookup: {
-        from: "products",
-        localField: "items.product",
-        foreignField: "_id",
-        as: "productInfo"
-      }
-    },
-    {
-      $lookup: {
-        from: "centers",
-        localField: "center",
-        foreignField: "_id",
-        as: "centerInfo"
-      }
-    },
-    {
-      $lookup: {
-        from: "centers",
-        localField: "toCenter",
-        foreignField: "_id",
-        as: "toCenterInfo"
-      }
-    },
-    {
-      $addFields: {
-        centerData: {
-          $cond: {
-            if: { $eq: ["$center", new mongoose.Types.ObjectId(centerId)] },
-            then: { $arrayElemAt: ["$centerInfo", 0] },
-            else: { $arrayElemAt: ["$toCenterInfo", 0] }
-          }
-        }
-      }
-    },
-    {
-      $project: {
-        _id: 1,
-        date: 1,
-        usageType: 1,
-        type: {
-          $switch: {
-            branches: [
-              { case: { $eq: ["$usageType", "Customer"] }, then: "Usage" },
-              { case: { $eq: ["$usageType", "Building"] }, then: "Building Usage" },
-              { case: { $eq: ["$usageType", "Building to Building"] }, then: "Shifting" },
-              { case: { $eq: ["$usageType", "Control Room"] }, then: "Building Usage" },
-              { case: { $eq: ["$usageType", "Damage"] }, then: "Damage" },
-              { case: { $eq: ["$usageType", "Stolen from Center"] }, then: "Stolen Center" },
-              { case: { $eq: ["$usageType", "Stolen from Field"] }, then: "Stolen Field" },
-              { case: { $eq: ["$usageType", "Other"] }, then: "Other" }
-            ],
-            default: "Usage"
-          }
-        },
-        connectionType: 1,
-        center: "$centerData",
-        product: "$items.product",
-        productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
-        quantity: "$items.quantity",
-        serialNumbers: "$items.serialNumbers",
-        remark: 1,
-        customer: 1,
-        fromBuilding: 1,
-        toBuilding: 1,
-        fromControlRoom: 1,
-        isToCenter: { $eq: ["$toCenter", new mongoose.Types.ObjectId(centerId)] }
-      }
-    }
-  ]);
-
-  console.log(`📊 Found ${usageData.length} StockUsage records for center ${centerId}`);
-usageData.forEach((item, i) => {
-  console.log(`  ${i+1}. Type: ${item.usageType}, Product: ${item.productName || item.product}, Qty: ${item.quantity}, isToCenter: ${item.isToCenter}`);
-});
-
-return usageData.map(item => {
-    if (item.usageType === "Customer" && item.connectionType) {
-      switch (item.connectionType) {
-        case "NC":
-          item.type = "NC";
-          break;
-        case "Convert":
-          item.type = "Convert";
-          break;
-        case "Shifting":
-          item.type = "Shifting";
-          break;
-        case "Repair":
-          item.type = "Repair";
-          break;
-      }
-    }
-    return item;
-  });
-};
-
-const getDamageReturnData = async (centerId, dateRange, productId) => {
-  const matchStage = {
-    $or: [
-      { center: new mongoose.Types.ObjectId(centerId) },
-      { toCenter: new mongoose.Types.ObjectId(centerId) }
-    ],
-    status: { $in: ["approved", "pending", "replaced"] },
-    date: {
-      $gte: dateRange.startDate,
-      $lte: dateRange.endDate
-    }
-  };
-  if (productId) {
-    matchStage.product = new mongoose.Types.ObjectId(productId);
-  }
-
-  return await DamageReturn.aggregate([
-    { $match: matchStage },
-    {
-      $lookup: {
-        from: "products",
-        localField: "product",
-        foreignField: "_id",
-        as: "productInfo"
-      }
-    },
-    {
-      $lookup: {
-        from: "centers",
-        localField: "center",
-        foreignField: "_id",
-        as: "centerInfo"
-      }
-    },
-    {
-      $lookup: {
-        from: "centers",
-        localField: "toCenter",
-        foreignField: "_id",
-        as: "toCenterInfo"
-      }
-    },
-    {
-      $addFields: {
-        centerData: {
-          $cond: {
-            if: { $eq: ["$center", new mongoose.Types.ObjectId(centerId)] },
-            then: { $arrayElemAt: ["$centerInfo", 0] },
-            else: { $arrayElemAt: ["$toCenterInfo", 0] }
-          }
-        }
-      }
-    },
-    {
-      $project: {
-        _id: 1,
-        date: 1,
-        type: "Replace Return",
-        center: "$centerData",
-        product: 1,
-        productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
-        quantity: 1,
-        serialNumber: 1,
-        status: 1,
-        remark: 1
-      }
-    }
-  ]);
-};
-
-const getReplacementRecordData = async (centerId, dateRange, productId) => {
-  const matchStage = {
-    center: new mongoose.Types.ObjectId(centerId),
-    date: {
-      $gte: dateRange.startDate,
-      $lte: dateRange.endDate
-    }
-  };
-  if (productId) {
-    matchStage.product = new mongoose.Types.ObjectId(productId);
-  }
-
-  return await ReplacementRecord.aggregate([
-    { $match: matchStage },
-    {
-      $lookup: {
-        from: "products",
-        localField: "product",
-        foreignField: "_id",
-        as: "productInfo"
-      }
-    },
-    {
-      $lookup: {
-        from: "centers",
-        localField: "center",
-        foreignField: "_id",
-        as: "centerInfo"
-      }
-    },
-    {
-      $project: {
-        _id: 1,
-        date: 1,
-        type: "Replace Damage",
-        center: { $arrayElemAt: ["$centerInfo", 0] },
-        product: 1,
-        productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
-        qty: 1,
-        oldSerialNumber: 1,
-        newSerialNumber: 1,
-        statusReason: 1
-      }
-    }
-  ]);
-};
-
-const getStockClosingData = async (centerId, dateRange, productId) => {
-  const matchStage = {
-    $or: [
-      { center: new mongoose.Types.ObjectId(centerId) },
-      { closingCenter: new mongoose.Types.ObjectId(centerId) }
-    ],
-    status: { $in: ["Submitted", "Verified"] },
-    date: {
-      $gte: dateRange.startDate,
-      $lte: dateRange.endDate
-    }
-  };
-
-  if (productId) {
-    matchStage['products.product'] = new mongoose.Types.ObjectId(productId);
-  }
-
-  return await StockClosing.aggregate([
-    { $match: matchStage },
-    { $unwind: "$products" },
-    {
-      $lookup: {
-        from: "products",
-        localField: "products.product",
-        foreignField: "_id",
-        as: "productInfo"
-      }
-    },
-    {
-      $lookup: {
-        from: "centers",
-        localField: "center",
-        foreignField: "_id",
-        as: "centerInfo"
-      }
-    },
-    {
-      $lookup: {
-        from: "centers",
-        localField: "closingCenter",
-        foreignField: "_id",
-        as: "closingCenterInfo"
-      }
-    },
-    {
-      $project: {
-        _id: 1,
-        date: 1,
-        type: "Closing",
-        center: { $arrayElemAt: ["$centerInfo", 0] },
-        closingCenter: { $arrayElemAt: ["$closingCenterInfo", 0] },
-        product: "$products.product",
-        productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
-        productQty: "$products.productQty",
-        damageQty: "$products.damageQty",
-        status: 1
-      }
-    }
-  ]);
-};
-
-const getOpeningStockData = async (centerId, startDate, productId) => {
-  try {
-    const currentStartDate = new Date(startDate);
-    
-    console.log(`========================================`);
-    console.log(`Getting opening stock for center: ${centerId}`);
-    console.log(`For month starting: ${currentStartDate.toISOString()}`);
-
-    // 1. Get all purchases BEFORE current month
-    const purchases = await StockRequest.aggregate([
-      {
-        $match: {
-          $or: [
-            { center: new mongoose.Types.ObjectId(centerId) },
-            { warehouse: new mongoose.Types.ObjectId(centerId) }
-          ],
-          status: { $in: ["Completed", "Confirmed", "Shipped"] },
-          date: { $lt: currentStartDate }
-        }
-      },
-      { $unwind: "$products" },
-      {
-        $match: productId ? { 'products.product': new mongoose.Types.ObjectId(productId) } : {}
-      },
-      {
-        $group: {
-          _id: '$products.product',
-          total: { 
-            $sum: { 
-              $ifNull: [
-                '$products.receivedQuantity', 
-                { $ifNull: ['$products.approvedQuantity', '$products.quantity'] }
-              ] 
-            } 
-          }
-        }
-      }
-    ]);
-    
-    // 2. Get all transfers received BEFORE current month — use 'date' field, NOT 'completionInfo.completedOn'
-    const transfersIn = await StockTransfer.aggregate([
-      {
-        $match: {
-          toCenter: new mongoose.Types.ObjectId(centerId),
-          status: 'Completed',
-          date: { $lt: currentStartDate }   // FIXED: was completionInfo.completedOn
-        }
-      },
-      { $unwind: "$products" },
-      {
-        $match: productId ? { 'products.product': new mongoose.Types.ObjectId(productId) } : {}
-      },
-      {
-        $group: {
-          _id: '$products.product',
-          total: { 
-            $sum: { 
-              $ifNull: [
-                '$products.receivedQuantity', 
-                { $ifNull: ['$products.approvedQuantity', '$products.quantity'] }
-              ] 
-            } 
-          }
-        }
-      }
-    ]);
-    
-    // 3. Get all transfers given BEFORE current month — use 'date' field, NOT 'completionInfo.completedOn'
-    const transfersOut = await StockTransfer.aggregate([
-      {
-        $match: {
-          fromCenter: new mongoose.Types.ObjectId(centerId),
-          status: 'Completed',
-          date: { $lt: currentStartDate }   // FIXED: was completionInfo.completedOn
-        }
-      },
-      { $unwind: "$products" },
-      {
-        $match: productId ? { 'products.product': new mongoose.Types.ObjectId(productId) } : {}
-      },
-      {
-        $group: {
-          _id: '$products.product',
-          total: { 
-            $sum: { 
-              $ifNull: ['$products.approvedQuantity', '$products.quantity'] 
-            } 
-          }
-        }
-      }
-    ]);
-    
-    // 4. Get all usages BEFORE current month
-    const usages = await StockUsage.aggregate([
-      {
-        $match: {
-          center: new mongoose.Types.ObjectId(centerId),
-          status: "completed",
-          date: { $lt: currentStartDate }
-        }
-      },
-      { $unwind: "$items" },
-      {
-        $match: productId ? { 'items.product': new mongoose.Types.ObjectId(productId) } : {}
-      },
-      {
-        $group: {
-          _id: '$items.product',
-          total: { $sum: '$items.quantity' }
-        }
-      }
-    ]);
-    
-    // 5. Get all returns BEFORE current month
-    const returns = await ReturnRecord.aggregate([
-      {
-        $match: {
-          center: new mongoose.Types.ObjectId(centerId),
-          status: "completed",
-          date: { $lt: currentStartDate }
-        }
-      },
-      { $unwind: "$items" },
-      {
-        $match: productId ? { 'items.product': new mongoose.Types.ObjectId(productId) } : {}
-      },
-      {
-        $group: {
-          _id: '$items.product',
-          total: { $sum: '$items.quantity' }
-        }
-      }
-    ]);
-    
-    // 6. Get all damages BEFORE current month (include both center and toCenter)
-    const damages = await DamageReturn.aggregate([
-      {
-        $match: {
-          $or: [
-            { center: new mongoose.Types.ObjectId(centerId) },
-            { toCenter: new mongoose.Types.ObjectId(centerId) }
-          ],
-          status: { $in: ["approved", "pending", "replaced"] },
-          date: { $lt: currentStartDate }
-        }
-      },
-      {
-        $match: productId ? { product: new mongoose.Types.ObjectId(productId) } : {}
-      },
-      {
-        $group: {
-          _id: '$product',
-          total: { $sum: '$quantity' }
-        }
-      }
-    ]);
-    
-    // Combine all product IDs seen across all queries
-    const allProducts = new Set();
-    [...purchases, ...transfersIn, ...transfersOut, ...usages, ...returns, ...damages].forEach(item => {
-      if (item._id) allProducts.add(item._id.toString());
-    });
-    
-    // If filtering by productId, only process that one product
-    if (productId) {
-      allProducts.clear();
-      allProducts.add(productId);
-    }
-    
-    const ProductModel = mongoose.model('Product');
-    const openingData = [];
-    
-    for (const prodId of allProducts) {
-      const getTotal = (arr, id) => {
-        const found = arr.find(item => item._id && item._id.toString() === id);
-        return found ? found.total : 0;
-      };
-      
-      const purchaseTotal   = getTotal(purchases,    prodId);
-      const transferInTotal = getTotal(transfersIn,  prodId);
-      const transferOutTotal= getTotal(transfersOut, prodId);
-      const usageTotal      = getTotal(usages,       prodId);
-      const returnTotal     = getTotal(returns,      prodId);
-      const damageTotal     = getTotal(damages,      prodId);
-      
-      // Opening = (Purchases + Transfers In + Returns) - (Transfers Out + Usages + Damages)
-      const openingStock = 
-        purchaseTotal + transferInTotal + returnTotal 
-        - transferOutTotal - usageTotal - damageTotal;
-      
-      const productDoc = await ProductModel.findById(prodId);
-      const productName = productDoc?.productTitle || 'Unknown Product';
-      
-      console.log(`[Opening Stock] ${productName} = ${openingStock}`);
-      console.log(`   Purchases: ${purchaseTotal}`);
-      console.log(`   + Transfers In: ${transferInTotal}`);
-      console.log(`   + Returns: ${returnTotal}`);
-      console.log(`   - Transfers Out: ${transferOutTotal}`);
-      console.log(`   - Usages: ${usageTotal}`);
-      console.log(`   - Damages: ${damageTotal}`);
-      
-      // Always include the product if filtering by productId, even if opening is 0
-      if (openingStock !== 0 || productId) {
-        openingData.push({
-          product: new mongoose.Types.ObjectId(prodId),
-          productName: productName,
-          quantity: Math.max(0, openingStock),
-          stockType: "Calculated from All Previous Transactions",
-          date: currentStartDate
-        });
-      }
-    }
-    
-    console.log(`Returning ${openingData.length} products with opening stock`);
-    console.log(`========================================`);
-    return openingData;
-    
-  } catch (error) {
-    console.error("Error in getOpeningStockData:", error);
-    return [];
-  }
-};
-
-// REMOVE the getPreviousMonthClosingStock function entirely - it's causing infinite recursion!
-
-// NEW FUNCTION: Get previous month's closing stock from Summary calculations
-const getPreviousMonthClosingStock = async (centerId, previousMonthStart, previousMonthEnd, productId) => {
-  try {
-    // 1. Get purchases in previous month
-    const purchases = await StockRequest.aggregate([
-      {
-        $match: {
-          $or: [
-            { center: new mongoose.Types.ObjectId(centerId) },
-            { warehouse: new mongoose.Types.ObjectId(centerId) }
-          ],
-          status: { $in: ["Completed", "Confirmed", "Shipped"] },
-          date: { $gte: previousMonthStart, $lte: previousMonthEnd }
-        }
-      },
-      { $unwind: "$products" },
-      {
-        $match: productId ? { 'products.product': new mongoose.Types.ObjectId(productId) } : {}
-      },
-      {
-        $group: {
-          _id: '$products.product',
-          totalQuantity: { 
-            $sum: { 
-              $ifNull: [
-                '$products.receivedQuantity', 
-                { $ifNull: ['$products.approvedQuantity', '$products.quantity'] }
-              ]
-            } 
-          }
-        }
-      }
-    ]);
-    
-    // 2. Get transfers IN during previous month — FIXED: use 'date' not 'completionInfo.completedOn'
-    const transfersIn = await StockTransfer.aggregate([
-      {
-        $match: {
-          toCenter: new mongoose.Types.ObjectId(centerId),
-          status: 'Completed',
-          date: { $gte: previousMonthStart, $lte: previousMonthEnd }   // FIXED
-        }
-      },
-      { $unwind: "$products" },
-      {
-        $match: productId ? { 'products.product': new mongoose.Types.ObjectId(productId) } : {}
-      },
-      {
-        $group: {
-          _id: '$products.product',
-          totalQuantity: { 
-            $sum: { 
-              $ifNull: [
-                '$products.receivedQuantity', 
-                { $ifNull: ['$products.approvedQuantity', '$products.quantity'] }
-              ]
-            } 
-          }
-        }
-      }
-    ]);
-    
-    // 3. Get transfers OUT during previous month — FIXED: use 'date' not 'completionInfo.completedOn'
-    const transfersOut = await StockTransfer.aggregate([
-      {
-        $match: {
-          fromCenter: new mongoose.Types.ObjectId(centerId),
-          status: 'Completed',
-          date: { $gte: previousMonthStart, $lte: previousMonthEnd }   // FIXED
-        }
-      },
-      { $unwind: "$products" },
-      {
-        $match: productId ? { 'products.product': new mongoose.Types.ObjectId(productId) } : {}
-      },
-      {
-        $group: {
-          _id: '$products.product',
-          totalQuantity: { 
-            $sum: { 
-              $ifNull: ['$products.approvedQuantity', '$products.quantity'] 
-            }
-          }
-        }
-      }
-    ]);
-    
-    // 4. Get usages during previous month
-    const usages = await StockUsage.aggregate([
-      {
-        $match: {
-          center: new mongoose.Types.ObjectId(centerId),
-          status: "completed",
-          date: { $gte: previousMonthStart, $lte: previousMonthEnd }
-        }
-      },
-      { $unwind: "$items" },
-      {
-        $match: productId ? { 'items.product': new mongoose.Types.ObjectId(productId) } : {}
-      },
-      {
-        $group: {
-          _id: '$items.product',
-          totalQuantity: { $sum: '$items.quantity' }
-        }
-      }
-    ]);
-    
-    // 5. Get opening stock for previous month using the fixed function
-    const previousMonthOpening = await getOpeningStockData(centerId, previousMonthStart, productId);
-    
-    // Build closing stock map starting from previous month's opening
-    const closingStockMap = new Map();
-    
-    previousMonthOpening.forEach(item => {
-      closingStockMap.set(item.product.toString(), item.quantity);
-    });
-    
-    // Add purchases
-    purchases.forEach(p => {
-      const current = closingStockMap.get(p._id.toString()) || 0;
-      closingStockMap.set(p._id.toString(), current + p.totalQuantity);
-    });
-    
-    // Add transfers in
-    transfersIn.forEach(t => {
-      const current = closingStockMap.get(t._id.toString()) || 0;
-      closingStockMap.set(t._id.toString(), current + t.totalQuantity);
-    });
-    
-    // Subtract transfers out
-    transfersOut.forEach(t => {
-      const current = closingStockMap.get(t._id.toString()) || 0;
-      closingStockMap.set(t._id.toString(), current - t.totalQuantity);
-    });
-    
-    // Subtract usages
-    usages.forEach(u => {
-      const current = closingStockMap.get(u._id.toString()) || 0;
-      closingStockMap.set(u._id.toString(), current - u.totalQuantity);
-    });
-    
-    // Convert map to result array
-    const result = [];
-    const ProductModel = mongoose.model('Product');
-    
-    for (const [prodId, quantity] of closingStockMap) {
-      if (quantity <= 0 && !productId) continue;
-      if (productId && prodId !== productId) continue;
-      
-      let productName = 'Unknown Product';
-      try {
-        const productDoc = await ProductModel.findById(prodId);
-        if (productDoc?.productTitle) {
-          productName = productDoc.productTitle;
-        }
-      } catch (err) {
-        console.error(`Error fetching product name for ${prodId}:`, err);
-      }
-      
-      console.log(`📦 Previous month closing stock for ${productName}: ${Math.max(0, quantity)}`);
-      
-      result.push({
-        product: new mongoose.Types.ObjectId(prodId),
-        productName: productName,
-        quantity: Math.max(0, quantity),
-        stockType: "Calculated from Previous Month Transactions",
-        date: previousMonthEnd
-      });
-    }
-    
-    return result;
-    
-  } catch (error) {
-    console.error("Error calculating previous month closing stock:", error);
-    return [];
-  }
-};
-
-const processUsageSummary = (data, centerId, centerDetails, productId) => {
-  const allData = [
-    ...data.stockRequests,
-    ...data.stockTransfers,
-    ...data.stockUsages,
-    ...data.damageReturns,
-    ...data.replacementRecords,
-    ...data.stockClosings,
-    ...data.returnRecords
-  ];
-
-  const groupedData = {};
-
-  console.log(`Processing summary for center ${centerId}`);
-  console.log(`Opening stock items: ${data.openingStock.length}`);
-  console.log(`StockRequests: ${data.stockRequests.length}`);
-  console.log(`StockTransfers: ${data.stockTransfers.length}`);
-  console.log(`StockUsages: ${data.stockUsages.length}`);
-  console.log(`DamageReturns: ${data.damageReturns.length}`);
-  console.log(`ReplacementRecords: ${data.replacementRecords.length}`);
-  console.log(`StockClosings: ${data.stockClosings.length}`);
-  console.log(`ReturnRecords: ${data.returnRecords.length}`);
-  console.log(`Current month data items: ${allData.length}`);
-
-  // First, process opening stock
-  data.openingStock.forEach(item => {
-    const productIdFromItem = item.product?.toString();
-    
-    if (productId && productIdFromItem !== productId) {
-      return;
-    }
-    
-    console.log(`Processing opening stock for product: ${productIdFromItem} - ${item.productName}, Qty: ${item.quantity}`);
-    
-    if (!groupedData[productIdFromItem]) {
-      groupedData[productIdFromItem] = createEmptyProductSummary(item.productName || 'Unknown Product');
-      groupedData[productIdFromItem].productId = productIdFromItem;
-    }
-    
-    groupedData[productIdFromItem].opening = item.quantity;
-
-    if (centerDetails && !groupedData[productIdFromItem].center) {
-      groupedData[productIdFromItem].center = {
-        id: centerId,
-        name: centerDetails.centerName,
-        code: centerDetails.centerCode,
-        type: centerDetails.centerType
-      };
-    }
-  });
-
-  // Then process all current month transactions
-  allData.forEach(item => {
-    const productIdFromItem = item.product?.toString();
-    const type = item.type;
-    
-    if (!productIdFromItem) return;
-    if (productId && productIdFromItem !== productId) return;
-
-    const quantity = item.quantity || item.qty || item.productQty || 0;
-    
-    console.log(`Processing transaction for product: ${productIdFromItem}, Type: ${type}, Qty: ${quantity}, isToCenter: ${item.isToCenter}`);
-
-    if (!groupedData[productIdFromItem]) {
-      groupedData[productIdFromItem] = createEmptyProductSummary(
-        item.productName || 'Unknown Product'
-      );
-      groupedData[productIdFromItem].productId = productIdFromItem;
-      groupedData[productIdFromItem].opening = 0;
-      
-      if (centerDetails && !groupedData[productIdFromItem].center) {
-        groupedData[productIdFromItem].center = {
-          id: centerId,
-          name: centerDetails.centerName,
-          code: centerDetails.centerCode,
-          type: centerDetails.centerType
-        };
-      }
-    }
-
-    // Process based on transaction type
-    switch (type) {
-      case "Purchase":
-        groupedData[productIdFromItem].purchase += quantity;
-        break;
-      case "Transfer Receive":
-        groupedData[productIdFromItem].transferReceive += quantity;
-        break;
-      case "Transfer Given":
-        groupedData[productIdFromItem].transferGiven += quantity;
-        break;
-      case "Usage":
-        groupedData[productIdFromItem].usage += quantity;
-        break;
-      case "NC":
-        groupedData[productIdFromItem].nc += quantity;
-        break;
-      case "Convert":
-        groupedData[productIdFromItem].convert += quantity;
-        break;
-      case "Shifting":
-        groupedData[productIdFromItem].shifting += quantity;
-        break;
-      case "Building Usage":
-        groupedData[productIdFromItem].buildingUsage += quantity;
-        break;
-      case "Damage":
-        groupedData[productIdFromItem].damage += quantity;
-        break;
-      case "Return":
-        console.log(`Processing Return: Product=${item.productName}, Qty=${quantity}`);
-        groupedData[productIdFromItem].return += quantity;
-        break;
-      case "Replace Return":
-        console.log(`Processing Replace Return: Product=${item.productName}, Qty=${quantity}`);
-        groupedData[productIdFromItem].replaceReturn += quantity;
-        groupedData[productIdFromItem].return += quantity; // Add to return as well
-        break;
-      case "Replace Damage":
-        groupedData[productIdFromItem].replaceDamage += quantity;
-        break;
-      case "Stolen Center":
-        groupedData[productIdFromItem].stolenCenter += quantity;
-        break;
-      case "Stolen Field":
-        groupedData[productIdFromItem].stolenField += quantity;
-        break;
-      case "Closing":
-        const damageQty = item.damageQty || 0;
-        groupedData[productIdFromItem].closing += (quantity + damageQty);
-        break;
-      case "Other":
-        groupedData[productIdFromItem].other += quantity;
-        break;
-      case "Repair":
-        groupedData[productIdFromItem].repair += quantity;
-        break;
-      default:
-        console.log(`Unknown transaction type: ${type}`);
-        break;
-    }
-  });
-
-  // Calculate final closing for all products
-  const result = Object.values(groupedData).map(item => {
-    if (!item.center && centerDetails) {
-      item.center = {
-        id: centerId,
-        name: centerDetails.centerName,
-        code: centerDetails.centerCode,
-        type: centerDetails.centerType
-      };
-    }
-
-    // Calculate usage and closing
-    if (item.calculateUsageAndClosing) {
-      const calculatedClosing = item.calculateUsageAndClosing();
-      console.log(`Final calculation for ${item.productName}:`);
-      console.log(`  Opening: ${item.opening}`);
-      console.log(`  Calculated Closing: ${calculatedClosing}`);
-      console.log(`  Stored Closing: ${item.closing}`);
-      
-      // Use calculated closing if stored closing is 0
-      if (item.closing === 0 && calculatedClosing !== 0) {
-        item.closing = calculatedClosing;
-        console.log(`  → Using calculated closing: ${item.closing}`);
-      }
-    }
-    
-    return item;
-  });
-
-  console.log(`Returning ${result.length} products in summary`);
-  return result;
-};
-const createEmptyProductSummary = (productName) => {
-  const summary = {
-    productName,
-    opening: 0,
-    purchase: 0,
-    distributed: 0,
-    transferReceive: 0,
-    replaceReturn: 0,
-    usage: 0,
-    transferGiven: 0,
-    nc: 0,
-    convert: 0,
-    shifting: 0,
-    buildingUsage: 0,
-    buildingDamage: 0,
-    other: 0,
-    return: 0,
-    repair: 0,
-    damage: 0,
-    replaceDamage: 0,
-    stolenCenter: 0,
-    stolenField: 0,
-    closing: 0,
-    center: null,
-    productId: null
-  };
-  // FIXED: Correct closing stock calculation formula
-  summary.calculateUsageAndClosing = function() {
-    // Calculate total usage from all usage types
-    this.usage = 
-      this.nc +
-      this.convert +
-      this.shifting +
-      this.buildingUsage +
-      this.buildingDamage +
-      this.other +
-      this.repair +
-      this.stolenCenter +
-      this.stolenField;
-    // CORRECT FORMULA FOR CLOSING STOCK:
-    // Closing = Opening + Purchases + Transfer Receive + Returns - Transfer Given - Usage - Replace Damage - Damage
-    this.closing = 
-      this.opening + 
-      this.purchase +
-      this.transferReceive +
-      this.return -
-      this.transferGiven - 
-      this.usage -
-      this.replaceDamage -
-      this.damage;
-    console.log(`[Closing Calc] ${this.productName}:`);
-    console.log(`  Opening: ${this.opening}`);
-    console.log(`  + Purchase: ${this.purchase}`);
-    console.log(`  + Transfer Receive: ${this.transferReceive}`);
-    console.log(`  + Return: ${this.return}`);
-    console.log(`  - Transfer Given: ${this.transferGiven}`);
-    console.log(`  - Usage: ${this.usage}`);
-    console.log(`  - Replace Damage: ${this.replaceDamage}`);
-    console.log(`  - Damage: ${this.damage}`);
-    console.log(`  = Closing: ${this.closing}`);
-    return this.closing;
-  };
-  return summary;
-};
-const generateSummaryStats = (usageSummary) => {
-  const stats = {
-    totalProducts: usageSummary.length,
-    totalTransactions: usageSummary.reduce((sum, product) => {
-      return sum + MOVEMENT_FIELDS.reduce((s, key) => s + (product[key] || 0), 0);
-    }, 0),
-    totalQuantity: usageSummary.reduce((sum, product) => {
-      return sum + MOVEMENT_FIELDS.reduce((s, key) => s + (product[key] || 0), 0);
-    }, 0),
-    centers: [...new Set(usageSummary.map(item => item.center?.name).filter(Boolean))]
-  };
-
-  return stats;
-};
-const getTotalQuantity = (item) => {
-  return MOVEMENT_FIELDS.reduce((sum, key) => sum + (item[key] || 0), 0);
-};
-

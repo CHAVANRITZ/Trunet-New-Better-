@@ -1,17 +1,21 @@
-
+/**
+ * Determines whether the authenticated user has super-admin privileges.
+ *
+ * Supports both the new user-level flag and the existing role-level flag.
+ *
+ * @param {Object} user - Authenticated user
+ * @returns {boolean} Whether the user is a super admin
+ */
 export const isSuperAdmin = (user) => {
-  return user?.role?.roleTitle?.toLowerCase() === "superadmin";
-};
+  const roleTitle =
+    typeof user?.role?.roleTitle === "string"
+      ? user.role.roleTitle.trim().toLowerCase()
+      : "";
 
-export const checkPermission = (user, module, action) => {
-  if (isSuperAdmin(user)) {
-    return true;
-  }
-
-  const userPermissions = user?.role?.permissions || [];
-  const modulePermissions = userPermissions.find(
-    (perm) => perm.module.toLowerCase() === module.toLowerCase()
+  return (
+    user?.isSuperAdmin === true ||
+    user?.fullUser?.isSuperAdmin === true ||
+    user?.role?.isSuperAdmin === true ||
+    roleTitle === "superadmin"
   );
-
-  return modulePermissions && modulePermissions.permissions.includes(action);
 };
